@@ -1,0 +1,20 @@
+[project]
+name = "providerharvest-service"
+version = "0.1.0"
+description = "External ETL/API-loader service for data.gov.gr provider harvesting -- talks to CKAN entirely over its public Action API, no CKAN process/venv dependency."
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.31",
+    "cryptography>=42.0",
+    "paramiko>=3.4",
+    "scp>=0.15",
+    "jsonpath-ng>=1.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["providerharvest_service*"]
