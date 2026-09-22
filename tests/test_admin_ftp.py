@@ -1,0 +1,196 @@
+import pytest
+from fastapi.testclient import TestClient
+
+from providerharvest_service import admin_auth, db
+from providerharvest_service.app import app
+
+ADMIN_KEY = "test-admin-key"
+AUTH_HEADERS = {"X-Admin-Key": ADMIN_KEY}
+
+
+@pytest.fixture(autouse=True)
+def _admin_key(monkeypatch):
+    monkeypatch.setenv("LOADER_ADMIN_API_KEY", ADMIN_KEY)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_db(tmp_path):
+    engine = db.make_engine("sqlite:///%s" % (tmp_path / "test.db"))
+    session_factory = db.make_session_factory(engine)
+
+    def _override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[db.get_session] = _override
+    yield
+    app.dependency_overrides.pop(db.get_session, None)
+
+
+@pytest.fixture(autouse=True)
+def _upload_root(monkeypatch):
+    monkeypatch.setenv("LOADER_FTP_UPLOAD_ROOT", "/srv/ftp-uploads")
+
+
+@pytest.fixture
+def client():
+    return TestClient(app)
+
+
+def _create(client, **overrides):
+    payload = {
+        "username": "acme-provider",
+        "home_directory": "/srv/ftp-uploads/acme-provider",
+        "protocol": "ftps",
+    }
+    payload.update(overrides)
+    return client.post("/admin/ftp-accounts", json=payload, headers=AUTH_HEADERS)
+
+
+def test_missing_admin_key_is_unauthorized(client):
+    resp = client.get("/admin/ftp-accounts")
+    assert resp.status_code == 401
+
+
+def test_admin_key_not_configured_is_unavailable(client, monkeypatch):
+    monkeypatch.delenv("LOADER_ADMIN_API_KEY", raising=False)
+    resp = client.get("/admin/ftp-accounts", headers=AUTH_HEADERS)
+    assert resp.status_code == 503
+
+
+def test_create_account_returns_password_once(client):
+    resp = _create(client)
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["username"] == "acme-provider"
+    assert body["protocol"] == "ftps"
+    assert body["enabled"] is True
+    assert body["allowed_ips"] == []
+    assert "password" in body and len(body["password"]) > 16
+
+    # The password is never returned again -- get/list don't carry it.
+    get_resp = client.get("/admin/ftp-accounts/%s" % body["id"], headers=AUTH_HEADERS)
+    assert "password" not in get_resp.json()
+
+
+def test_duplicate_username_is_conflict(client):
+    _create(client)
+    resp = _create(client)
+    assert resp.status_code == 409
+
+
+def test_home_directory_must_be_under_upload_root(client):
+    resp = _create(client, home_directory="/etc/passwd")
+    assert resp.status_code == 422
+
+    resp = _create(client, home_directory="/srv/ftp-uploads-evil/x")
+    assert resp.status_code == 422
+
+    resp = _create(client, home_directory="relative/path")
+    assert resp.status_code == 422
+
+
+def test_username_must_match_allowed_characters(client):
+    resp = _create(client, username="a b/../c")
+    assert resp.status_code == 422
+
+
+def test_list_accounts(client):
+    _create(client)
+    _create(client, username="second-provider", home_directory="/srv/ftp-uploads/second")
+    resp = client.get("/admin/ftp-accounts", headers=AUTH_HEADERS)
+    assert resp.status_code == 200
+    assert len(resp.json()) == 2
+
+
+def test_get_missing_account_is_404(client):
+    resp = client.get("/admin/ftp-accounts/does-not-exist", headers=AUTH_HEADERS)
+    assert resp.status_code == 404
+
+
+def test_update_enabled_and_protocol(client):
+    account_id = _create(client).json()["id"]
+    resp = client.patch(
+        "/admin/ftp-accounts/%s" % account_id,
+        json={"enabled": False, "protocol": "sftp"},
+        headers=AUTH_HEADERS,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["enabled"] is False
+    assert body["protocol"] == "sftp"
+
+
+def test_rotate_password_returns_a_new_password(client):
+    created = _create(client).json()
+    resp = client.post(
+        "/admin/ftp-accounts/%s/rotate-password" % created["id"], headers=AUTH_HEADERS
+    )
+    assert resp.status_code == 200
+    rotated_password = resp.json()["password"]
+    assert rotated_password != created["password"]
+
+
+def test_delete_account(client):
+    account_id = _create(client).json()["id"]
+    resp = client.delete("/admin/ftp-accounts/%s" % account_id, headers=AUTH_HEADERS)
+    assert resp.status_code == 204
+    assert client.get(
+        "/admin/ftp-accounts/%s" % account_id, headers=AUTH_HEADERS
+    ).status_code == 404
+
+
+def test_allowed_ips_crud_and_validation(client):
+    account_id = _create(client).json()["id"]
+
+    bad = client.post(
+        "/admin/ftp-accounts/%s/allowed-ips" % account_id,
+        json={"cidr": "not-an-ip"},
+        headers=AUTH_HEADERS,
+    )
+    assert bad.status_code == 422
+
+    added = client.post(
+        "/admin/ftp-accounts/%s/allowed-ips" % account_id,
+        json={"cidr": "203.0.113.0/24"},
+        headers=AUTH_HEADERS,
+    )
+    assert added.status_code == 201
+    ip_id = added.json()["id"]
+
+    fetched = client.get("/admin/ftp-accounts/%s" % account_id, headers=AUTH_HEADERS)
+    assert fetched.json()["allowed_ips"] == [{"id": ip_id, "cidr": "203.0.113.0/24"}]
+
+    removed = client.delete(
+        "/admin/ftp-accounts/%s/allowed-ips/%s" % (account_id, ip_id), headers=AUTH_HEADERS
+    )
+    assert removed.status_code == 204
+
+    fetched_again = client.get("/admin/ftp-accounts/%s" % account_id, headers=AUTH_HEADERS)
+    assert fetched_again.json()["allowed_ips"] == []
+
+
+def test_allowed_ip_on_missing_account_is_404(client):
+    resp = client.post(
+        "/admin/ftp-accounts/does-not-exist/allowed-ips",
+        json={"cidr": "10.0.0.1/32"},
+        headers=AUTH_HEADERS,
+    )
+    assert resp.status_code == 404
+
+
+def test_deleting_account_cascades_allowed_ips(client):
+    account_id = _create(client).json()["id"]
+    client.post(
+        "/admin/ftp-accounts/%s/allowed-ips" % account_id,
+        json={"cidr": "10.0.0.1/32"},
+        headers=AUTH_HEADERS,
+    )
+    client.delete("/admin/ftp-accounts/%s" % account_id, headers=AUTH_HEADERS)
+
+    # Re-creating the same account name must work -- nothing orphaned.
+    resp = _create(client)
+    assert resp.status_code == 201

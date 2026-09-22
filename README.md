@@ -78,10 +78,34 @@ arbitrary sudo, which would hang in CI). See
 Already wired for `push: { branches: [master] }` -- every merge to
 `master` deploys automatically once the one-time VM setup is done.
 
+`providerharvest_service/db.py` + `models.py` -- this service's first
+real persistence, a SQLite file (`LOADER_DB_PATH`, defaults under
+`data/`, gitignored, survives redeploys since it lives inside the
+persistent clone and `git pull` never touches untracked files).
+`admin_ftp.py` -- the first real admin-panel feature: CRUD for
+FTP-push accounts and their per-account IP whitelists, gated by
+`admin_auth.py`'s shared admin-key dependency (`LOADER_ADMIN_API_KEY`
+header `X-Admin-Key` -- a deliberate placeholder for the real
+per-user Keycloak/CKAN-token authorization design, swapped in once
+the token-provisioning flow below exists). `home_directory` is
+validated to sit under `LOADER_FTP_UPLOAD_ROOT` (default
+`/srv/ftp-uploads`) so the admin API can't be pointed at an arbitrary
+VM path. Generated passwords are bcrypt-hashed and shown exactly once,
+at creation (or rotation) -- never returned again.
+
+**Deliberately not yet in this slice**: syncing this data into a
+running ProFTPD (or a dedicated sshd for SFTP) and generating the
+nftables rules the IP whitelist implies. Getting a real server's
+expected password-hash format right needs verifying against actual
+ProFTPD docs rather than guessing at it -- that's its own next piece,
+not bundled into the API/data-model slice that's already tested and
+working.
+
 Not yet built, in the rough order they'll likely be needed:
-- This service's own persistence (provider-source config, approval
-  status, field-mapping profiles, encrypted credentials) -- it no
-  longer has CKAN's DB/SQLAlchemy models to lean on.
+- Syncing FTP accounts into a real ProFTPD (+ a dedicated sshd for
+  SFTP) and generating nftables rules for the IP whitelist.
+- The rest of this service's own persistence (provider-source config,
+  approval status, field-mapping profiles, encrypted credentials).
 - The token-provisioning flow itself: minting a per-user CKAN API token
   via the standing sysadmin credential the first time a user needs one
   (lazily, not at every login), and storing it via `engine/secrets`
