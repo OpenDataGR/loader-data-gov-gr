@@ -1,0 +1,17 @@
+[Unit]
+Description=loader-data-gov-gr (providerharvest-service)
+After=network.target
+
+[Service]
+# --- Placeholders: confirm/change these for the real target VM ---
+User=providerharvest
+WorkingDirectory=/opt/loader-data-gov-gr
+Environment=PROVIDERHARVEST_HOST=127.0.0.1
+Environment=PROVIDERHARVEST_PORT=8000
+ExecStart=/opt/loader-data-gov-gr/.venv/bin/providerharvest-service
+# -------------------------------------------------------------------
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

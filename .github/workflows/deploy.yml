@@ -1,0 +1,70 @@
+name: Deploy
+
+# SSH + pull + restart onto the target VM (plain Python process under
+# systemd, no Docker), matching how sibling apps on that VM already
+# deploy. workflow_dispatch-only for now, deliberately -- this needs
+# four repo secrets set before it can do anything real (see below), and
+# firing automatically on push against an unconfirmed target would risk
+# either a silent no-op or, worse, landing on the wrong host. Once the
+# real VM details are confirmed and this has been run successfully by
+# hand at least once, add `push: { branches: [master] }` to auto-deploy.
+#
+# Required repo secrets (Settings -> Secrets and variables -> Actions):
+#   DEPLOY_SSH_HOST    -- the target VM's hostname/IP
+#   DEPLOY_SSH_USER    -- the deploy user (needs write access to
+#                          DEPLOY_TARGET_DIR and passwordless sudo for
+#                          `systemctl restart providerharvest-service`,
+#                          or an equivalent sudoers rule scoped to just
+#                          that one command)
+#   DEPLOY_SSH_KEY     -- private key for that user (public half
+#                          already in the VM's authorized_keys)
+#   DEPLOY_TARGET_DIR   -- optional, defaults to /opt/loader-data-gov-gr
+#                          (must match deploy/providerharvest-service.service's
+#                          WorkingDirectory/ExecStart if you change it)
+on:
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.DEPLOY_SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Sync code to the target VM
+        env:
+          TARGET_DIR: ${{ secrets.DEPLOY_TARGET_DIR || '/opt/loader-data-gov-gr' }}
+        run: |
+          rsync -az --delete \
+            --exclude='.git' --exclude='.venv' --exclude='__pycache__' \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes" \
+            ./ "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}:${TARGET_DIR}/"
+
+      - name: Install and restart the service
+        env:
+          TARGET_DIR: ${{ secrets.DEPLOY_TARGET_DIR || '/opt/loader-data-gov-gr' }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}" bash -s <<EOF
+            set -euo pipefail
+            cd "${TARGET_DIR}"
+            python3 -m venv .venv --upgrade-deps 2>/dev/null || python3 -m venv .venv
+            ./.venv/bin/pip install -q -e .
+            sudo systemctl restart providerharvest-service
+          EOF
+
+      - name: Verify the deployed service is healthy
+        env:
+          TARGET_DIR: ${{ secrets.DEPLOY_TARGET_DIR || '/opt/loader-data-gov-gr' }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}" \
+            'for i in $(seq 1 10); do curl -sf http://127.0.0.1:8000/health && exit 0; sleep 2; done; echo "service never became healthy after restart" >&2; sudo journalctl -u providerharvest-service --no-pager -n 100; exit 1'
