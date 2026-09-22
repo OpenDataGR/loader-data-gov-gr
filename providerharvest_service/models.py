@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime
 import uuid
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -46,6 +46,28 @@ class FtpAccount(Base):
     allowed_ips: Mapped[list["FtpAllowedIp"]] = relationship(
         back_populates="account", cascade="all, delete-orphan"
     )
+
+
+class FtpGroup(Base):
+    """Deliberately empty and never touched by this application's own
+    code. ProFTPD's mod_sql always issues a lookup against a table
+    named "groups" (columns groupname/gid/members) during auth --
+    unconditionally, even with no SQLGroupInfo directive configured
+    and no group-membership features in use; SQLDefaultUID/SQLDefaultGID
+    only supply fallback *values*, they don't suppress the lookup
+    itself. Without this table, every real FTP login fails with
+    ProFTPD's own "unrecoverable backend error: no such table: groups"
+    (confirmed against ProFTPD's sample mod_sql.conf and a matching
+    real-world Debian bug report, not guessed). It exists purely so
+    that query doesn't hard-fail against a missing table -- an empty
+    result set is fine, a missing table is not.
+    """
+
+    __tablename__ = "groups"
+
+    groupname: Mapped[str] = mapped_column(String, primary_key=True)
+    gid: Mapped[int] = mapped_column(Integer, nullable=False)
+    members: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class FtpAllowedIp(Base):
