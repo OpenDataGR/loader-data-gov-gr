@@ -26,7 +26,7 @@ def _isolated_db(tmp_path):
             session.close()
 
     app.dependency_overrides[db.get_session] = _override
-    yield
+    yield session_factory
     app.dependency_overrides.pop(db.get_session, None)
 
 
@@ -59,6 +59,26 @@ def test_admin_key_not_configured_is_unavailable(client, monkeypatch):
     monkeypatch.delenv("LOADER_ADMIN_API_KEY", raising=False)
     resp = client.get("/admin/ftp-accounts", headers=AUTH_HEADERS)
     assert resp.status_code == 503
+
+
+def test_stored_password_hash_uses_2a_prefix(client, _isolated_db):
+    """Confirmed for real against a live ProFTPD 1.3.8b + mod_sql_passwd
+    instance, not a style preference: a $2b$ hash (bcrypt's own
+    default) is silently rejected there ("530 Login incorrect", no
+    error logged), while the identical password re-hashed as $2a$
+    authenticates and uploads successfully. See admin_ftp._hash_password.
+    """
+    from providerharvest_service.models import FtpAccount
+
+    resp = _create(client)
+    assert resp.status_code == 201, resp.text
+
+    session = _isolated_db()
+    try:
+        account = session.query(FtpAccount).filter_by(username="acme-provider").one()
+        assert account.password_hash.startswith("$2a$")
+    finally:
+        session.close()
 
 
 def test_create_account_returns_password_once(client):

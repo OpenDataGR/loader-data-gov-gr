@@ -58,7 +58,15 @@ def _validate_home_directory(value: str) -> str:
 
 
 def _hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("ascii")
+    # prefix=b"2a", not bcrypt's own $2b$ default: confirmed for real
+    # against a live ProFTPD 1.3.8b + mod_sql_passwd instance that a
+    # $2b$ hash is silently rejected (clean "530 Login incorrect", no
+    # error logged) while the identical password re-hashed as $2a$
+    # authenticates correctly. Not a guess -- the $2b$ hash was tested
+    # first and failed; only $2a$ was confirmed working.
+    return bcrypt.hashpw(
+        password.encode("utf-8"), bcrypt.gensalt(prefix=b"2a")
+    ).decode("ascii")
 
 
 def _generate_password() -> str:
