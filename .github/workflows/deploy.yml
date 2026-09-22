@@ -1,70 +1,61 @@
 name: Deploy
 
-# SSH + pull + restart onto the target VM (plain Python process under
-# systemd, no Docker), matching how sibling apps on that VM already
-# deploy. workflow_dispatch-only for now, deliberately -- this needs
-# four repo secrets set before it can do anything real (see below), and
-# firing automatically on push against an unconfirmed target would risk
-# either a silent no-op or, worse, landing on the wrong host. Once the
-# real VM details are confirmed and this has been run successfully by
-# hand at least once, add `push: { branches: [master] }` to auto-deploy.
+# Runs on a self-hosted runner installed directly on the target VM --
+# deploy is local filesystem + systemd operations, no SSH/Bastion
+# tunnel needed at all (Azure Bastion doesn't expose the VM for plain
+# SSH from a GitHub-hosted runner, which is why this isn't SSH-based).
 #
-# Required repo secrets (Settings -> Secrets and variables -> Actions):
-#   DEPLOY_SSH_HOST    -- the target VM's hostname/IP
-#   DEPLOY_SSH_USER    -- the deploy user (needs write access to
-#                          DEPLOY_TARGET_DIR and passwordless sudo for
-#                          `systemctl restart providerharvest-service`,
-#                          or an equivalent sudoers rule scoped to just
-#                          that one command)
-#   DEPLOY_SSH_KEY     -- private key for that user (public half
-#                          already in the VM's authorized_keys)
-#   DEPLOY_TARGET_DIR   -- optional, defaults to /opt/loader-data-gov-gr
-#                          (must match deploy/providerharvest-service.service's
-#                          WorkingDirectory/ExecStart if you change it)
+# One-time setup on the VM itself, before this workflow can do anything
+# real (see deploy/README.md for the full version):
+#   1. Register the runner (Settings -> Actions -> Runners -> New
+#      self-hosted runner on this repo) with label `loader-vm`, and
+#      install it as a service running AS the deploy user (matching
+#      deploy/providerharvest-service.service's User=), e.g.:
+#        sudo ./svc.sh install providerharvest
+#        sudo ./svc.sh start
+#   2. Create TARGET_DIR below once, owned by that same user:
+#        sudo mkdir -p /opt/loader-data-gov-gr
+#        sudo chown providerharvest:providerharvest /opt/loader-data-gov-gr
+#   3. Install deploy/providerharvest-service.service into
+#      /etc/systemd/system/, then `sudo systemctl enable providerharvest-service`.
+#   4. Grant the deploy user passwordless sudo for exactly one command
+#      (nothing broader) via /etc/sudoers.d/providerharvest-deploy:
+#        providerharvest ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart providerharvest-service
+#
+# workflow_dispatch-only until a manual run has been confirmed working
+# end-to-end; then add a `push: { branches: [master] }` trigger.
 on:
   workflow_dispatch: {}
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, loader-vm]
     timeout-minutes: 10
     environment: production
+    env:
+      TARGET_DIR: /opt/loader-data-gov-gr
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up SSH
+      - name: Sync code into the persistent deploy directory
         run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "${{ secrets.DEPLOY_SSH_HOST }}" >> ~/.ssh/known_hosts
-
-      - name: Sync code to the target VM
-        env:
-          TARGET_DIR: ${{ secrets.DEPLOY_TARGET_DIR || '/opt/loader-data-gov-gr' }}
-        run: |
-          rsync -az --delete \
+          rsync -a --delete \
             --exclude='.git' --exclude='.venv' --exclude='__pycache__' \
-            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes" \
-            ./ "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}:${TARGET_DIR}/"
+            ./ "${TARGET_DIR}/"
 
       - name: Install and restart the service
-        env:
-          TARGET_DIR: ${{ secrets.DEPLOY_TARGET_DIR || '/opt/loader-data-gov-gr' }}
         run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
-            "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}" bash -s <<EOF
-            set -euo pipefail
-            cd "${TARGET_DIR}"
-            python3 -m venv .venv --upgrade-deps 2>/dev/null || python3 -m venv .venv
-            ./.venv/bin/pip install -q -e .
-            sudo systemctl restart providerharvest-service
-          EOF
+          cd "${TARGET_DIR}"
+          python3 -m venv .venv 2>/dev/null || true
+          ./.venv/bin/pip install -q -e .
+          sudo systemctl restart providerharvest-service
 
       - name: Verify the deployed service is healthy
-        env:
-          TARGET_DIR: ${{ secrets.DEPLOY_TARGET_DIR || '/opt/loader-data-gov-gr' }}
         run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
-            "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}" \
-            'for i in $(seq 1 10); do curl -sf http://127.0.0.1:8000/health && exit 0; sleep 2; done; echo "service never became healthy after restart" >&2; sudo journalctl -u providerharvest-service --no-pager -n 100; exit 1'
+          for i in $(seq 1 10); do
+            curl -sf http://127.0.0.1:8000/health && exit 0
+            sleep 2
+          done
+          echo "service never became healthy after restart" >&2
+          sudo journalctl -u providerharvest-service --no-pager -n 100
+          exit 1

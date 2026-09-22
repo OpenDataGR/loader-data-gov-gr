@@ -60,20 +60,17 @@ verified yet.
 
 `.github/workflows/tests.yml` -- runs the test suite on every push/PR
 to `master`, no CKAN/Docker involved. `.github/workflows/deploy.yml` --
-SSH + rsync + restart onto the target VM's systemd service, matching
-how sibling apps on that VM already deploy. **`workflow_dispatch`-only
-for now, deliberately**: it needs four repo secrets that aren't set yet
-(`DEPLOY_SSH_HOST`, `DEPLOY_SSH_USER`, `DEPLOY_SSH_KEY`, and optionally
-`DEPLOY_TARGET_DIR`, defaulting to `/opt/loader-data-gov-gr` -- see the
-workflow file's own header comment for exactly what each needs), and
-firing automatically against an unconfirmed target risks landing on the
-wrong host. Once those are set in Settings -> Secrets and variables ->
-Actions and a manual run succeeds, add a `push: { branches: [master] }`
-trigger to auto-deploy. `deploy/providerharvest-service.service` is the
-systemd unit to install on the VM first (`/etc/systemd/system/`,
-`systemctl enable providerharvest-service`) -- its `User`,
-`WorkingDirectory`, and port are placeholders to confirm against the
-real VM before the deploy workflow can actually succeed.
+targets a **GitHub Actions self-hosted runner installed directly on the
+target VM**, not SSH: the VM sits behind Azure Bastion, which doesn't
+expose it for plain SSH from a GitHub-hosted runner, so deploy is local
+filesystem + systemd operations on the runner instead of anything
+crossing the network. See [`deploy/README.md`](deploy/README.md) for
+the full one-time VM setup (registering the runner as the deploy user,
+the persistent `/opt/loader-data-gov-gr` directory, the systemd unit,
+and a passwordless-sudo rule scoped to exactly one `systemctl restart`
+command, nothing broader). **`workflow_dispatch`-only for now,
+deliberately** -- add a `push: { branches: [master] }` trigger once a
+manual run has been confirmed working end-to-end.
 
 Not yet built, in the rough order they'll likely be needed:
 - This service's own persistence (provider-source config, approval
