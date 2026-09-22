@@ -56,11 +56,22 @@ vhost keyed by `server_name`). Confirmed against the real, working
    ```bash
    sudo cp deploy/loader-data-gov-gr.service /etc/systemd/system/
    sudo systemctl daemon-reload
-   sudo systemctl enable loader-data-gov-gr
+   sudo systemctl enable --now loader-data-gov-gr
+   sudo systemctl status loader-data-gov-gr
+   curl -sf http://127.0.0.1:5002/health
    ```
-   It won't start cleanly until the first deploy run has populated
-   `/opt/data-projects/loader-data-gov-gr/venv` -- that's fine, the
-   first `deploy.yml` run handles the initial start too.
+   **The `--now` matters** -- `deploy.yml`'s reload step restarts the
+   service with `pkill` + systemd's `Restart=always`, which only works
+   on an *already-running* service. If this is `enable`d without
+   `--now` (or `enable`/`start` are run separately and the start step
+   is skipped), the first CI deploy's reload step fails with a
+   completely silent `journalctl -- No entries --` -- no crash, no
+   error, nothing to explain why, since the service was never started
+   even once (hit for real during this project's own first deploy; see
+   the `shared-vm-cicd-deploy` skill's Pitfalls section). Confirm
+   `systemctl status` shows `active (running)` and the `curl` above
+   returns `{"status":"ok"}` before triggering the first `deploy.yml`
+   run.
 
 4. **Install the nginx vhost**:
    ```bash
