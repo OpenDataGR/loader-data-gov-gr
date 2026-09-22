@@ -53,24 +53,30 @@ Nothing under `engine/` imports this module or knows CKAN exists.
 
 `providerharvest_service/app.py` -- a FastAPI app with exactly one
 route, `GET /health`. Deliberately trivial: a deploy pipeline needs
-*something real* to push end-to-end (systemd unit, SSH deploy, through
-the Application Gateway, a live response at `loader.data.gov.gr/health`)
-before any real endpoint gets built on top of infrastructure nobody's
-verified yet.
+*something real* to push end-to-end (systemd unit, self-hosted runner,
+through the Application Gateway, a live response at
+`loader.data.gov.gr/health`) before any real endpoint gets built on top
+of infrastructure nobody's verified yet.
 
-`.github/workflows/tests.yml` -- runs the test suite on every push/PR
-to `master`, no CKAN/Docker involved. `.github/workflows/deploy.yml` --
-targets a **GitHub Actions self-hosted runner installed directly on the
-target VM**, not SSH: the VM sits behind Azure Bastion, which doesn't
-expose it for plain SSH from a GitHub-hosted runner, so deploy is local
-filesystem + systemd operations on the runner instead of anything
-crossing the network. See [`deploy/README.md`](deploy/README.md) for
-the full one-time VM setup (registering the runner as the deploy user,
-the persistent `/opt/loader-data-gov-gr` directory, the systemd unit,
-and a passwordless-sudo rule scoped to exactly one `systemctl restart`
-command, nothing broader). **`workflow_dispatch`-only for now,
-deliberately** -- add a `push: { branches: [master] }` trigger once a
-manual run has been confirmed working end-to-end.
+`.github/workflows/tests.yml` -- runs the test suite on a GitHub-hosted
+runner on every push/PR, no CKAN/Docker involved (an independent check,
+separate from the deploy pipeline's own test gate below).
+`.github/workflows/deploy.yml` -- follows this Ministry's established
+shared-VM pattern (first built for `opencar-data-gov-gr`, confirmed
+against that project's real working config on `MIN01RG96PVM02` before
+writing this one): a GitHub Actions **self-hosted runner installed
+directly on the target VM** (Azure Bastion doesn't expose it for plain
+SSH from a GitHub-hosted runner, so this sidesteps that entirely --
+deploy is local filesystem + systemd operations, nothing crosses the
+network), running as the `localadmin` service account against a
+persistent clone at `/opt/data-projects/loader-data-gov-gr`, gunicorn
++ UvicornWorker on port 5002 (5001 is `opencar-data-gov-gr`'s) under
+systemd, restarted via `pkill` + `Restart=always` rather than
+`sudo systemctl restart` (this VM's sudoers needs a password for
+arbitrary sudo, which would hang in CI). See
+[`deploy/README.md`](deploy/README.md) for the full one-time VM setup.
+Already wired for `push: { branches: [master] }` -- every merge to
+`master` deploys automatically once the one-time VM setup is done.
 
 Not yet built, in the rough order they'll likely be needed:
 - This service's own persistence (provider-source config, approval

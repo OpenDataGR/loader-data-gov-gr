@@ -1,74 +1,88 @@
-# Deploying to the target VM
+# Deploying to MIN01RG96PVM02
 
-The target VM sits behind Azure Bastion, which doesn't expose it for
-plain SSH from a GitHub-hosted runner. Instead of tunneling (Azure CLI
-+ `az network bastion tunnel` + a service principal), this installs a
-GitHub Actions **self-hosted runner directly on the VM** -- deploy
-becomes local filesystem + systemd operations, nothing needs to reach
-the VM over the network at all.
+Follows the same shared-VM pattern already used by `opencar-data-gov-gr`
+on this VM (`/opt/data-projects/`, `localadmin`, one self-hosted GitHub
+Actions runner per project, gunicorn+UvicornWorker under systemd, nginx
+vhost keyed by `server_name`). Confirmed against the real, working
+`opencar-data-gov-gr.service` and its nginx vhost before writing these.
 
-## One-time setup, run on the VM itself (via your own Bastion session)
+- Port: **5002** (5001 is already `opencar-data-gov-gr`'s gunicorn --
+  check `sudo ss -tlnp | grep gunicorn` before reusing either if a third
+  project lands here later).
+- Service account: **`localadmin`** (already exists, already owns
+  `/opt/data-projects`).
 
-1. **Create the deploy user**, if it doesn't already exist:
+## One-time setup, run on the VM itself
+
+1. **Clone as `localadmin`**, so it owns the files:
    ```bash
-   sudo useradd -m -s /bin/bash providerharvest
+   sudo -iu localadmin
+   cd /opt/data-projects
+   git clone https://github.com/OpenDataGR/loader-data-gov-gr.git
+   cd loader-data-gov-gr
+   python3 -m venv venv
+   source venv/bin/activate
+   pip install -r requirements.txt
+   ```
+   If you (or anyone else) need to `git pull`/commit from this directory
+   under your own account later, run once:
+   ```bash
+   git config --global --add safe.directory /opt/data-projects/loader-data-gov-gr
    ```
 
-2. **Create the persistent deploy directory**, owned by that user
-   (separate from the runner's own ephemeral checkout workspace):
+2. **Register the self-hosted runner.** On this repo:
+   `Settings -> Actions -> Runners -> New self-hosted runner`, Linux/x64,
+   use the download/config commands shown there (version-pinned per
+   session -- don't reuse an old one). Label it `loader` (matches
+   `runs-on: [self-hosted, loader]` in `deploy.yml`) and give it a unique
+   name, e.g. `loader-runner-pvm02`:
    ```bash
-   sudo mkdir -p /opt/loader-data-gov-gr
-   sudo chown providerharvest:providerharvest /opt/loader-data-gov-gr
+   sudo -iu localadmin
+   mkdir actions-runner-loader && cd actions-runner-loader
+   # paste the download/extract commands GitHub gave you
+   ./config.sh --url https://github.com/OpenDataGR/loader-data-gov-gr --token <TOKEN> \
+     --labels self-hosted,loader --name loader-runner-pvm02
+   ```
+   Install as a persistent service (needs root):
+   ```bash
+   sudo -i
+   cd /home/localadmin/actions-runner-loader
+   ./svc.sh install localadmin
+   ./svc.sh start
+   ./svc.sh status
    ```
 
-3. **Register the self-hosted runner.** On this repo:
-   `Settings -> Actions -> Runners -> New self-hosted runner`, choose
-   Linux, and follow the download/configure commands shown there
-   (they're version-pinned per session, don't copy stale ones from
-   elsewhere). When `config.sh` asks for labels, add `loader-vm` --
-   `deploy.yml` targets that label specifically, not any self-hosted
-   runner that might get added later for something else.
-
-   Install it as a service running **as the `providerharvest` user**
-   (matching `providerharvest-service.service`'s `User=`), not root:
+3. **Install the systemd unit**:
    ```bash
-   sudo ./svc.sh install providerharvest
-   sudo ./svc.sh start
-   ```
-
-4. **Install the systemd unit**:
-   ```bash
-   sudo cp deploy/providerharvest-service.service /etc/systemd/system/
+   sudo cp deploy/loader-data-gov-gr.service /etc/systemd/system/
    sudo systemctl daemon-reload
-   sudo systemctl enable providerharvest-service
+   sudo systemctl enable loader-data-gov-gr
    ```
-   (The unit won't start cleanly until the first deploy run has
-   installed the package into `/opt/loader-data-gov-gr/.venv` --
-   that's fine, `deploy.yml`'s restart step handles the first start
-   too.)
+   It won't start cleanly until the first deploy run has populated
+   `/opt/data-projects/loader-data-gov-gr/venv` -- that's fine, the
+   first `deploy.yml` run handles the initial start too.
 
-5. **Grant exactly one passwordless sudo rule**, nothing broader --
-   `/etc/sudoers.d/providerharvest-deploy`:
+4. **Install the nginx vhost**:
+   ```bash
+   sudo cp deploy/nginx-loader.data.gov.gr /etc/nginx/sites-available/loader
+   sudo ln -s /etc/nginx/sites-available/loader /etc/nginx/sites-enabled/loader
+   sudo nginx -t && sudo systemctl reload nginx
+   curl -sf -H "Host: loader.data.gov.gr" http://127.0.0.1/health
    ```
-   providerharvest ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart providerharvest-service
-   ```
-   Validate with `sudo visudo -c` before trusting it.
 
-## Confirm the reverse proxy / port
-
-`deploy/providerharvest-service.service` binds the app to
-`127.0.0.1:8000` by default (`PROVIDERHARVEST_PORT`). Whatever already
-routes `Host: loader.data.gov.gr` traffic on this VM (the Application
-Gateway backend pool forwards here) needs to point at that same port --
-confirm this against the actual reverse proxy config before the first
-real deploy, and change the unit's `Environment=PROVIDERHARVEST_PORT=`
-line (and this note) if it needs to be different.
+No sudoers changes needed: `deploy.yml`'s reload step uses `pkill` +
+systemd's `Restart=always` rather than `sudo systemctl restart`, since
+this VM's sudoers requires a password for arbitrary sudo commands (a
+plain `systemctl restart` in CI would just hang). `sudo systemctl
+reset-failed` in that same step needs no password either -- confirm
+that's still true here the same way it is for `opencar-data-gov-gr`
+before relying on it.
 
 ## First run
 
-Trigger `Deploy` manually from the Actions tab (or `gh workflow run
-deploy.yml`) and watch it -- the last step curls `/health` on the VM
-itself and fails loudly with the service's recent logs if it didn't
-come up clean. Once that's confirmed working, add a
-`push: { branches: [master] }` trigger to `deploy.yml` to auto-deploy
-on every merge to `master`.
+Trigger `Deploy` manually (Actions tab, or `gh workflow run deploy.yml`)
+and watch it -- the smoke-test step curls `/health` on the VM itself and
+the reload step dumps `journalctl` if the service didn't come back
+healthy. Once confirmed, every push to `master` deploys automatically
+(this workflow already has the `push` trigger, unlike the earlier
+SSH-based draft which was deliberately manual-only).

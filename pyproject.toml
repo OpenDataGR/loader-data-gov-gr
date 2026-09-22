@@ -10,7 +10,8 @@ dependencies = [
     "scp>=0.15",
     "jsonpath-ng>=1.6",
     "fastapi>=0.110",
-    "uvicorn>=0.29",
+    "uvicorn[standard]>=0.29",
+    "gunicorn>=22",
 ]
 
 [project.optional-dependencies]

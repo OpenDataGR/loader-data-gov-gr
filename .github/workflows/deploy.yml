@@ -1,61 +1,59 @@
 name: Deploy
 
-# Runs on a self-hosted runner installed directly on the target VM --
-# deploy is local filesystem + systemd operations, no SSH/Bastion
-# tunnel needed at all (Azure Bastion doesn't expose the VM for plain
-# SSH from a GitHub-hosted runner, which is why this isn't SSH-based).
-#
-# One-time setup on the VM itself, before this workflow can do anything
-# real (see deploy/README.md for the full version):
-#   1. Register the runner (Settings -> Actions -> Runners -> New
-#      self-hosted runner on this repo) with label `loader-vm`, and
-#      install it as a service running AS the deploy user (matching
-#      deploy/providerharvest-service.service's User=), e.g.:
-#        sudo ./svc.sh install providerharvest
-#        sudo ./svc.sh start
-#   2. Create TARGET_DIR below once, owned by that same user:
-#        sudo mkdir -p /opt/loader-data-gov-gr
-#        sudo chown providerharvest:providerharvest /opt/loader-data-gov-gr
-#   3. Install deploy/providerharvest-service.service into
-#      /etc/systemd/system/, then `sudo systemctl enable providerharvest-service`.
-#   4. Grant the deploy user passwordless sudo for exactly one command
-#      (nothing broader) via /etc/sudoers.d/providerharvest-deploy:
-#        providerharvest ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart providerharvest-service
-#
-# workflow_dispatch-only until a manual run has been confirmed working
-# end-to-end; then add a `push: { branches: [master] }` trigger.
 on:
-  workflow_dispatch: {}
+  push:
+    branches: [master]
+  workflow_dispatch:
 
 jobs:
-  deploy:
-    runs-on: [self-hosted, loader-vm]
-    timeout-minutes: 10
-    environment: production
-    env:
-      TARGET_DIR: /opt/loader-data-gov-gr
+  test:
+    runs-on: [self-hosted, loader]
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Sync code into the persistent deploy directory
+      - name: Pull latest code
         run: |
-          rsync -a --delete \
-            --exclude='.git' --exclude='.venv' --exclude='__pycache__' \
-            ./ "${TARGET_DIR}/"
+          cd /opt/data-projects/loader-data-gov-gr
+          git pull
 
-      - name: Install and restart the service
+      - name: Install dependencies
         run: |
-          cd "${TARGET_DIR}"
-          python3 -m venv .venv 2>/dev/null || true
-          ./.venv/bin/pip install -q -e .
-          sudo systemctl restart providerharvest-service
+          cd /opt/data-projects/loader-data-gov-gr
+          source venv/bin/activate
+          pip install -r requirements.txt
 
-      - name: Verify the deployed service is healthy
+      - name: Run tests
         run: |
-          for i in $(seq 1 10); do
-            curl -sf http://127.0.0.1:8000/health && exit 0
-            sleep 2
-          done
-          echo "service never became healthy after restart" >&2
-          sudo journalctl -u providerharvest-service --no-pager -n 100
-          exit 1
+          cd /opt/data-projects/loader-data-gov-gr
+          source venv/bin/activate
+          pytest tests -q
+
+  deploy:
+    needs: test
+    runs-on: [self-hosted, loader]
+    steps:
+      - name: Pull latest code
+        run: |
+          cd /opt/data-projects/loader-data-gov-gr
+          git pull
+
+      - name: Install dependencies
+        run: |
+          cd /opt/data-projects/loader-data-gov-gr
+          source venv/bin/activate
+          pip install -r requirements.txt
+
+      - name: Reload service
+        run: |
+          # Clears any rate-limit lockout (systemd's StartLimitBurst/
+          # StartLimitIntervalSec) from a PRIOR failed deploy before this
+          # one's own restart attempt.
+          sudo systemctl reset-failed loader-data-gov-gr || true
+          pkill -TERM -u localadmin -f "gunicorn.*providerharvest_service.app:app" || true
+          sleep 15
+          systemctl is-active --quiet loader-data-gov-gr && echo "Service restarted OK" || (journalctl -u loader-data-gov-gr -n 30 --no-pager; exit 1)
+
+      - name: Smoke test
+        run: |
+          # "is-active" only proves the process didn't crash -- it doesn't
+          # prove the app actually answers correctly. Hit the real route.
+          set -e
+          curl -sf http://127.0.0.1:5002/health
