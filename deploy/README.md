@@ -205,12 +205,82 @@ before relying on it.
    curl -T /path/to/local/file "ftp://<username>:<password>@127.0.0.1/<filename>"
    ```
 
-   **Still not done**: FTPS (needs `mod_tls` config + a real cert --
-   the VM has no cert of its own since TLS normally terminates at the
-   Application Gateway, which doesn't apply to raw FTP traffic), a
-   dedicated sshd for SFTP-push (separate from the VM's own admin SSH
-   on port 22), and generating/applying nftables rules from each
-   account's `allowed_ips`.
+   **FTPS is explicitly out of scope** -- decided against it in favor
+   of SFTP, which needs no certificate at all (SSH host keys, not a
+   TLS cert -- see the SFTP section below). Still not done: generating
+   and applying nftables rules from each account's `allowed_ips`.
+
+7. **SFTP-push receiving**, confirmed working end-to-end (real
+   password login + real upload, tested from this VM, same account
+   used for the FTP test above -- one set of credentials works over
+   either protocol). Uses ProFTPD's own `mod_sftp` rather than a
+   separate sshd instance, so it reuses the exact same `mod_sql`
+   account table -- no second account system to keep in sync.
+
+   `mod_sftp` is bundled in `proftpd-mod-crypto` (already installed in
+   step 6), just needs enabling:
+   ```bash
+   sudo sed -i 's/^#LoadModule mod_sftp\.c/LoadModule mod_sftp.c/' /etc/proftpd/modules.conf
+   grep -n "^LoadModule mod_sftp" /etc/proftpd/modules.conf   # confirm uncommented
+   ```
+
+   Generate dedicated SSH host keys for ProFTPD (not the VM's own
+   sshd host keys -- these are separate, no certificate involved,
+   just a self-generated keypair like any SSH host identity):
+   ```bash
+   sudo ssh-keygen -t ed25519 -f /etc/proftpd/ssh_host_ed25519_key -N ''
+   sudo ssh-keygen -t rsa -b 4096 -f /etc/proftpd/ssh_host_rsa_key -N ''
+   sudo chown root:root /etc/proftpd/ssh_host_*_key
+   sudo chmod 600 /etc/proftpd/ssh_host_*_key
+   ```
+   Run each `ssh-keygen` **individually** and confirm its own output
+   (`Generating public/private ... key pair` + a fingerprint) before
+   moving on -- pasting both as one block silently ran only the first
+   one during this project's own setup, with no error, just a missing
+   second file caught later by `proftpd -t`.
+
+   SSH/SFTP needs a different port than FTP (port 21) and can't share
+   this VM's own admin SSH (port 22) -- ProFTPD requires a separate
+   `<VirtualHost>` block for that, on **port 2222**:
+   ```bash
+   sudo tee /etc/proftpd/conf.d/loader-sftp.conf > /dev/null <<'EOF'
+   <VirtualHost 0.0.0.0>
+     Port 2222
+
+     <IfModule mod_sftp.c>
+       SFTPEngine on
+       SFTPHostKey /etc/proftpd/ssh_host_rsa_key
+       SFTPHostKey /etc/proftpd/ssh_host_ed25519_key
+       SFTPAuthMethods password
+       SFTPCompression delayed
+     </IfModule>
+
+     SQLBackend sqlite3
+     SQLConnectInfo /opt/data-projects/loader-data-gov-gr/data/loader.db
+     SQLPasswordEngine on
+     SQLAuthTypes bcrypt
+     SQLUserInfo ftp_account username password_hash NULL NULL home_directory NULL
+     SQLDefaultUID 995
+     SQLDefaultGID 985
+     RequireValidShell off
+     DefaultRoot ~
+   EOF
+   sudo proftpd -t
+   sudo systemctl restart proftpd
+   sudo ss -tlnp | grep -E ":21|:2222"   # confirm both listeners are up
+   ```
+   The `SQL*` directives are repeated here rather than relied on from
+   the global config in step 6 -- kept explicit per-VirtualHost so
+   there's no ambiguity about what each listener actually uses.
+   `mod_sftp` needed no separate auth wiring: it's a protocol frontend
+   only, and reuses whatever `AuthOrder`/`mod_sql` config is already
+   in effect once `SFTPAuthMethods password` is set (confirmed by
+   this actually working on the first real test, not guessed).
+
+   Real end-to-end test, same account as the FTP test:
+   ```bash
+   curl -T /path/to/local/file "sftp://<username>:<password>@127.0.0.1:2222/<filename>"
+   ```
 
 ## First run
 
