@@ -111,48 +111,106 @@ before relying on it.
    secrets for this project (a password manager) -- it is *not*
    recorded in this repo, on purpose.
 
-6. **FTP-push receiving server** -- in progress, not yet functional.
-   So far:
-   - Upload root created:
-     ```bash
-     sudo mkdir -p /srv/ftp-uploads
-     sudo chown localadmin:localadmin /srv/ftp-uploads
-     sudo chmod 755 /srv/ftp-uploads
-     ```
-   - ProFTPD installed (`proftpd-mod-sqlite` on Ubuntu 24.04 pulls in
-     `proftpd-core` as a dependency; confirmed by actually installing
-     it, package version `1.3.8.b+dfsg-1ubuntu0.1`):
-     ```bash
-     sudo apt update
-     sudo apt install -y proftpd-core proftpd-mod-sqlite
-     ```
-   - **Immediately stopped and disabled** -- its default config isn't
-     the SQLite-backed virtual-user setup we want yet, and shouldn't
-     be reachable until it is:
-     ```bash
-     sudo systemctl stop proftpd
-     sudo systemctl disable proftpd
-     sudo systemctl status proftpd   # confirm: inactive (dead), disabled
-     ```
-     **Confirm that status output for real before doing anything that
-     might reboot the box.** Hit for real on this project: `stop` +
-     `disable` were run, but a VM reboot (for an unrelated pending
-     kernel update) happened before the `disable` had actually been
-     confirmed to take effect, and `proftpd` came back up with default
-     config for about 3 minutes after boot before being caught and
-     stopped again. Low-risk in this specific case (Ubuntu's default
-     proftpd config doesn't allow anonymous login), but the lesson
-     generalizes: `systemctl disable` prevents a *future* boot from
-     starting a service, it does nothing about one that's already
-     running right now -- always pair it with `stop`, and verify both
-     landed via `status` before trusting either.
-   - **Not yet done**: the actual `mod_sql` config wiring ProFTPD to
-     `/opt/data-projects/loader-data-gov-gr/data/loader.db` (the same
-     database the admin API writes to), TLS for FTPS, a dedicated sshd
-     for SFTP-push accounts, and nftables rules generated from each
-     account's IP whitelist. Getting ProFTPD's real expected
-     password-hash format right needs verifying against actual
-     ProFTPD docs before writing any of this -- in progress.
+6. **FTP-push receiving server.** Plain FTP over `mod_sql`-backed
+   virtual users is confirmed working end-to-end (real login + real
+   upload, tested from this VM). FTPS/TLS, a dedicated sshd for
+   SFTP-push accounts, and nftables rules generated from each
+   account's IP whitelist are still not done -- see the end of this
+   section.
+
+   Upload root:
+   ```bash
+   sudo mkdir -p /srv/ftp-uploads
+   sudo chown localadmin:localadmin /srv/ftp-uploads
+   sudo chmod 755 /srv/ftp-uploads
+   ```
+
+   Install ProFTPD + the SQLite and bcrypt/TLS modules (`proftpd-mod-sqlite`
+   pulls in `proftpd-core`; `proftpd-mod-crypto` ships `mod_sql_passwd`
+   (bcrypt) and `mod_tls` (FTPS), neither is pulled in automatically):
+   ```bash
+   sudo apt update
+   sudo apt install -y proftpd-core proftpd-mod-sqlite proftpd-mod-crypto
+   ```
+
+   Enable the SQL modules (commented out by default) -- order matters,
+   `mod_sql.c` must load before the others, which is already how
+   they're ordered in the stock file:
+   ```bash
+   sudo sed -i \
+     -e 's/^#LoadModule mod_sql\.c/LoadModule mod_sql.c/' \
+     -e 's/^#LoadModule mod_sql_sqlite\.c/LoadModule mod_sql_sqlite.c/' \
+     -e 's/^#LoadModule mod_sql_passwd\.c/LoadModule mod_sql_passwd.c/' \
+     /etc/proftpd/modules.conf
+   grep -n "^LoadModule mod_sql" /etc/proftpd/modules.conf   # expect 3 lines
+   ```
+
+   Create a dedicated, non-login system account that every virtual
+   user maps to (not a real per-provider Linux account -- this is
+   `SQLDefaultUID`/`GID`'s target):
+   ```bash
+   sudo useradd --system --no-create-home --shell /usr/sbin/nologin virtualftp
+   id virtualftp   # note the uid/gid, needed below
+   ```
+
+   Write the actual SQL config. `/etc/proftpd/conf.d/*.conf` is
+   auto-included (`proftpd.conf:210`, already active by default -- no
+   edit to the main config needed). Replace `<uid>`/`<gid>` with what
+   `id virtualftp` printed:
+   ```bash
+   sudo tee /etc/proftpd/conf.d/loader-virtual-users.conf > /dev/null <<'EOF'
+   SQLBackend sqlite3
+   SQLConnectInfo /opt/data-projects/loader-data-gov-gr/data/loader.db
+   SQLPasswordEngine on
+   SQLAuthTypes bcrypt
+   SQLUserInfo ftp_account username password_hash NULL NULL home_directory NULL
+   SQLDefaultUID <uid>
+   SQLDefaultGID <gid>
+   RequireValidShell off
+   DefaultRoot ~
+   EOF
+   sudo proftpd -t   # syntax check only, doesn't start anything
+   ```
+
+   **Two real gotchas hit getting this working, both already fixed in
+   code/schema, not just worked around by hand:**
+   - ProFTPD's `mod_sql` unconditionally queries a table literally
+     named `groups` during auth, even with no `SQLGroupInfo` directive
+     and no group features used -- `SQLDefaultUID`/`GID` only supply
+     *fallback values*, they don't suppress the lookup. Without it,
+     every login fails with `mod_sql/4.5: unrecoverable backend
+     error: ... no such table: groups`. Fixed by adding an empty
+     `FtpGroup` model (`groupname`/`gid`/`members` columns) to
+     `models.py` -- created automatically via `Base.metadata.create_all()`
+     on any deploy, nothing to do by hand.
+   - `bcrypt.gensalt()`'s own default produces a `$2b$`-prefixed hash;
+     ProFTPD's `mod_sql_passwd` here silently rejects those (`530
+     Login incorrect`, nothing logged as an error) while the identical
+     password re-hashed as `$2a$` works. Fixed in `admin_ftp.py`'s
+     `_hash_password()` (`bcrypt.gensalt(prefix=b"2a")`) -- any account
+     created through the admin API after that fix landed already gets
+     a compatible hash; nothing to do by hand for new accounts.
+
+   Enable and start:
+   ```bash
+   sudo systemctl enable proftpd
+   sudo systemctl restart proftpd
+   sudo systemctl status proftpd
+   sudo tail -30 /var/log/proftpd/proftpd.log   # ProFTPD's own log, NOT journalctl -- connection-level detail lives here, not in the systemd journal
+   ```
+
+   Real end-to-end test (create an account via the admin API first,
+   see step 5's `curl` pattern, then use its returned username/password):
+   ```bash
+   curl -T /path/to/local/file "ftp://<username>:<password>@127.0.0.1/<filename>"
+   ```
+
+   **Still not done**: FTPS (needs `mod_tls` config + a real cert --
+   the VM has no cert of its own since TLS normally terminates at the
+   Application Gateway, which doesn't apply to raw FTP traffic), a
+   dedicated sshd for SFTP-push (separate from the VM's own admin SSH
+   on port 22), and generating/applying nftables rules from each
+   account's `allowed_ips`.
 
 ## First run
 
