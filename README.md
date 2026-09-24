@@ -21,7 +21,7 @@ pipeline. Do not add a dependency from here back onto
 `ckanext.providerharvest` (or vice versa) -- the whole point is these
 are independently deployable.
 
-## Status: engine + CKAN adapter + working CI/CD + a live FTP/SFTP receiving server + token provisioning + provider/admin source-registration UI
+## Status: engine + CKAN adapter + working CI/CD + a live FTP/SFTP receiving server + token provisioning + provider/admin source-registration UI + connection health checks
 
 `providerharvest_service/engine/` -- the transport implementations
 (HTTP/SFTP/SCP/FTP), the HTTP auth strategies (API key/Basic/OAuth2
@@ -167,10 +167,25 @@ yet touch CKAN at all**: approving a source just flips its status --
 no `harvest_source_create`/package/DataStore provisioning over the
 Action API yet, that's a later slice once an actual harvest run needs
 those to exist. Field-mapping rows (`row_rules`) and the
-test-connection/fetch-host-key dry-run endpoints aren't ported yet
-either -- registering a source today requires knowing (and typing in)
-an SFTP/SCP host-key fingerprint gathered out-of-band, rather than
+fetch-host-key dry-run endpoint aren't ported yet either --
+registering a source today requires knowing (and typing in) an
+SFTP/SCP host-key fingerprint gathered out-of-band, rather than
 fetching it through this UI.
+
+`providerharvest_service/connection_check.py` -- the first piece of
+"external connection to the source" monitoring: `check_connection`
+runs a real dry-run connect + one `list_entries` call against a
+source's actual endpoint, using the already-built, already-tested
+engine transports/auth strategies (`_build_transport` dispatches on
+`transport_type` exactly like the old blueprint's
+`provider_source_test_connection` did), and persists the result
+(`last_check_status` "ok"/"error", a human-readable message, and the
+timestamp) on the row regardless of outcome. Independent of the
+approval `status` machine -- a still-pending source can be checked.
+Fetches nothing beyond one page for the check itself; doesn't create
+or store any harvested records/files -- that's the scheduled-harvest
+slice this sets up for next (same `_build_transport` will be reused
+there).
 
 `providerharvest_service/ui_provider.py` + `ui_admin.py` -- the two
 self-service/admin web UIs (server-rendered Jinja2 templates under
@@ -181,10 +196,16 @@ selected transport/auth type, matching the old blueprint's own
 `/provider/sources/new` are the provider-facing register/list/pause/
 resume flow; `/admin/sources/pending` + `/admin/sources` are the
 admin approval queue and the "every source, any status" dashboard.
-**No login wall on either yet** -- every visitor acts as the single
-stand-in admin/provider user the whole service currently runs as (see
-"not yet built" below); that's a deliberate, temporary simplification
-to prove the registration/approval workflow first, not an oversight.
+Both now show a **Health** column (reachable/unreachable/not checked,
+last-checked timestamp) and a "Test connection" button per source,
+wired to `connection_check.check_connection`. **No login wall on
+either yet** -- every visitor acts as the single stand-in admin/
+provider user the whole service currently runs as (see "not yet built"
+below); that's a deliberate, temporary simplification to prove the
+registration/approval workflow first, not an oversight. Visual design
+matches data.gov.gr's own tokens (navy gradient masthead, Inter font,
+Bootstrap-standard status colors -- confirmed against the live site's
+own `data_gov_gr.css`), so this reads as part of the same platform.
 
 Not yet built, in the rough order they'll likely be needed:
 - Actually registering the Keycloak client (`providerharvest-api`) so
@@ -193,14 +214,18 @@ Not yet built, in the rough order they'll likely be needed:
   wiring the two UIs above to it (real per-user login, a real "which
   org can this person register a source for" check via
   `organization_list_for_user`, replacing the single stand-in user).
-- Field-mapping profiles (`row_rules`) and the test-connection/
-  fetch-host-key dry-run endpoints the old blueprint had.
+- Field-mapping profiles (`row_rules`) and the fetch-host-key dry-run
+  endpoint the old blueprint had.
+- A real scheduler/queue that runs `connection_check`'s same
+  `_build_transport` on each source's `frequency`, actually fetching
+  and storing harvested records/files (own DB, not CKAN DataStore --
+  see next point) rather than a person clicking "Test connection".
+  Storage + a data-browsing UI (run history, sample records) are the
+  next two slices once the scheduler exists.
 - Provisioning an approved source for real in CKAN (harvest-source
   package, DataStore resource) over the Action API via
-  `CKANActionClient` -- deliberately deferred, see above.
-- Its own scheduler/queue for running harvests -- `ckanext-harvest`'s
-  gather/fetch/import machinery doesn't come along; this service owns
-  that job-queue concern itself now.
+  `CKANActionClient` -- deliberately deferred; harvested data lands in
+  this service's own DB for now, not CKAN's DataStore.
 
 ## Running the tests
 
@@ -211,7 +236,7 @@ python -m venv .venv
 ```
 
 No CKAN installation, no Docker, no database -- this is the whole point
-of the split being checked for real, not just asserted. 170 tests,
+of the split being checked for real, not just asserted. 181 tests,
 all passing with zero CKAN present.
 
 ## Running the app locally

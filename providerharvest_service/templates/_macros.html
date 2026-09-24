@@ -41,6 +41,10 @@
     <svg width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
   {% elif name == "inbox" %}
     <svg width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l2.5-7h11L20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M4 12h4.5l1 2h5l1-2H20"/></svg>
+  {% elif name == "pulse" %}
+    <svg width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-7 4 14 2-7h6"/></svg>
+  {% elif name == "unchecked" %}
+    <svg width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" stroke-dasharray="3 3"/><path d="M9.5 9.3a2.5 2.5 0 0 1 4.9.7c0 1.6-2.2 1.6-2.4 3.3M12 17v.01"/></svg>
   {% endif %}
 {%- endmacro %}
 
@@ -50,6 +54,19 @@
 
 {% macro transport_badge(transport_type) -%}
   <span class="chip">{{ icon(transport_type, 15) }}<span>{{ transport_type }}</span></span>
+{%- endmacro %}
+
+{% macro health_badge(source) -%}
+  {% if source.last_check_status == "ok" %}
+    <span class="badge badge-ok" title="{{ source.last_check_message }}">{{ icon("active", 13) }}<span>reachable</span></span>
+  {% elif source.last_check_status == "error" %}
+    <span class="badge badge-error" title="{{ source.last_check_message }}">{{ icon("rejected", 13) }}<span>unreachable</span></span>
+  {% else %}
+    <span class="badge badge-unchecked">{{ icon("unchecked", 13) }}<span>not checked</span></span>
+  {% endif %}
+  {% if source.last_check_at %}
+    <div class="muted health-timestamp">{{ source.last_check_at.strftime("%Y-%m-%d %H:%M") }} UTC</div>
+  {% endif %}
 {%- endmacro %}
 
 {% macro stat_tile(label, value, status) -%}

@@ -26,6 +26,7 @@ from urllib.parse import urlparse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from providerharvest_service.engine.secrets.base import SecretBundle
 from providerharvest_service.engine.secrets.envelope import EnvelopeSecretsBackend
 from providerharvest_service.models import ProviderSource, _new_id
 
@@ -120,6 +121,15 @@ class ProviderSourceSecretRepository:
 
 def _secrets_backend(session: Session) -> EnvelopeSecretsBackend:
     return EnvelopeSecretsBackend(repository=ProviderSourceSecretRepository(session))
+
+
+def credentials(session: Session, source_id: str) -> SecretBundle:
+    """Decrypts and returns a source's stored credentials -- for
+    connection_check.py's dry-run health check, and later the actual
+    scheduled-harvest run. Never cache the result beyond the current
+    call (same rule engine/secrets/base.py's SecretBundle itself
+    documents)."""
+    return _secrets_backend(session).get(source_id)
 
 
 def _http_fields(form: dict, errors: dict) -> tuple[str, dict, dict]:

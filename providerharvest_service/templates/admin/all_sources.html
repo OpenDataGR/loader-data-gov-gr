@@ -21,7 +21,7 @@
     {% else %}
       <table>
         <thead>
-          <tr><th>Source</th><th>Connector</th><th>Endpoint</th><th>Status</th><th></th></tr>
+          <tr><th>Source</th><th>Connector</th><th>Endpoint</th><th>Status</th><th>Health</th><th></th></tr>
         </thead>
         <tbody>
           {% for s in sources %}
@@ -35,7 +35,11 @@
                 <div class="muted">{{ s.rejection_reason }}</div>
               {% endif %}
             </td>
+            <td>{{ macros.health_badge(s) }}</td>
             <td>
+              <form class="inline" method="post" action="/admin/sources/{{ s.id }}/check-connection">
+                <button type="submit" class="btn-secondary btn-sm">{{ macros.icon("pulse", 14) }} Test</button>
+              </form>
               {% if s.status == "pending" %}
                 <form class="inline" method="post" action="/admin/sources/{{ s.id }}/activate">
                   <button type="submit" class="btn-sm">{{ macros.icon("check", 14) }} Activate</button>

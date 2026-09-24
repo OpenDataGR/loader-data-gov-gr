@@ -144,6 +144,16 @@ class ProviderSource(Base):
     notification_email: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
 
+    # Connection health: set by connection_check.check_connection, a real
+    # dry-run reachability/auth check against the source's actual
+    # endpoint -- independent of `status` above (a pending source can
+    # still be checked; a checked source can still be rejected). Never
+    # fetches or stores any harvested data itself -- see README's
+    # roadmap for the scheduled-harvest slice that will.
+    last_check_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    last_check_status: Mapped[str | None] = mapped_column(String, nullable=True)  # "ok" | "error"
+    last_check_message: Mapped[str | None] = mapped_column(String, nullable=True)
+
 
 class FtpAllowedIp(Base):
     __tablename__ = "ftp_allowed_ip"

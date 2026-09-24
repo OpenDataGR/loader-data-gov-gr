@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from providerharvest_service import provider_sources
+from providerharvest_service import connection_check, provider_sources
 from providerharvest_service.db import get_session
 
 router = APIRouter(prefix="/admin/sources", tags=["admin-ui"])
@@ -111,6 +111,21 @@ def resume(source_id: str, request: Request, session: Session = Depends(get_sess
     except provider_sources.InvalidTransition as exc:
         flash = str(exc)
     return RedirectResponse(_came_from(request, "/admin/sources", flash, kind="error"), status_code=303)
+
+
+@router.post("/{source_id}/check-connection")
+def check_connection(source_id: str, request: Request, session: Session = Depends(get_session)) -> RedirectResponse:
+    try:
+        source = connection_check.check_connection(session, source_id)
+    except provider_sources.NotFound:
+        return RedirectResponse(
+            _came_from(request, "/admin/sources", "No such source.", kind="error"), status_code=303
+        )
+    kind = "success" if source.last_check_status == "ok" else "error"
+    return RedirectResponse(
+        _came_from(request, "/admin/sources", "Connection check: %s" % source.last_check_message, kind=kind),
+        status_code=303,
+    )
 
 
 _ALLOWED_REDIRECT_PATHS = ("/admin/sources", "/admin/sources/pending")

@@ -4,8 +4,9 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-from providerharvest_service import db, provider_sources
+from providerharvest_service import connection_check, db, provider_sources
 from providerharvest_service.app import app
+from providerharvest_service.engine.transport.base import Entry, Page, Transport
 
 
 @pytest.fixture(autouse=True)
@@ -107,3 +108,52 @@ def test_activating_unknown_source_shows_not_found_message(client):
     assert resp.status_code == 303
     followed = client.get(resp.headers["location"])
     assert "No such source." in followed.text
+
+
+class _FakeTransport(Transport):
+    def __init__(self, entries=None, error=None):
+        self._entries = entries or []
+        self._error = error
+
+    def connect(self):
+        if self._error:
+            raise self._error
+
+    def list_entries(self, cursor):
+        return Page(entries=self._entries, next_cursor=None)
+
+    def open_entry(self, entry):
+        raise NotImplementedError
+
+    def close(self):
+        pass
+
+
+def test_check_connection_persists_health_status(client, _isolated_db, monkeypatch):
+    monkeypatch.setattr(
+        connection_check, "_build_transport",
+        lambda source, secret: _FakeTransport(entries=[Entry(ref="r1"), Entry(ref="r2")]),
+    )
+    source_id = _register(_isolated_db)
+
+    resp = client.post("/admin/sources/%s/check-connection" % source_id, follow_redirects=False)
+    assert resp.status_code == 303
+    assert "flash_kind=success" in resp.headers["location"]
+
+    all_sources = client.get("/admin/sources")
+    assert "reachable" in all_sources.text
+
+
+def test_check_connection_on_unreachable_source_shows_error(client, _isolated_db, monkeypatch):
+    monkeypatch.setattr(
+        connection_check, "_build_transport",
+        lambda source, secret: _FakeTransport(error=TimeoutError("timed out")),
+    )
+    source_id = _register(_isolated_db)
+
+    resp = client.post("/admin/sources/%s/check-connection" % source_id, follow_redirects=False)
+    assert resp.status_code == 303
+    assert "flash_kind=error" in resp.headers["location"]
+
+    all_sources = client.get("/admin/sources")
+    assert "unreachable" in all_sources.text

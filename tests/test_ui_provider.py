@@ -1,11 +1,13 @@
 import base64
 import os
+import re
 
 import pytest
 from fastapi.testclient import TestClient
 
-from providerharvest_service import db
+from providerharvest_service import connection_check, db
 from providerharvest_service.app import app
+from providerharvest_service.engine.transport.base import Entry, Page, Transport
 
 
 @pytest.fixture(autouse=True)
@@ -92,6 +94,59 @@ def test_pause_and_resume_flow(client, _isolated_db):
     client.post("/provider/sources/%s/resume" % source_id)
     listing = client.get("/provider/sources")
     assert "active" in listing.text
+
+
+class _FakeTransport(Transport):
+    def __init__(self, entries=None, error=None):
+        self._entries = entries or []
+        self._error = error
+
+    def connect(self):
+        if self._error:
+            raise self._error
+
+    def list_entries(self, cursor):
+        return Page(entries=self._entries, next_cursor=None)
+
+    def open_entry(self, entry):
+        raise NotImplementedError
+
+    def close(self):
+        pass
+
+
+def test_check_connection_shows_reachable_health_badge(client, monkeypatch):
+    monkeypatch.setattr(
+        connection_check, "_build_transport",
+        lambda source, secret: _FakeTransport(entries=[Entry(ref="r1")]),
+    )
+    client.post("/provider/sources/new", data=_valid_form())
+    listing = client.get("/provider/sources")
+    source_id = re.search(r"/provider/sources/([^/]+)/check-connection", listing.text).group(1)
+
+    resp = client.post("/provider/sources/%s/check-connection" % source_id, follow_redirects=False)
+    assert resp.status_code == 303
+    assert "flash_kind=success" in resp.headers["location"]
+
+    listing = client.get("/provider/sources")
+    assert "reachable" in listing.text
+
+
+def test_check_connection_shows_unreachable_health_badge_on_failure(client, monkeypatch):
+    monkeypatch.setattr(
+        connection_check, "_build_transport",
+        lambda source, secret: _FakeTransport(error=ConnectionRefusedError("refused")),
+    )
+    client.post("/provider/sources/new", data=_valid_form())
+    listing = client.get("/provider/sources")
+    source_id = re.search(r"/provider/sources/([^/]+)/check-connection", listing.text).group(1)
+
+    resp = client.post("/provider/sources/%s/check-connection" % source_id, follow_redirects=False)
+    assert resp.status_code == 303
+    assert "flash_kind=error" in resp.headers["location"]
+
+    listing = client.get("/provider/sources")
+    assert "unreachable" in listing.text
 
 
 def test_flash_message_with_special_characters_does_not_break_redirect(client):
