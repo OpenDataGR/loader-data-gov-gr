@@ -32,7 +32,12 @@
           <tr>
             <td><div class="name-title">{{ s.title }}</div><div class="name-slug">{{ s.name }}</div></td>
             <td>{{ macros.transport_badge(s.transport_type) }}</td>
-            <td class="muted">{{ s.endpoint_url }}</td>
+            <td class="muted">
+              {{ s.endpoint_url }}
+              {% if s.transport_type == "http" and s.status == "active" %}
+                <div class="proxy-url"><a href="/proxy/{{ s.name }}">/proxy/{{ s.name }}</a></div>
+              {% endif %}
+            </td>
             <td>{{ s.frequency }}</td>
             <td>
               {{ macros.status_badge(s.status) }}

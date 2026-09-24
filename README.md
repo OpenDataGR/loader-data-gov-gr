@@ -21,7 +21,7 @@ pipeline. Do not add a dependency from here back onto
 `ckanext.providerharvest` (or vice versa) -- the whole point is these
 are independently deployable.
 
-## Status: engine + CKAN adapter + working CI/CD + a live FTP/SFTP receiving server + token provisioning + provider/admin source-registration UI + connection health checks
+## Status: engine + CKAN adapter + working CI/CD + a live FTP/SFTP receiving server + token provisioning + provider/admin source-registration UI + connection health checks + a live API proxy
 
 `providerharvest_service/engine/` -- the transport implementations
 (HTTP/SFTP/SCP/FTP), the HTTP auth strategies (API key/Basic/OAuth2
@@ -187,6 +187,39 @@ or store any harvested records/files -- that's the scheduled-harvest
 slice this sets up for next (same `_build_transport` will be reused
 there).
 
+`providerharvest_service/db.py`'s `_sync_schema` -- there's no Alembic/
+migration framework here, so `create_all()` alone isn't enough once a
+model gains a column: it only ever creates tables that don't exist yet,
+never alters one that's already there. Learned this the hard way in
+production (adding `ProviderSource.last_check_*` 500'd every
+source-listing page against the already-deployed SQLite file with "no
+such column") -- `_sync_schema` now adds any column a model declares
+but an existing table is missing, via SQLite's `ALTER TABLE ... ADD
+COLUMN`, on every `make_engine()` call. Covered by a regression test
+that reproduces the exact pre-migration table shape.
+
+`providerharvest_service/proxy.py` -- a live API proxy for providers
+who don't want their own API publicly reachable at all: `GET
+/proxy/{source_name}` forwards to exactly that source's registered
+`endpoint_url` (the caller's query parameters passed through, auth
+injected server-side via the same `engine/auth_strategies` every other
+piece uses) and relays the response back -- one live call in, one live
+call out, nothing scheduled, nothing stored. Only for
+`transport_type="http"` sources that are `status="active"` -- a
+pending/rejected/paused source's real endpoint and credentials are
+never reachable through this route, not even to prove it exists (same
+404 either way). Upstream response headers are never passed through
+verbatim (only content/status/content-type) so an upstream `Set-Cookie`
+or `WWW-Authenticate` can't leak to the caller. Per-source rate
+limiting reuses `engine/transport/rate_limit.py`'s `TokenBucket`, but
+it's an in-process cache -- under this service's real `gunicorn -w 4`
+deploy, each worker has its own independent bucket, so the *effective*
+production ceiling is up to ~4x a source's configured limit, not exact
+(a cross-process limiter is a follow-up once that imprecision actually
+matters). No consumer-level access control yet, matching this whole
+service's current "no auth wall" posture -- anyone who knows a source's
+name can call its proxy today.
+
 `providerharvest_service/ui_provider.py` + `ui_admin.py` -- the two
 self-service/admin web UIs (server-rendered Jinja2 templates under
 `providerharvest_service/templates/`, no JS build step -- a small
@@ -236,7 +269,7 @@ python -m venv .venv
 ```
 
 No CKAN installation, no Docker, no database -- this is the whole point
-of the split being checked for real, not just asserted. 181 tests,
+of the split being checked for real, not just asserted. 191 tests,
 all passing with zero CKAN present.
 
 ## Running the app locally
