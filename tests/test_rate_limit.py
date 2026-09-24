@@ -29,3 +29,28 @@ def test_blocks_and_waits_once_exhausted():
     bucket.acquire()  # 61st call must wait for a refill
     assert len(sleeps) == 1
     assert sleeps[0] > 0
+
+
+def test_try_acquire_never_sleeps_and_returns_false_once_exhausted():
+    clock = {"t": 0.0}
+    sleeps = []
+    bucket = TokenBucket(3, clock=lambda: clock["t"], sleep=sleeps.append)
+
+    assert bucket.try_acquire() is True
+    assert bucket.try_acquire() is True
+    assert bucket.try_acquire() is True
+    assert bucket.try_acquire() is False  # 4th call: no token available
+    assert sleeps == []  # never blocks, regardless of outcome
+
+
+def test_try_acquire_refills_over_time():
+    clock = {"t": 0.0}
+    bucket = TokenBucket(60, clock=lambda: clock["t"], sleep=lambda s: None)  # 1/sec refill
+
+    for _ in range(60):
+        assert bucket.try_acquire() is True
+    assert bucket.try_acquire() is False
+
+    clock["t"] += 1.0  # one second later, one token refilled
+    assert bucket.try_acquire() is True
+    assert bucket.try_acquire() is False

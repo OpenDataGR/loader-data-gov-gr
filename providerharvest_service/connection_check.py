@@ -45,6 +45,7 @@ def _build_transport(source: ProviderSource, secret: SecretBundle) -> Transport:
             secret=secret,
             pagination=config.get("pagination", {}),
             auth_opts=config.get("auth_opts"),
+            max_requests_per_minute=config.get("max_requests_per_minute", 60),
         )
 
     if source.transport_type in ("sftp", "scp"):

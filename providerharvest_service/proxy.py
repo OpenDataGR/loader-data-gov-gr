@@ -28,19 +28,41 @@ whole service's current "no auth wall yet" posture) -- anyone who
 knows a source's name can call its proxy. Revisit once Keycloak-backed
 per-consumer access control exists.
 
-Rate limiting is a per-process, in-memory TokenBucket keyed by source
-id -- correct on a single-process deployment, but this service runs
-under gunicorn with multiple worker processes (see
+Two independent rate limits, both per-process, in-memory TokenBuckets --
+correct on a single-process deployment, but this service runs under
+gunicorn with multiple worker processes (see
 deploy/loader-data-gov-gr.service, ``-w 4``), each with its own
-independent bucket. The *effective* ceiling in production is therefore
-up to ~4x a source's configured max_requests_per_minute, not exact --
-a real cross-process limiter (Redis, or this service's own DB) is a
-follow-up once that imprecision actually matters.
+independent buckets. The *effective* ceiling in production is therefore
+up to ~4x either configured number, not exact -- a real cross-process
+limiter (Redis, or this service's own DB) is a follow-up once that
+imprecision actually matters:
+
+  * ``max_requests_per_minute`` -- this service's own total outbound
+    call rate to the provider, shared across every caller of this
+    source's proxy (the same budget a scheduled harvest run will also
+    draw from, once that exists). Enforced with the blocking
+    ``acquire()`` -- smoothing a burst by making the caller wait a
+    little is fine here, since only ONE well-behaved caller's request
+    is ever waiting on it at a time in the common case.
+  * ``proxy_rate_limit_per_ip`` -- how much of that shared budget any
+    single calling IP may consume. Enforced with the non-blocking
+    ``try_acquire()`` instead: rejecting an abusive caller outright
+    with 429 is correct here, where *blocking* would tie up a worker
+    thread sleeping on behalf of the exact caller being throttled --
+    with only `-w 4` workers, a handful of hammering callers doing
+    that could exhaust the whole pool.
+
+The per-IP bucket cache is bounded (see ``_MAX_TRACKED_CALLERS``) and
+evicts least-recently-used entries -- unlike the per-source cache
+(naturally bounded by how many sources exist), a per-(source, caller
+IP) cache would otherwise grow forever over the life of a long-running
+process.
 """
 
 from __future__ import annotations
 
 import json
+from collections import OrderedDict
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -58,10 +80,14 @@ from providerharvest_service.models import ProviderSource
 router = APIRouter(prefix="/proxy", tags=["proxy"])
 
 DEFAULT_TIMEOUT_S = 30
+_MAX_TRACKED_CALLERS = 4096
 
 #: Per-process, per-source rate limiters -- see module docstring for
 #: why this is an approximate, not exact, ceiling in production.
 _rate_limiters: dict[str, TokenBucket] = {}
+
+#: Per-process, per-(source, caller IP) rate limiters, bounded + LRU-evicted.
+_per_ip_limiters: "OrderedDict[tuple[str, str], TokenBucket]" = OrderedDict()
 
 
 def _rate_limiter_for(source_id: str, max_requests_per_minute: int) -> TokenBucket:
@@ -69,6 +95,19 @@ def _rate_limiter_for(source_id: str, max_requests_per_minute: int) -> TokenBuck
     if bucket is None:
         bucket = TokenBucket(max_requests_per_minute)
         _rate_limiters[source_id] = bucket
+    return bucket
+
+
+def _per_ip_rate_limiter_for(source_id: str, client_ip: str, max_requests_per_minute: int) -> TokenBucket:
+    key = (source_id, client_ip)
+    bucket = _per_ip_limiters.get(key)
+    if bucket is not None:
+        _per_ip_limiters.move_to_end(key)
+        return bucket
+    if len(_per_ip_limiters) >= _MAX_TRACKED_CALLERS:
+        _per_ip_limiters.popitem(last=False)
+    bucket = TokenBucket(max_requests_per_minute)
+    _per_ip_limiters[key] = bucket
     return bucket
 
 
@@ -99,6 +138,17 @@ def proxy_call(
 ) -> Response:
     source = _get_active_http_source_or_404(session, source_name)
     config = json.loads(source.config or "{}")
+
+    client_ip = request.client.host if request.client else "unknown"
+    per_ip_bucket = _per_ip_rate_limiter_for(
+        source.id, client_ip, config.get("proxy_rate_limit_per_ip", 30)
+    )
+    if not per_ip_bucket.try_acquire():
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "rate limit exceeded for this source -- try again shortly",
+            headers={"Retry-After": "60"},
+        )
 
     try:
         assert_safe_http_url(source.endpoint_url)

@@ -165,3 +165,10 @@ def test_build_transport_dispatches_on_transport_type(session):
     })
     secret = provider_sources.credentials(session, ftp_source.id)
     assert isinstance(connection_check._build_transport(ftp_source, secret), FTPTransport)
+
+
+def test_build_transport_uses_the_sources_configured_rate_limit(session):
+    source = _register_http(session, max_requests_per_minute="15")
+    secret = provider_sources.credentials(session, source.id)
+    transport = connection_check._build_transport(source, secret)
+    assert transport._rate_limiter._capacity == 15

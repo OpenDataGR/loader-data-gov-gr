@@ -91,6 +91,48 @@ def test_register_with_proxy_checkbox_omitted_disables_proxy(session):
     assert source.proxy_enabled is False
 
 
+def test_register_defaults_rate_limits_when_not_specified(session):
+    import json
+    source = provider_sources.register(session, _http_form())
+    config = json.loads(source.config)
+    assert config["max_requests_per_minute"] == 60
+    assert config["proxy_rate_limit_per_ip"] == 30
+
+
+def test_register_respects_custom_rate_limits(session):
+    import json
+    source = provider_sources.register(session, _http_form(
+        max_requests_per_minute="120", proxy_rate_limit_per_ip="10",
+    ))
+    config = json.loads(source.config)
+    assert config["max_requests_per_minute"] == 120
+    assert config["proxy_rate_limit_per_ip"] == 10
+
+
+def test_register_rejects_non_numeric_rate_limit(session):
+    with pytest.raises(provider_sources.ValidationError) as exc_info:
+        provider_sources.register(session, _http_form(max_requests_per_minute="lots"))
+    assert "max_requests_per_minute" in exc_info.value.errors
+
+
+def test_register_rejects_zero_or_negative_rate_limit(session):
+    with pytest.raises(provider_sources.ValidationError) as exc_info:
+        provider_sources.register(session, _http_form(proxy_rate_limit_per_ip="0"))
+    assert "proxy_rate_limit_per_ip" in exc_info.value.errors
+
+
+def test_register_rejects_non_numeric_sftp_port_without_crashing(session):
+    with pytest.raises(provider_sources.ValidationError) as exc_info:
+        provider_sources.register(session, _sftp_form(sftp_port="not-a-port"))
+    assert "sftp_port" in exc_info.value.errors
+
+
+def test_register_rejects_non_numeric_ftp_port_without_crashing(session):
+    with pytest.raises(provider_sources.ValidationError) as exc_info:
+        provider_sources.register(session, _ftp_form(ftp_port="not-a-port"))
+    assert "ftp_port" in exc_info.value.errors
+
+
 def test_register_rejects_duplicate_name(session):
     provider_sources.register(session, _http_form())
     with pytest.raises(provider_sources.ValidationError) as exc_info:

@@ -33,12 +33,15 @@ def _isolated_db(tmp_path):
 
 @pytest.fixture(autouse=True)
 def _clear_rate_limiters():
-    # Module-level cache, keyed by source id -- a fresh isolated DB each
-    # test means fresh source ids, but clear it anyway so no test can
-    # ever depend on bucket state a previous test left behind.
+    # Module-level caches, keyed by source id (and by (source id, caller
+    # IP) for the per-IP one) -- a fresh isolated DB each test means
+    # fresh source ids, but clear both anyway so no test can ever depend
+    # on bucket state a previous test left behind.
     proxy._rate_limiters.clear()
+    proxy._per_ip_limiters.clear()
     yield
     proxy._rate_limiters.clear()
+    proxy._per_ip_limiters.clear()
 
 
 @pytest.fixture
@@ -99,6 +102,51 @@ def test_proxies_to_the_registered_endpoint_with_auth_injected(client, _isolated
     assert url == "https://provider.example.gr/api/records"
     assert kwargs["params"]["category"] == "health"
     assert kwargs["params"]["api_key"] == "the-real-secret-key"
+
+
+def test_per_ip_rate_limit_returns_429_once_exceeded(client, _isolated_db, monkeypatch):
+    _register_active_http_source(_isolated_db, proxy_rate_limit_per_ip="1")
+    monkeypatch.setattr(
+        proxy.requests, "get", lambda url, **kwargs: FakeUpstreamResponse(content=b"{}"),
+    )
+    monkeypatch.setattr(proxy, "assert_safe_http_url", lambda url: None)
+
+    first = client.get("/proxy/acme-open-data")
+    assert first.status_code == 200
+
+    second = client.get("/proxy/acme-open-data")
+    assert second.status_code == 429
+    assert second.headers["retry-after"] == "60"
+
+
+def test_per_ip_rate_limit_is_independent_per_source(_isolated_db):
+    """Direct unit coverage (not via TestClient, which reuses one fake
+    client IP for every request): two different sources must not share
+    a caller's budget just because the same IP called both."""
+    bucket_a = proxy._per_ip_rate_limiter_for("source-a", "1.2.3.4", 1)
+    bucket_b = proxy._per_ip_rate_limiter_for("source-b", "1.2.3.4", 1)
+    assert bucket_a.try_acquire() is True
+    assert bucket_a.try_acquire() is False  # source-a's budget for this IP is spent
+    assert bucket_b.try_acquire() is True  # source-b's is untouched
+
+
+def test_per_ip_rate_limit_is_independent_per_caller(_isolated_db):
+    bucket_1 = proxy._per_ip_rate_limiter_for("source-a", "1.1.1.1", 1)
+    bucket_2 = proxy._per_ip_rate_limiter_for("source-a", "2.2.2.2", 1)
+    assert bucket_1.try_acquire() is True
+    assert bucket_1.try_acquire() is False
+    assert bucket_2.try_acquire() is True  # a different caller IP, unaffected
+
+
+def test_per_ip_cache_evicts_least_recently_used_once_bounded(monkeypatch):
+    monkeypatch.setattr(proxy, "_MAX_TRACKED_CALLERS", 2)
+    proxy._per_ip_limiters.clear()
+
+    proxy._per_ip_rate_limiter_for("s", "ip-1", 10)
+    proxy._per_ip_rate_limiter_for("s", "ip-2", 10)
+    proxy._per_ip_rate_limiter_for("s", "ip-3", 10)  # evicts ip-1, the least recently used
+
+    assert list(proxy._per_ip_limiters.keys()) == [("s", "ip-2"), ("s", "ip-3")]
 
 
 def test_caller_cannot_override_the_injected_api_key(client, _isolated_db, monkeypatch):

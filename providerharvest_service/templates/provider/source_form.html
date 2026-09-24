@@ -119,10 +119,18 @@
         <label for="items_path">Records path in the response (optional)</label>
         <input type="text" id="items_path" name="items_path" value="{{ data.get('items_path', 'results') }}">
 
+        <label for="max_requests_per_minute">Rate limit -- max requests per minute to the provider</label>
+        <input type="number" class="small" id="max_requests_per_minute" name="max_requests_per_minute" value="{{ data.get('max_requests_per_minute', '60') }}">
+        {% if errors.max_requests_per_minute %}<div class="error">{{ errors.max_requests_per_minute }}</div>{% endif %}
+
         <div class="checkbox-row">
           <input type="checkbox" id="proxy_enabled" name="proxy_enabled" {% if data.get('proxy_enabled') == 'on' %}checked{% endif %}>
           <label for="proxy_enabled">Also expose this as a live proxy (<code>/proxy/{name}</code>) for consumers who need real-time access, not just a scheduled pull</label>
         </div>
+
+        <label for="proxy_rate_limit_per_ip">Per-caller limit -- max requests per minute, per calling IP, through the proxy</label>
+        <input type="number" class="small" id="proxy_rate_limit_per_ip" name="proxy_rate_limit_per_ip" value="{{ data.get('proxy_rate_limit_per_ip', '30') }}">
+        {% if errors.proxy_rate_limit_per_ip %}<div class="error">{{ errors.proxy_rate_limit_per_ip }}</div>{% endif %}
       </fieldset>
 
       <fieldset id="fieldset-ssh">

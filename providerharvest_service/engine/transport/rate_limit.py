@@ -40,3 +40,17 @@ class TokenBucket:
                 deficit = 1 - self._tokens
                 wait_s = deficit / self._refill_per_second
             self._sleep(wait_s)
+
+    def try_acquire(self) -> bool:
+        """Non-blocking: consumes a token and returns True if one was
+        immediately available, False otherwise -- never sleeps. For
+        callers where blocking the caller isn't appropriate (e.g.
+        rejecting an inbound request with 429 rather than tying up a
+        worker thread sleeping on someone else's behalf); acquire()'s
+        own blocking behavior is unaffected."""
+        with self._lock:
+            self._refill()
+            if self._tokens >= 1:
+                self._tokens -= 1
+                return True
+            return False

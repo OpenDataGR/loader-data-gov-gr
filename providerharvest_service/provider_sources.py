@@ -74,6 +74,28 @@ def _parse_host(endpoint_url: str) -> str:
     return endpoint_url.split("/")[0].split(":")[0]
 
 
+def _parse_positive_int(raw, default: int, field_name: str, errors: dict) -> int:
+    """A blank/missing value falls back to `default`; anything else must
+    parse as a positive integer -- reject clearly rather than crash.
+    (Port fields used to call bare ``int(...)`` with no guard at all,
+    which raised an unhandled ValueError -- a 500, not a validation
+    error -- on a non-numeric value; folded into this same helper
+    rather than leaving that path unguarded next to a new field that
+    needs the identical check.)"""
+    raw = (raw or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        errors[field_name] = "must be a positive whole number"
+        return default
+    if value <= 0:
+        errors[field_name] = "must be a positive whole number"
+        return default
+    return value
+
+
 class ProviderSourceSecretRepository:
     """Implements engine.secrets.envelope.SecretRepository directly
     against ProviderSource's own secret_* columns -- same pattern as
@@ -184,6 +206,18 @@ def _http_fields(form: dict, errors: dict) -> tuple[str, dict, dict]:
             "items_path": (form.get("items_path") or "").strip() or "results",
             "page_param": (form.get("page_param") or "").strip() or "page",
         },
+        "max_requests_per_minute": _parse_positive_int(
+            form.get("max_requests_per_minute"), 60, "max_requests_per_minute", errors
+        ),
+        # A distinct budget from the one above: that one caps this
+        # service's own total outbound call rate to the provider,
+        # shared across every caller; this one caps how much of that
+        # shared budget any single calling IP can consume through
+        # proxy.py, so one abusive consumer can't starve every other
+        # caller of a source's proxy.
+        "proxy_rate_limit_per_ip": _parse_positive_int(
+            form.get("proxy_rate_limit_per_ip"), 30, "proxy_rate_limit_per_ip", errors
+        ),
     }
     return auth_type, credential_fields, config_extra
 
@@ -221,7 +255,7 @@ def _ssh_fields(form: dict, endpoint_url: str, errors: dict) -> tuple[dict, dict
 
     config_extra = {
         "host": _parse_host(endpoint_url),
-        "port": int(form.get("sftp_port") or 22),
+        "port": _parse_positive_int(form.get("sftp_port"), 22, "sftp_port", errors),
         "remote_path": (form.get("sftp_remote_path") or "").strip() or "/",
         "glob_pattern": (form.get("sftp_glob_pattern") or "").strip() or "*",
         "host_key_fingerprint": fingerprint,
@@ -259,7 +293,7 @@ def _ftp_fields(form: dict, endpoint_url: str, errors: dict) -> tuple[dict, dict
     credential_fields = {"username": username, "password": password}
     config_extra = {
         "host": _parse_host(endpoint_url),
-        "port": int(form.get("ftp_port") or 21),
+        "port": _parse_positive_int(form.get("ftp_port"), 21, "ftp_port", errors),
         "remote_path": (form.get("ftp_remote_path") or "").strip() or "/",
         "glob_pattern": (form.get("ftp_glob_pattern") or "").strip() or "*",
         "use_tls": use_tls,
@@ -376,6 +410,8 @@ def config_to_form_fields(source: ProviderSource) -> dict:
         data["oauth2_scope"] = auth_opts.get("scope") or ""
         pagination = config.get("pagination") or {}
         data["items_path"] = pagination.get("items_path", "results")
+        data["max_requests_per_minute"] = str(config.get("max_requests_per_minute", 60))
+        data["proxy_rate_limit_per_ip"] = str(config.get("proxy_rate_limit_per_ip", 30))
     elif source.transport_type in SSH_TRANSPORT_TYPES:
         data["sftp_port"] = str(config.get("port", 22))
         data["sftp_remote_path"] = config.get("remote_path", "/")

@@ -215,15 +215,33 @@ pending/rejected/paused source's real endpoint and credentials are
 never reachable through this route, not even to prove it exists (same
 404 either way). Upstream response headers are never passed through
 verbatim (only content/status/content-type) so an upstream `Set-Cookie`
-or `WWW-Authenticate` can't leak to the caller. Per-source rate
-limiting reuses `engine/transport/rate_limit.py`'s `TokenBucket`, but
-it's an in-process cache -- under this service's real `gunicorn -w 4`
-deploy, each worker has its own independent bucket, so the *effective*
-production ceiling is up to ~4x a source's configured limit, not exact
-(a cross-process limiter is a follow-up once that imprecision actually
-matters). No consumer-level access control yet, matching this whole
-service's current "no auth wall" posture -- anyone who knows a source's
-name can call its proxy today.
+or `WWW-Authenticate` can't leak to the caller.
+
+Two independent, configurable rate limits, both `engine/transport/
+rate_limit.py`'s `TokenBucket`, both in-process caches -- under this
+service's real `gunicorn -w 4` deploy, each worker has its own
+independent buckets, so the *effective* production ceiling for either
+is up to ~4x its configured number, not exact (a cross-process limiter,
+Redis or this service's own DB, is a follow-up once that imprecision
+actually matters):
+- `max_requests_per_minute` (config, default 60, also read by
+  `connection_check`'s own `_build_transport`) -- this service's total
+  outbound call rate to the provider, shared across every caller.
+  Enforced with the blocking `acquire()` -- smoothing a burst by making
+  a caller wait briefly is fine here.
+- `proxy_rate_limit_per_ip` (config, default 30) -- how much of that
+  shared budget any single calling IP may consume, keyed by
+  `(source_id, caller_ip)` and bounded/LRU-evicted at 4096 tracked
+  callers so this doesn't grow forever over a long-running process.
+  Enforced with `TokenBucket`'s new non-blocking `try_acquire()`
+  instead: an abusive caller gets an immediate 429 (with `Retry-After`)
+  rather than tying up one of the 4 gunicorn workers sleeping on their
+  behalf, which blocking would risk exhausting outright. Both fields
+  are on the registration form's HTTP fieldset.
+
+No consumer-level access control yet, matching this whole service's
+current "no auth wall" posture -- anyone who knows a source's name can
+call its proxy today.
 
 Whether a source is proxied at all is **opt-out, not opt-in**:
 `ProviderSource.proxy_enabled` defaults true (a checkbox on the
@@ -305,7 +323,7 @@ python -m venv .venv
 ```
 
 No CKAN installation, no Docker, no database -- this is the whole point
-of the split being checked for real, not just asserted. 215 tests,
+of the split being checked for real, not just asserted. 228 tests,
 all passing with zero CKAN present.
 
 ## Running the app locally
