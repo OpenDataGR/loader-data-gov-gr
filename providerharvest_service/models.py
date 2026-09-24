@@ -154,6 +154,24 @@ class ProviderSource(Base):
     last_check_status: Mapped[str | None] = mapped_column(String, nullable=True)  # "ok" | "error"
     last_check_message: Mapped[str | None] = mapped_column(String, nullable=True)
 
+    # Whether an active transport_type="http" source is also reachable
+    # live via proxy.py's GET /proxy/{name} -- opt-out, not opt-in
+    # (defaults True for a new registration; see the registration form's
+    # own checkbox). Deliberately `nullable=True` despite having a
+    # Python-side default: db._sync_schema adds this column to an
+    # already-existing table via a plain ALTER TABLE ... ADD COLUMN with
+    # no SQL-level DEFAULT, so every row that predates this column gets
+    # SQL NULL, not the Python default -- a NOT NULL column here would
+    # make that ALTER TABLE itself fail on startup (SQLite refuses a
+    # NOT NULL column with no default against a table with existing
+    # rows), which is a strictly worse failure than the "no such column"
+    # incident this same file's own docstring already describes.
+    # Application code must therefore treat NULL as "enabled" (the
+    # backward-compatible default for every source registered before
+    # this column existed) -- always compare with
+    # ``is False`` / ``!= False``, never truthiness alone.
+    proxy_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=True)
+
 
 class FtpAllowedIp(Base):
     __tablename__ = "ftp_allowed_ip"

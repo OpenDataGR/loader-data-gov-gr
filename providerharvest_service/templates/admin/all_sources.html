@@ -30,7 +30,7 @@
             <td>{{ macros.transport_badge(s.transport_type) }}</td>
             <td class="muted">
               {{ s.endpoint_url }}
-              {% if s.transport_type == "http" and s.status == "active" %}
+              {% if s.transport_type == "http" and s.status == "active" and s.proxy_enabled != False %}
                 <div class="proxy-url"><a href="/proxy/{{ s.name }}">/proxy/{{ s.name }}</a></div>
               {% endif %}
             </td>

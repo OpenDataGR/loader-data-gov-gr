@@ -262,7 +262,15 @@
     .empty-state { text-align: center; padding: 2.5rem 1rem; color: var(--color-gray-700); }
     .empty-state svg { color: var(--color-gray-500); margin-bottom: 0.6rem; }
 
-    .site-footer { background: var(--color-footer); color: var(--color-gray-700); font-size: 0.8rem; text-align: center; padding: 1rem; margin-top: auto; }
+    .site-footer {
+      background: var(--color-primary); color: #cfe0f5; font-size: 0.8rem;
+      text-align: center; padding: 1rem; margin-top: auto;
+    }
+    .site-footer .footer-org { color: #fff; }
+    .site-footer .footer-build { margin-top: 0.3rem; font-size: 0.76rem; color: #a9c2e0; }
+    .site-footer .footer-build code { font-family: ui-monospace, "SF Mono", Consolas, monospace; color: #cfe0f5; }
+    .site-footer .footer-build a { color: #8ec8ff; text-decoration: none; }
+    .site-footer .footer-build a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -289,6 +297,13 @@
     {% block content %}{% endblock %}
   </main>
 
-  <div class="site-footer">loader.data.gov.gr &middot; provider-harvest service &middot; internal tool, no authentication yet</div>
+  <div class="site-footer">
+    <div class="footer-org">&copy; {{ now().year }} Τμήμα Προτύπων και Τεχνολογικών Εφαρμογών Δεδομένων, Ειδική Γραμματεία Τεχνητής Νοημοσύνης και Διακυβέρνησης Δεδομένων</div>
+    <div class="footer-build">
+      Build: {{ build_info.build_time }} &middot;
+      {% if build_info.commit_url %}<a href="{{ build_info.commit_url }}" target="_blank" rel="noopener noreferrer"><code>{{ build_info.commit }}</code></a>{% else %}<code>{{ build_info.commit }}</code>{% endif %}
+      &middot; <a href="{{ changelog_url }}" target="_blank" rel="noopener noreferrer">Changelog</a>
+    </div>
+  </div>
 </body>
 </html>

@@ -303,6 +303,17 @@ def register(session: Session, form: dict) -> ProviderSource:
         frequency = "DAILY"
 
     notification_email = (form.get("notification_email") or "").strip() or None
+    # No default=True fallback here, same reasoning as ftp_use_tls
+    # above: an unchecked HTML checkbox is simply absent from the
+    # submitted form, indistinguishable at this layer from "never
+    # mentioned" -- so this only actually behaves as "opt-out, not
+    # opt-in" because the registration form pre-checks this box by
+    # default (see ui_provider._form_template_vars); a provider who
+    # never touches it submits an explicit "on". Defaulting the missing
+    # case to True here instead would make unchecking the box a no-op.
+    # Only meaningful for transport_type="http" (proxy.py only ever
+    # proxies HTTP sources anyway), harmless to store for the others.
+    proxy_enabled = _parse_bool(form.get("proxy_enabled"), default=False)
 
     if transport_type in SSH_TRANSPORT_TYPES:
         credential_fields, config = _ssh_fields(form, endpoint_url, errors)
@@ -330,6 +341,7 @@ def register(session: Session, form: dict) -> ProviderSource:
         secret_algorithm="",
         status="pending",
         notification_email=notification_email,
+        proxy_enabled=proxy_enabled,
     )
     session.add(row)
     session.flush()  # makes `row` persistent/gettable before the secrets backend looks it up

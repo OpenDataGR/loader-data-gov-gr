@@ -64,6 +64,10 @@ def _register_active_http_source(session_factory, **overrides):
         "api_key": "the-real-secret-key",
         "api_key_location": "query",
         "api_key_name": "api_key",
+        # Matches a real submission of the registration form, which
+        # pre-checks this box -- an omitted key means "unchecked" (see
+        # provider_sources.register's own reasoning), not "default on".
+        "proxy_enabled": "on",
     }
     form.update(overrides)
     with session_factory() as session:
@@ -139,6 +143,42 @@ def test_non_http_transport_source_is_404(client, _isolated_db):
         provider_sources.activate(session, source.id)
     resp = client.get("/proxy/acme-sftp")
     assert resp.status_code == 404
+
+
+def test_opted_out_active_http_source_is_404(client, _isolated_db):
+    with _isolated_db() as session:
+        source = provider_sources.register(session, {
+            "name": "opted-out-source", "title": "t",
+            "endpoint_url": "https://provider.example.gr/api", "transport_type": "http",
+            "auth_type": "api_key", "api_key": "k",
+            # No proxy_enabled key at all -- same as an unchecked box.
+        })
+        provider_sources.activate(session, source.id)
+        assert source.proxy_enabled is False  # sanity check on the fixture itself
+    resp = client.get("/proxy/opted-out-source")
+    assert resp.status_code == 404
+
+
+def test_legacy_row_with_null_proxy_enabled_is_still_proxied(client, _isolated_db, monkeypatch):
+    """A source registered before the proxy_enabled column existed gets
+    SQL NULL for it (db._sync_schema's ALTER TABLE ADD COLUMN has no
+    way to backfill a Python-side default onto existing rows) -- that
+    must still mean "enabled", matching the behavior every such source
+    already had in production before this opt-out feature existed."""
+    source_id = _register_active_http_source(_isolated_db, proxy_enabled="on")
+    with _isolated_db() as session:
+        row = provider_sources.get_or_404(session, source_id)
+        row.proxy_enabled = None
+        session.commit()
+
+    def fake_get(url, **kwargs):
+        return FakeUpstreamResponse(content=b'{"ok": true}')
+
+    monkeypatch.setattr(proxy.requests, "get", fake_get)
+    monkeypatch.setattr(proxy, "assert_safe_http_url", lambda url: None)
+
+    resp = client.get("/proxy/acme-open-data")
+    assert resp.status_code == 200
 
 
 def test_upstream_connection_failure_is_502(client, _isolated_db, monkeypatch):

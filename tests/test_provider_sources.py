@@ -77,6 +77,20 @@ def test_register_http_source_is_pending_with_encrypted_credentials(session):
     assert bundle.fields == {"api_key": "secret-key-123"}
 
 
+def test_register_with_proxy_checkbox_submitted_on_enables_proxy(session):
+    # Matches the real browser flow: the form pre-checks this box, so a
+    # provider who submits without touching it sends proxy_enabled=on.
+    source = provider_sources.register(session, _http_form(proxy_enabled="on"))
+    assert source.proxy_enabled is True
+
+
+def test_register_with_proxy_checkbox_omitted_disables_proxy(session):
+    # An unchecked checkbox is indistinguishable from the field being
+    # entirely absent -- same fail-safe-to-off reasoning as ftp_use_tls.
+    source = provider_sources.register(session, _http_form())
+    assert source.proxy_enabled is False
+
+
 def test_register_rejects_duplicate_name(session):
     provider_sources.register(session, _http_form())
     with pytest.raises(provider_sources.ValidationError) as exc_info:

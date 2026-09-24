@@ -46,10 +46,20 @@ def default_db_url() -> str:
 def _sync_schema(engine: Engine) -> None:
     """Adds any column a model declares but an already-existing table is
     missing. A no-op for a brand-new table (create_all already made it
-    complete) or a NOT NULL column with no default -- SQLite itself
-    refuses that combination against a table with existing rows, which
-    is the right outcome: that case needs a real backfill, not a silent
-    schema patch, so it's left to raise loudly if it's ever hit."""
+    complete).
+
+    Only ever adds the column as nullable, regardless of the model's own
+    ``nullable=False`` -- SQLite's ``ALTER TABLE ... ADD COLUMN`` doesn't
+    support a computed Python-side default (only a fixed SQL literal),
+    and every row that predates the column would need one, so silently
+    emitting ``NOT NULL`` here would either fail outright (no default at
+    all) or succeed with the wrong semantics (a static SQL default that
+    doesn't match what the model actually wants each existing row to
+    have). A genuinely required new column needs a real, deliberate
+    migration (add nullable here, backfill existing rows, tighten to
+    NOT NULL in a follow-up) -- raising clearly is better than either
+    failure mode above, so that's what this does instead of guessing.
+    """
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
     with engine.begin() as conn:
@@ -60,6 +70,15 @@ def _sync_schema(engine: Engine) -> None:
             for column in table.columns:
                 if column.name in existing_columns:
                     continue
+                if not column.nullable:
+                    raise RuntimeError(
+                        "Model %r declares new NOT NULL column %r, but table "
+                        "%r already exists -- _sync_schema only auto-adds "
+                        "nullable columns (see its own docstring for why). "
+                        "Add it as nullable, backfill existing rows, then "
+                        "tighten to NOT NULL in a real migration."
+                        % (table.name, column.name, table.name)
+                    )
                 ddl = "ALTER TABLE %s ADD COLUMN %s %s" % (
                     table.name, column.name, column.type.compile(engine.dialect)
                 )

@@ -107,6 +107,11 @@
 
         <label for="items_path">Records path in the response (optional)</label>
         <input type="text" id="items_path" name="items_path" value="{{ data.get('items_path', 'results') }}">
+
+        <div class="checkbox-row">
+          <input type="checkbox" id="proxy_enabled" name="proxy_enabled" {% if data.get('proxy_enabled') == 'on' %}checked{% endif %}>
+          <label for="proxy_enabled">Also expose this as a live proxy (<code>/proxy/{name}</code>) for consumers who need real-time access, not just a scheduled pull</label>
+        </div>
       </fieldset>
 
       <fieldset id="fieldset-ssh">

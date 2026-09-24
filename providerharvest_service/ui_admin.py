@@ -12,6 +12,7 @@ owning org's admin).
 
 from __future__ import annotations
 
+import datetime
 from urllib.parse import urlencode, urlparse
 
 from fastapi import APIRouter, Depends, Request
@@ -19,11 +20,14 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from providerharvest_service import connection_check, provider_sources
+from providerharvest_service import build_info, connection_check, provider_sources
 from providerharvest_service.db import get_session
 
 router = APIRouter(prefix="/admin/sources", tags=["admin-ui"])
 templates = Jinja2Templates(directory="providerharvest_service/templates")
+templates.env.globals["build_info"] = build_info.get_build_info()
+templates.env.globals["changelog_url"] = "%s/commits/master" % build_info.GITHUB_REPO_URL
+templates.env.globals["now"] = datetime.datetime.now
 
 
 @router.get("", response_class=HTMLResponse)

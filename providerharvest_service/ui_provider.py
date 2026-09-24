@@ -10,6 +10,7 @@ below gain a real owner check; for now there's exactly one provider.
 
 from __future__ import annotations
 
+import datetime
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Request
@@ -17,11 +18,14 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from providerharvest_service import connection_check, provider_sources
+from providerharvest_service import build_info, connection_check, provider_sources
 from providerharvest_service.db import get_session
 
 router = APIRouter(prefix="/provider", tags=["provider-ui"])
 templates = Jinja2Templates(directory="providerharvest_service/templates")
+templates.env.globals["build_info"] = build_info.get_build_info()
+templates.env.globals["changelog_url"] = "%s/commits/master" % build_info.GITHUB_REPO_URL
+templates.env.globals["now"] = datetime.datetime.now
 
 FIELD_TYPES = provider_sources.TRANSPORT_TYPES
 FREQUENCIES = provider_sources.FREQUENCIES
@@ -113,13 +117,13 @@ def _redirect_with_flash(flash: str, kind: str = "success") -> str:
 
 def _form_template_vars(data, errors=None) -> dict:
     if not data:
-        # A genuinely fresh form (GET /sources/new): seed the one
-        # checkbox default HTML can't express via an <input> `value` --
-        # an unchecked checkbox isn't submitted at all, so this must not
-        # be applied when re-rendering after a validation error (that
+        # A genuinely fresh form (GET /sources/new): seed the checkbox
+        # defaults HTML can't express via an <input> `value` -- an
+        # unchecked checkbox isn't submitted at all, so this must not be
+        # applied when re-rendering after a validation error (that
         # `data` already reflects whatever the provider actually
         # submitted, including a deliberately unchecked box).
-        data = {"ftp_use_tls": "on"}
+        data = {"ftp_use_tls": "on", "proxy_enabled": "on"}
     return {
         "data": data,
         "errors": errors or {},

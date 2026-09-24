@@ -196,7 +196,12 @@ source-listing page against the already-deployed SQLite file with "no
 such column") -- `_sync_schema` now adds any column a model declares
 but an existing table is missing, via SQLite's `ALTER TABLE ... ADD
 COLUMN`, on every `make_engine()` call. Covered by a regression test
-that reproduces the exact pre-migration table shape.
+that reproduces the exact pre-migration table shape. Only ever adds a
+column as nullable and raises clearly (rather than silently guessing,
+or silently dropping the constraint) if a model ever declares a new
+NOT NULL column against a table that already has rows -- that always
+needs a deliberate migration (add nullable, backfill, tighten), not an
+automatic one.
 
 `providerharvest_service/proxy.py` -- a live API proxy for providers
 who don't want their own API publicly reachable at all: `GET
@@ -219,6 +224,26 @@ production ceiling is up to ~4x a source's configured limit, not exact
 matters). No consumer-level access control yet, matching this whole
 service's current "no auth wall" posture -- anyone who knows a source's
 name can call its proxy today.
+
+Whether a source is proxied at all is **opt-out, not opt-in**:
+`ProviderSource.proxy_enabled` defaults true (a checkbox on the
+registration form, pre-checked) -- a provider who wants scheduled-only
+harvesting and no live pass-through unchecks it. Nullable, deliberately:
+`db._sync_schema` can only add new columns as nullable (see its own
+entry above), so every source registered before this flag existed gets
+SQL NULL for it -- treated as enabled everywhere this is checked
+(`is False`, never plain falsiness), matching the behavior those
+sources already had. The parsing itself defaults a *missing* form key
+to disabled, same reasoning as `ftp_use_tls` -- an unchecked checkbox
+sends nothing at all, indistinguishable from "never mentioned", so
+only the form's own pre-checked default makes this opt-out in practice.
+
+`providerharvest_service/build_info.py` -- real build metadata (git
+commit + that commit's own timestamp, read straight from the deployed
+clone's `.git`) shown in every page's footer, next to this project's
+owning department and a link to the GitHub commit history -- so
+"did my fix actually deploy" is answerable by looking at the page,
+not digging through CI logs.
 
 `providerharvest_service/ui_provider.py` + `ui_admin.py` -- the two
 self-service/admin web UIs (server-rendered Jinja2 templates under
@@ -269,7 +294,7 @@ python -m venv .venv
 ```
 
 No CKAN installation, no Docker, no database -- this is the whole point
-of the split being checked for real, not just asserted. 191 tests,
+of the split being checked for real, not just asserted. 198 tests,
 all passing with zero CKAN present.
 
 ## Running the app locally

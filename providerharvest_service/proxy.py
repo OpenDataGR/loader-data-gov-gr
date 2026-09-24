@@ -74,11 +74,19 @@ def _rate_limiter_for(source_id: str, max_requests_per_minute: int) -> TokenBuck
 
 def _get_active_http_source_or_404(session: Session, source_name: str) -> ProviderSource:
     source = session.scalar(select(ProviderSource).where(ProviderSource.name == source_name))
-    # Same 404 whether the name doesn't exist, isn't an HTTP source, or
-    # isn't active yet -- a pending/rejected/paused source's existence
-    # (and definitely its real endpoint) must not be discoverable via
-    # this public route.
-    if source is None or source.transport_type != "http" or source.status != "active":
+    # Same 404 whether the name doesn't exist, isn't an HTTP source,
+    # isn't active yet, or had its proxy explicitly opted out -- a
+    # pending/rejected/paused/opted-out source's existence (and
+    # definitely its real endpoint) must not be discoverable via this
+    # public route. `is False`, not falsiness: NULL means "predates the
+    # proxy_enabled column", which must mean enabled (see models.py's
+    # own reasoning), not disabled.
+    if (
+        source is None
+        or source.transport_type != "http"
+        or source.status != "active"
+        or source.proxy_enabled is False
+    ):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such proxied source")
     return source
 
