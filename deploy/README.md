@@ -302,51 +302,47 @@ before relying on it.
    curl -T /path/to/local/file "sftp://<username>:<password>@127.0.0.1:2222/<filename>"
    ```
 
-## Shared PostgreSQL (cross-project infrastructure)
+## PostgreSQL (dedicated to this project)
 
-A `postgres:16` container (`shared-postgres`) runs at
-`/opt/shared-infra/postgres` on this VM -- **deliberately outside**
-`/opt/data-projects/loader-data-gov-gr`, since it's meant to be shared
-across whatever projects on this VM need a real database, not owned by
-this one. Bound to `127.0.0.1:5432` only (never exposed externally,
-same as everything else here), resource-capped (`mem_limit: 2g`,
-`cpus: 1.0` in its `docker-compose.yml` -- confirmed applied via
-`docker inspect`, not just assumed from the compose file syntax:
-Swarm's `deploy.resources.limits` block is silently ignored outside
-Swarm mode, these top-level keys are the ones that actually work).
+A `postgres:16` container (`loader-postgres`) runs at
+`/opt/data-projects/loader-data-gov-gr-postgres` on this VM -- a
+sibling directory to this project's own clone, but not inside it (so
+`git pull`/`git clean` can never touch its `.env` or runtime state).
+Dedicated to this project alone, deliberately -- **not** shared with
+`opencar-data-gov-gr` or anything else on this VM. Each project gets
+its own isolated database rather than one instance serving several:
+a shared instance would couple this project's DB uptime/maintenance to
+whoever else came to depend on it, working against the same fault-
+isolation/independent-deploy principle this whole service is already
+built around (see this README's own rationale for why it talks to
+CKAN over its Action API instead of running in-process). If another
+project needs Postgres, it gets its own container the same way this
+one was set up -- cheap to repeat, no shared blast radius.
 
-**Redeployable, not a one-off**: [`deploy/shared-postgres/docker-compose.yml`](shared-postgres/docker-compose.yml)
-is the actual, committed source of truth for the container (kept in
-this repo pragmatically -- only this project uses it so far -- not
-because it belongs to it), and `.github/workflows/
-provision-shared-postgres.yml` (manual-dispatch) is idempotent and
-safe to leave in the repo permanently: it generates its own passwords
-directly on the VM only the first time it's actually needed, never
-overwrites an existing `.env`/database/role, and re-syncs the compose
-file from this repo on every run. If `/opt/shared-infra/postgres` were
-ever lost (VM rebuild, disk issue), re-running that workflow stands it
-back up from what's actually committed here -- confirmed by literally
-re-running it against the already-provisioned instance and watching it
-correctly detect "already provisioned" and touch nothing.
+Bound to `127.0.0.1:5432` only (never exposed externally, same as
+everything else here), resource-capped (`mem_limit: 2g`, `cpus: 1.0`
+in its `docker-compose.yml` -- confirmed applied via `docker inspect`,
+not just assumed from the compose file syntax: Swarm's
+`deploy.resources.limits` block is silently ignored outside Swarm
+mode, these top-level keys are the ones that actually work).
+
+**Redeployable, not a one-off**: [`deploy/postgres/docker-compose.yml`](postgres/docker-compose.yml)
+is the actual, committed source of truth for the container, and
+`.github/workflows/provision-postgres.yml` (manual-dispatch) is
+idempotent and safe to leave in the repo permanently: it generates its
+own password directly on the VM only the first time it's actually
+needed (no GitHub secrets round-trip required), never overwrites an
+existing `.env`/database/role, and re-syncs the compose file from this
+repo on every run. If the container were ever lost (VM rebuild, disk
+issue), re-running that workflow stands it back up from what's
+actually committed here.
 
 This service's own database/role:
 ```
 LOADER_HARVEST_DB_URL=postgresql://loader_harvest_app:<password>@127.0.0.1:5432/loader_harvest
 ```
 in `/etc/loader-data-gov-gr.env`, alongside the other secrets --
-`loader_harvest_app` can only see the `loader_harvest` database, not
-any other project's. A second project wanting a database on this same
-instance just needs its own `CREATE DATABASE` + `CREATE ROLE` (scoped
-to that database only) against the same container -- nothing about
-the container itself needs to change.
-
-**This general pattern belongs in the `shared-vm-cicd-deploy` skill**
-(`ksfikas/claude-skills`, not this repo -- see this repo's own
-`CLAUDE.md`), not just written down here: it's genuinely cross-project
-infrastructure, the same way the self-hosted-runner/systemd/nginx
-conventions already documented there are. Not yet migrated there as of
-this writing -- flagging it rather than letting the only record of
-"how to get a database on this VM" live inside one project's own repo.
+`loader_harvest_app` can only see the `loader_harvest` database.
 
 ## First run
 

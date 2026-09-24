@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgres:16
-    container_name: shared-postgres
+    container_name: loader-postgres
     restart: unless-stopped
     ports:
       - "127.0.0.1:5432:5432"
