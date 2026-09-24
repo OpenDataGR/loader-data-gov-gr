@@ -40,3 +40,10 @@ jobs:
         run: |
           echo "--- can this account run apt/systemctl non-interactively? ---"
           sudo -n true 2>&1 && echo "passwordless sudo: yes (at least for this)" || echo "passwordless sudo: no / limited"
+
+      - name: What's actually running in Docker
+        run: |
+          echo "--- docker ps (running containers) ---"
+          sudo docker ps -a || echo "docker command failed"
+          echo "--- docker images ---"
+          sudo docker images || true
