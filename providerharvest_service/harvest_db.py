@@ -30,6 +30,13 @@ class HarvestDbNotConfigured(RuntimeError):
 
 
 def _required_db_url() -> str:
+    """The URL must use the ``postgresql+psycopg://`` scheme, not a
+    bare ``postgresql://`` -- SQLAlchemy defaults a bare scheme to the
+    ``psycopg2`` dialect regardless of what's actually installed, and
+    this project installs ``psycopg`` (v3). Confirmed the hard way:
+    ``/admin/harvest-db/health`` 503'd with "No module named
+    'psycopg2'" the first time this was wired up against a URL that
+    hadn't been given the explicit suffix yet."""
     url = os.environ.get("LOADER_HARVEST_DB_URL")
     if not url:
         raise HarvestDbNotConfigured(

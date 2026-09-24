@@ -339,10 +339,15 @@ actually committed here.
 
 This service's own database/role:
 ```
-LOADER_HARVEST_DB_URL=postgresql://loader_harvest_app:<password>@127.0.0.1:5432/loader_harvest
+LOADER_HARVEST_DB_URL=postgresql+psycopg://loader_harvest_app:<password>@127.0.0.1:5432/loader_harvest
 ```
 in `/etc/loader-data-gov-gr.env`, alongside the other secrets --
 `loader_harvest_app` can only see the `loader_harvest` database.
+The `+psycopg` is not optional decoration: a bare `postgresql://`
+scheme makes SQLAlchemy default to the `psycopg2` dialect regardless
+of what's actually installed, and this project installs `psycopg`
+(v3) -- confirmed the hard way (`/admin/harvest-db/health` 503'd with
+`No module named 'psycopg2'` the first time this was wired up).
 
 ## First run
 

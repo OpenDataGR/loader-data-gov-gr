@@ -74,6 +74,14 @@ jobs:
             echo "loader's own DB URL is already provisioned -- confirming the role/db still exist, not regenerating the password."
             sudo docker compose exec -T postgres psql -U postgres -c \
               "SELECT rolname FROM pg_roles WHERE rolname = 'loader_harvest_app'; SELECT datname FROM pg_database WHERE datname = 'loader_harvest';"
+            # Self-correcting: an earlier run of this same workflow wrote
+            # a bare postgresql:// scheme, which makes SQLAlchemy default
+            # to the psycopg2 dialect regardless of what's installed --
+            # this project installs psycopg (v3). Confirmed the hard way
+            # (/admin/harvest-db/health 503'd with "No module named
+            # 'psycopg2'"). Fix forward rather than leave it broken.
+            sudo sed -i 's#^LOADER_HARVEST_DB_URL=postgresql://#LOADER_HARVEST_DB_URL=postgresql+psycopg://#' \
+              /etc/loader-data-gov-gr.env
           else
             app_pw=$(openssl rand -base64 24)
             sudo docker compose exec -T postgres psql -U postgres <<EOF
@@ -88,7 +96,7 @@ jobs:
           GRANT ALL PRIVILEGES ON DATABASE loader_harvest TO loader_harvest_app;
           EOF
             sudo tee -a /etc/loader-data-gov-gr.env > /dev/null <<EOF
-          LOADER_HARVEST_DB_URL=postgresql://loader_harvest_app:$app_pw@127.0.0.1:5432/loader_harvest
+          LOADER_HARVEST_DB_URL=postgresql+psycopg://loader_harvest_app:$app_pw@127.0.0.1:5432/loader_harvest
           EOF
             echo "Provisioned loader_harvest / loader_harvest_app for the first time."
           fi
