@@ -17,8 +17,10 @@ from __future__ import annotations
 import os
 
 import uvicorn
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException, status
 
+from providerharvest_service import harvest_db
+from providerharvest_service.admin_auth import require_admin_key
 from providerharvest_service.admin_ftp import router as ftp_accounts_router
 from providerharvest_service.auth import require_current_username
 from providerharvest_service.ckan_tokens import get_or_provision_ckan_client
@@ -55,6 +57,23 @@ def me(
     client = get_or_provision_ckan_client(session, username)
     orgs = client.call("organization_list_for_user", {"id": username, "permission": "admin"})
     return {"username": username, "admin_of_orgs": [org["name"] for org in orgs]}
+
+
+@app.get("/admin/harvest-db/health", dependencies=[Depends(require_admin_key)])
+def harvest_db_health() -> dict:
+    """Proves the harvested-data PostgreSQL connection end-to-end -- a
+    real round-trip query, not just 'the env var is set' -- before any
+    real schema/scheduler gets built on top of it. Deliberately its own
+    endpoint rather than folded into /health: that one is used by
+    deploy.yml's own smoke test, and coupling it to this new dependency
+    would turn a Postgres blip into a false-positive failed deploy for
+    changes that have nothing to do with it.
+    """
+    try:
+        harvest_db.check_connectivity()
+    except Exception as exc:  # noqa: BLE001 -- shown to the admin verbatim, this IS the diagnostic
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "harvest DB unreachable: %s" % exc) from exc
+    return {"status": "ok"}
 
 
 def main() -> None:

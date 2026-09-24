@@ -151,6 +151,25 @@ Confirmed via tests: token minted on first call, reused (not re-minted)
 on a second, and a request with no bearer token is rejected before any
 CKAN call is even attempted.
 
+`providerharvest_service/harvest_db.py` -- the SQLAlchemy engine/
+session for this service's *harvested-data* store: a dedicated
+PostgreSQL instance (`deploy/postgres/`), independent of `db.py`'s own
+SQLite file (config only -- `ProviderSource`, `FtpAccount`,
+`CkanUserToken` -- small and low-churn, staying on SQLite). Deliberately
+lazy, unlike `db.py`'s eager module-level engine: `LOADER_HARVEST_DB_URL`
+has no sensible default the way `db.py`'s SQLite path does, so requiring
+it at import time would make importing this module a hard failure even
+in the existing test suite (no Postgres available there at all). It only
+becomes a hard requirement the first time `get_session()`/
+`check_connectivity()` is actually called. `GET /admin/harvest-db/health`
+(admin-key-gated) proves it end-to-end -- a real round-trip `SELECT 1`,
+not just "the env var is set" -- deliberately its own endpoint rather
+than folded into `/health`, since that one is deploy.yml's own smoke
+test and coupling it to this new dependency would turn a Postgres blip
+into a false-positive failed deploy for unrelated changes. Nothing else
+uses this connection yet -- the actual harvested-data schema and the
+scheduler that populates it are the next slice.
+
 `providerharvest_service/models.py`'s `ProviderSource` +
 `providerharvest_service/provider_sources.py` -- this service's own
 provider-source registration/approval lifecycle, independent of CKAN
@@ -340,7 +359,7 @@ python -m venv .venv
 ```
 
 No CKAN installation, no Docker, no database -- this is the whole point
-of the split being checked for real, not just asserted. 243 tests,
+of the split being checked for real, not just asserted. 251 tests,
 all passing with zero CKAN present.
 
 ## Running the app locally
