@@ -1,41 +1,287 @@
+{% import "_macros.html" as macros %}
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}loader.data.gov.gr{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
-    nav { margin-bottom: 1.5rem; padding-bottom: 0.75rem; border-bottom: 1px solid #ddd; }
-    nav a { margin-right: 1.25rem; text-decoration: none; color: #0a5; font-weight: 600; }
-    h1 { font-size: 1.4rem; }
-    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
-    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #eee; font-size: 0.92rem; }
-    th { background: #fafafa; }
-    .flash { background: #eef8ee; border: 1px solid #bde5bd; padding: 0.6rem 0.9rem; border-radius: 4px; margin-bottom: 1rem; }
-    .status { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 3px; font-size: 0.8rem; font-weight: 600; }
-    .status-pending { background: #fff3cd; color: #856404; }
-    .status-active { background: #d4edda; color: #155724; }
-    .status-paused { background: #e2e3e5; color: #383d41; }
-    .status-rejected { background: #f8d7da; color: #721c24; }
-    form.inline { display: inline; }
-    label { display: block; margin-top: 0.8rem; font-weight: 600; font-size: 0.9rem; }
-    input[type=text], input[type=password], input[type=email], input[type=url], input[type=number], select, textarea {
-      width: 100%; max-width: 480px; padding: 0.35rem 0.5rem; margin-top: 0.2rem; box-sizing: border-box;
+    /* Design tokens matched to data.gov.gr's own palette
+       (https://guide.services.gov.gr/docs/colour/) so this service's
+       UI reads as part of the same platform, not a bolted-on tool. */
+    :root {
+      --color-primary: #003375;
+      --color-primary-light: #0066b3;
+      --color-primary-mid: #0f4a94;
+      --color-secondary: #00b0f0;
+      --color-text: #25282f;
+      --color-gray-700: #6b6a72;
+      --color-gray-500: #b3b2b5;
+      --color-border: #dde6f3;
+      --color-bg: #f4f7fb;
+      --color-surface: #ffffff;
+      --color-footer: #ecebec;
+      --status-pending: #ffc107;
+      --status-active: #28a745;
+      --status-paused: #6c757d;
+      --status-rejected: #dc3545;
+      --radius: 8px;
+      --shadow: 0 1px 3px rgba(0, 51, 117, 0.08), 0 1px 2px rgba(0, 51, 117, 0.06);
     }
-    fieldset { margin-top: 1.2rem; border: 1px solid #ddd; border-radius: 4px; }
-    legend { font-weight: 700; padding: 0 0.4rem; }
-    .error { color: #b00020; font-size: 0.85rem; margin-top: 0.2rem; }
-    button { margin-top: 1.2rem; padding: 0.5rem 1.1rem; cursor: pointer; }
-    .muted { color: #777; font-size: 0.85rem; }
+
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
+      color: var(--color-text);
+      background: var(--color-bg);
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .masthead {
+      background: linear-gradient(120deg, var(--color-primary) 0%, var(--color-primary-mid) 100%);
+      color: #fff;
+    }
+    .masthead-top {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 1.1rem 1.5rem 0.9rem;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      color: #fff;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 1.15rem;
+      letter-spacing: -0.01em;
+    }
+    .brand .brand-sub {
+      display: block;
+      font-weight: 400;
+      font-size: 0.72rem;
+      color: #cfe0f5;
+      letter-spacing: 0.02em;
+    }
+    .masthead-nav {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 0 1rem;
+      display: flex;
+      gap: 0.15rem;
+    }
+    .masthead-nav a {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      color: #e7effb;
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      padding: 0.65rem 0.9rem;
+      border-radius: var(--radius) var(--radius) 0 0;
+    }
+    .masthead-nav a:hover, .masthead-nav a:focus {
+      background-color: rgba(255, 255, 255, 0.1);
+    }
+    .masthead-nav a.active {
+      background-color: var(--color-surface);
+      color: var(--color-primary);
+      font-weight: 600;
+    }
+
+    main {
+      flex: 1;
+      max-width: 1080px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 1.75rem 1.5rem 3rem;
+    }
+    .panel {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 1.5rem 1.6rem;
+    }
+    h1 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      margin: 0 0 1.1rem;
+      color: var(--color-primary);
+    }
+    .subtitle { color: var(--color-gray-700); font-size: 0.9rem; margin: -0.7rem 0 1.3rem; }
+
+    .flash {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: #eaf6ec;
+      border: 1px solid #bfe3c4;
+      color: #1e5c2b;
+      padding: 0.65rem 1rem;
+      border-radius: var(--radius);
+      margin-bottom: 1.2rem;
+      font-size: 0.9rem;
+    }
+    .flash.flash-error { background: #fdecea; border-color: #f3c2c2; color: #7a1f1f; }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+    }
+    .stat-tile {
+      display: flex;
+      align-items: center;
+      gap: 0.7rem;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius);
+      padding: 0.85rem 1rem;
+      box-shadow: var(--shadow);
+    }
+    .stat-icon { flex-shrink: 0; opacity: 0.85; }
+    .stat-value { font-size: 1.35rem; font-weight: 700; line-height: 1.1; }
+    .stat-label { font-size: 0.78rem; color: var(--color-gray-700); text-transform: capitalize; }
+    .stat-pending .stat-icon { color: var(--status-pending); }
+    .stat-active .stat-icon { color: var(--status-active); }
+    .stat-paused .stat-icon { color: var(--status-paused); }
+    .stat-rejected .stat-icon { color: var(--status-rejected); }
+
+    table { border-collapse: collapse; width: 100%; }
+    th, td { text-align: left; padding: 0.65rem 0.7rem; border-bottom: 1px solid var(--color-border); font-size: 0.88rem; vertical-align: top; }
+    th { color: var(--color-gray-700); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; }
+    tbody tr:hover { background: #fafcff; }
+    .name-title { font-weight: 600; }
+    .name-slug { color: var(--color-gray-700); font-size: 0.8rem; font-family: ui-monospace, "SF Mono", Consolas, monospace; }
+    .muted { color: var(--color-gray-700); font-size: 0.85rem; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.32rem;
+      padding: 0.22rem 0.55rem;
+      border-radius: 999px;
+      font-size: 0.76rem;
+      font-weight: 600;
+      text-transform: capitalize;
+      color: #fff;
+      white-space: nowrap;
+    }
+    .badge-pending { background: var(--status-pending); color: #4d3800; }
+    .badge-active { background: var(--status-active); }
+    .badge-paused { background: var(--status-paused); }
+    .badge-rejected { background: var(--status-rejected); }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      background: var(--color-border);
+      color: var(--color-primary);
+      padding: 0.2rem 0.55rem;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 600;
+    }
+
+    form.inline { display: inline-flex; gap: 0.35rem; align-items: center; }
+    label { display: block; margin-top: 1rem; font-weight: 600; font-size: 0.85rem; color: var(--color-text); }
+    input[type=text], input[type=password], input[type=email], input[type=url], input[type=number], select, textarea {
+      width: 100%; max-width: 480px; padding: 0.45rem 0.6rem; margin-top: 0.3rem;
+      border: 1px solid var(--color-border); border-radius: 6px; font: inherit; color: var(--color-text);
+      background: var(--color-surface);
+    }
+    input:focus, select:focus, textarea:focus {
+      outline: none; border-color: var(--color-primary-light);
+      box-shadow: 0 0 0 3px rgba(0, 102, 179, 0.15); transition: box-shadow 0.2s ease;
+    }
+    input[type=text].small, input[type=number].small { max-width: 140px; }
+    fieldset { margin-top: 1.4rem; border: 1px solid var(--color-border); border-radius: var(--radius); padding: 0.9rem 1.1rem 1.2rem; }
+    legend { font-weight: 700; padding: 0 0.4rem; color: var(--color-primary); font-size: 0.95rem; }
+    .error { color: #b3261e; font-size: 0.8rem; margin-top: 0.25rem; }
+    .checkbox-row { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.9rem; }
+    .checkbox-row input { width: auto; margin: 0; }
+    .checkbox-row label { margin: 0; font-weight: 500; }
+
+    button, .btn {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      font: inherit; font-weight: 600; font-size: 0.85rem;
+      padding: 0.5rem 0.95rem; border-radius: 6px; border: 1px solid transparent;
+      cursor: pointer; text-decoration: none; color: #fff; background: var(--color-primary-light);
+      transition: background-color 0.15s ease;
+    }
+    button:hover, .btn:hover { background: var(--color-primary); }
+    button.btn-secondary, .btn-secondary { background: var(--color-surface); color: var(--color-text); border-color: var(--color-gray-500); }
+    button.btn-secondary:hover, .btn-secondary:hover { background: #f2f4f8; }
+    button.btn-danger { background: var(--status-rejected); }
+    button.btn-danger:hover { background: #b3261e; }
+    button.btn-sm { padding: 0.32rem 0.65rem; font-size: 0.78rem; }
+    .top-actions { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem; }
+
+    .connector-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.7rem; margin-top: 0.4rem; }
+    .connector-card {
+      position: relative; display: flex; flex-direction: column; align-items: center; gap: 0.5rem;
+      border: 1.5px solid var(--color-border); border-radius: var(--radius); padding: 0.9rem 0.6rem;
+      cursor: pointer; text-align: center; background: var(--color-surface); transition: border-color 0.15s ease, background 0.15s ease;
+    }
+    .connector-card:hover { border-color: var(--color-primary-light); }
+    .connector-card input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+    .connector-card input:checked ~ .connector-icon { color: var(--color-primary-light); }
+    .connector-card:has(input:checked),
+    .connector-card.selected { border-color: var(--color-primary-light); background: #eef5ff; }
+    .connector-icon { color: var(--color-gray-700); }
+    .connector-name { font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.02em; }
+
+    .segmented { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.4rem; }
+    .segmented label {
+      margin: 0; font-weight: 500; font-size: 0.83rem; padding: 0.4rem 0.8rem;
+      border: 1px solid var(--color-border); border-radius: 999px; cursor: pointer; display: flex; align-items: center; gap: 0.3rem;
+    }
+    .segmented input { position: absolute; opacity: 0; width: 0; height: 0; }
+    .segmented input:checked + label,
+    .segmented label:has(input:checked) { background: var(--color-primary-light); border-color: var(--color-primary-light); color: #fff; }
+
+    .empty-state { text-align: center; padding: 2.5rem 1rem; color: var(--color-gray-700); }
+    .empty-state svg { color: var(--color-gray-500); margin-bottom: 0.6rem; }
+
+    .site-footer { background: var(--color-footer); color: var(--color-gray-700); font-size: 0.8rem; text-align: center; padding: 1rem; margin-top: auto; }
   </style>
 </head>
 <body>
-  <nav>
-    <a href="/provider/sources">Provider: my sources</a>
-    <a href="/admin/sources/pending">Admin: pending approval</a>
-    <a href="/admin/sources">Admin: all sources</a>
-  </nav>
-  {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
-  {% block content %}{% endblock %}
+  <div class="masthead">
+    <div class="masthead-top">
+      <a class="brand" href="/provider/sources">
+        {{ macros.icon("logo", 26) }}
+        <span>loader.data.gov.gr<span class="brand-sub">Provider harvesting platform</span></span>
+      </a>
+    </div>
+    <nav class="masthead-nav">
+      <a href="/provider/sources" class="{{ 'active' if request.url.path.startswith('/provider') else '' }}">{{ macros.icon("provider", 16) }} Provider portal</a>
+      <a href="/admin/sources/pending" class="{{ 'active' if request.url.path == '/admin/sources/pending' else '' }}">{{ macros.icon("queue", 16) }} Pending approval</a>
+      <a href="/admin/sources" class="{{ 'active' if request.url.path == '/admin/sources' else '' }}">{{ macros.icon("admin", 16) }} Admin dashboard</a>
+    </nav>
+  </div>
+
+  <main>
+    {% if flash %}
+      <div class="flash {{ 'flash-error' if flash_kind == 'error' else '' }}">
+        {{ macros.icon("x" if flash_kind == "error" else "check", 16) }}{{ flash }}
+      </div>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+
+  <div class="site-footer">loader.data.gov.gr &middot; provider-harvest service &middot; internal tool, no authentication yet</div>
 </body>
 </html>

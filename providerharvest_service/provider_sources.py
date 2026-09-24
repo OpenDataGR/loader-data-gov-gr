@@ -353,6 +353,16 @@ def list_pending(session: Session) -> list[ProviderSource]:
     )
 
 
+def status_counts(session: Session) -> dict[str, int]:
+    """Counts per status, for the dashboard stat tiles -- always includes
+    every status key (0 for statuses with no rows yet) so templates
+    don't need a Jinja `default(0)` on every lookup."""
+    counts = {status: 0 for status in STATUSES_ADMIN_MANAGES}
+    for row in list_all(session):
+        counts[row.status] = counts.get(row.status, 0) + 1
+    return counts
+
+
 def _transition(session: Session, source_id: str, *, from_status: str, to_status: str) -> ProviderSource:
     row = get_or_404(session, source_id)
     if row.status != from_status:

@@ -1,35 +1,49 @@
 {% extends "base.html" %}
-{% block title %}Pending approval{% endblock %}
+{% import "_macros.html" as macros %}
+{% block title %}Pending approval -- loader.data.gov.gr{% endblock %}
 {% block content %}
-  <h1>Sources awaiting approval</h1>
+  <div class="stats">
+    {{ macros.stat_tile("pending", counts.pending, "pending") }}
+    {{ macros.stat_tile("active", counts.active, "active") }}
+    {{ macros.stat_tile("paused", counts.paused, "paused") }}
+    {{ macros.stat_tile("rejected", counts.rejected, "rejected") }}
+  </div>
 
-  {% if not sources %}
-    <p class="muted">Nothing pending.</p>
-  {% else %}
-    <table>
-      <thead>
-        <tr><th>Name</th><th>Transport</th><th>Endpoint</th><th>Notification e-mail</th><th>Registered</th><th></th></tr>
-      </thead>
-      <tbody>
-        {% for s in sources %}
-        <tr>
-          <td>{{ s.title }}<br><span class="muted">{{ s.name }}</span></td>
-          <td>{{ s.transport_type }}</td>
-          <td>{{ s.endpoint_url }}</td>
-          <td>{{ s.notification_email or "" }}</td>
-          <td>{{ s.created_at }}</td>
-          <td>
-            <form class="inline" method="post" action="/admin/sources/{{ s.id }}/activate">
-              <button type="submit">Activate</button>
-            </form>
-            <form class="inline" method="post" action="/admin/sources/{{ s.id }}/reject">
-              <input type="text" name="reason" placeholder="reason (optional)">
-              <button type="submit">Reject</button>
-            </form>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  {% endif %}
+  <div class="panel">
+    <h1>Sources awaiting approval</h1>
+    <p class="subtitle">New registrations land here first -- activate to let them run, or reject with a reason.</p>
+
+    {% if not sources %}
+      <div class="empty-state">
+        {{ macros.icon("check", 40) }}
+        <p>Nothing pending -- you're all caught up.</p>
+      </div>
+    {% else %}
+      <table>
+        <thead>
+          <tr><th>Source</th><th>Connector</th><th>Endpoint</th><th>Notification e-mail</th><th>Registered</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for s in sources %}
+          <tr>
+            <td><div class="name-title">{{ s.title }}</div><div class="name-slug">{{ s.name }}</div></td>
+            <td>{{ macros.transport_badge(s.transport_type) }}</td>
+            <td class="muted">{{ s.endpoint_url }}</td>
+            <td class="muted">{{ s.notification_email or "--" }}</td>
+            <td class="muted">{{ s.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+            <td>
+              <form class="inline" method="post" action="/admin/sources/{{ s.id }}/activate">
+                <button type="submit" class="btn-sm">{{ macros.icon("check", 14) }} Activate</button>
+              </form>
+              <form class="inline" method="post" action="/admin/sources/{{ s.id }}/reject">
+                <input type="text" name="reason" class="small" placeholder="reason (optional)">
+                <button type="submit" class="btn-danger btn-sm">{{ macros.icon("x", 14) }} Reject</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
 {% endblock %}

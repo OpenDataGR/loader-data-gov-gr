@@ -1,49 +1,63 @@
 {% extends "base.html" %}
-{% block title %}All sources{% endblock %}
+{% import "_macros.html" as macros %}
+{% block title %}All sources -- loader.data.gov.gr{% endblock %}
 {% block content %}
-  <h1>All registered sources</h1>
+  <div class="stats">
+    {{ macros.stat_tile("pending", counts.pending, "pending") }}
+    {{ macros.stat_tile("active", counts.active, "active") }}
+    {{ macros.stat_tile("paused", counts.paused, "paused") }}
+    {{ macros.stat_tile("rejected", counts.rejected, "rejected") }}
+  </div>
 
-  {% if not sources %}
-    <p class="muted">No sources registered yet.</p>
-  {% else %}
-    <table>
-      <thead>
-        <tr><th>Name</th><th>Transport</th><th>Endpoint</th><th>Status</th><th></th></tr>
-      </thead>
-      <tbody>
-        {% for s in sources %}
-        <tr>
-          <td>{{ s.title }}<br><span class="muted">{{ s.name }}</span></td>
-          <td>{{ s.transport_type }}</td>
-          <td>{{ s.endpoint_url }}</td>
-          <td>
-            <span class="status status-{{ s.status }}">{{ s.status }}</span>
-            {% if s.status == "rejected" and s.rejection_reason %}
-              <div class="muted">{{ s.rejection_reason }}</div>
-            {% endif %}
-          </td>
-          <td>
-            {% if s.status == "pending" %}
-              <form class="inline" method="post" action="/admin/sources/{{ s.id }}/activate">
-                <button type="submit">Activate</button>
-              </form>
-              <form class="inline" method="post" action="/admin/sources/{{ s.id }}/reject">
-                <input type="text" name="reason" placeholder="reason (optional)">
-                <button type="submit">Reject</button>
-              </form>
-            {% elif s.status == "active" %}
-              <form class="inline" method="post" action="/admin/sources/{{ s.id }}/pause">
-                <button type="submit">Pause</button>
-              </form>
-            {% elif s.status == "paused" %}
-              <form class="inline" method="post" action="/admin/sources/{{ s.id }}/resume">
-                <button type="submit">Resume</button>
-              </form>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  {% endif %}
+  <div class="panel">
+    <h1>All registered sources</h1>
+    <p class="subtitle">Every provider source across every organization, regardless of status.</p>
+
+    {% if not sources %}
+      <div class="empty-state">
+        {{ macros.icon("inbox", 40) }}
+        <p>No sources registered yet.</p>
+      </div>
+    {% else %}
+      <table>
+        <thead>
+          <tr><th>Source</th><th>Connector</th><th>Endpoint</th><th>Status</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for s in sources %}
+          <tr>
+            <td><div class="name-title">{{ s.title }}</div><div class="name-slug">{{ s.name }}</div></td>
+            <td>{{ macros.transport_badge(s.transport_type) }}</td>
+            <td class="muted">{{ s.endpoint_url }}</td>
+            <td>
+              {{ macros.status_badge(s.status) }}
+              {% if s.status == "rejected" and s.rejection_reason %}
+                <div class="muted">{{ s.rejection_reason }}</div>
+              {% endif %}
+            </td>
+            <td>
+              {% if s.status == "pending" %}
+                <form class="inline" method="post" action="/admin/sources/{{ s.id }}/activate">
+                  <button type="submit" class="btn-sm">{{ macros.icon("check", 14) }} Activate</button>
+                </form>
+                <form class="inline" method="post" action="/admin/sources/{{ s.id }}/reject">
+                  <input type="text" name="reason" class="small" placeholder="reason (optional)">
+                  <button type="submit" class="btn-danger btn-sm">{{ macros.icon("x", 14) }} Reject</button>
+                </form>
+              {% elif s.status == "active" %}
+                <form class="inline" method="post" action="/admin/sources/{{ s.id }}/pause">
+                  <button type="submit" class="btn-secondary btn-sm">{{ macros.icon("pause-btn", 14) }} Pause</button>
+                </form>
+              {% elif s.status == "paused" %}
+                <form class="inline" method="post" action="/admin/sources/{{ s.id }}/resume">
+                  <button type="submit" class="btn-sm">{{ macros.icon("play", 14) }} Resume</button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
 {% endblock %}

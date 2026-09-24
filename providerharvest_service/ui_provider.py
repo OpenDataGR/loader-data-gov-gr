@@ -34,7 +34,12 @@ def source_list(request: Request, session: Session = Depends(get_session)) -> HT
     return templates.TemplateResponse(
         request,
         "provider/source_list.html",
-        {"sources": sources, "flash": request.query_params.get("flash")},
+        {
+            "sources": sources,
+            "counts": provider_sources.status_counts(session),
+            "flash": request.query_params.get("flash"),
+            "flash_kind": request.query_params.get("flash_kind", "success"),
+        },
     )
 
 
@@ -69,28 +74,28 @@ async def new_source_submit(request: Request, session: Session = Depends(get_ses
 def source_pause(source_id: str, session: Session = Depends(get_session)) -> RedirectResponse:
     try:
         provider_sources.pause(session, source_id)
-        flash = "Source paused."
+        return RedirectResponse(_redirect_with_flash("Source paused."), status_code=303)
     except provider_sources.NotFound:
         flash = "No such source."
     except provider_sources.InvalidTransition as exc:
         flash = str(exc)
-    return RedirectResponse(_redirect_with_flash(flash), status_code=303)
+    return RedirectResponse(_redirect_with_flash(flash, kind="error"), status_code=303)
 
 
 @router.post("/sources/{source_id}/resume")
 def source_resume(source_id: str, session: Session = Depends(get_session)) -> RedirectResponse:
     try:
         provider_sources.resume(session, source_id)
-        flash = "Source resumed."
+        return RedirectResponse(_redirect_with_flash("Source resumed."), status_code=303)
     except provider_sources.NotFound:
         flash = "No such source."
     except provider_sources.InvalidTransition as exc:
         flash = str(exc)
-    return RedirectResponse(_redirect_with_flash(flash), status_code=303)
+    return RedirectResponse(_redirect_with_flash(flash, kind="error"), status_code=303)
 
 
-def _redirect_with_flash(flash: str) -> str:
-    return "/provider/sources?%s" % urlencode({"flash": flash})
+def _redirect_with_flash(flash: str, kind: str = "success") -> str:
+    return "/provider/sources?%s" % urlencode({"flash": flash, "flash_kind": kind})
 
 
 def _form_template_vars(data, errors=None) -> dict:
