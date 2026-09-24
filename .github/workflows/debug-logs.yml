@@ -17,3 +17,12 @@ jobs:
     steps:
       - name: Print recent journal
         run: journalctl -u loader-data-gov-gr -n ${{ github.event.inputs.lines }} --no-pager
+
+      - name: Check admin-gated health endpoints (key read locally, never logged)
+        run: |
+          admin_key=$(sudo grep '^LOADER_ADMIN_API_KEY=' /etc/loader-data-gov-gr.env | cut -d= -f2-)
+          echo "--- /admin/harvest-db/health ---"
+          curl -sS -o /tmp/harvest_db_health.json -w "http_code=%{http_code}\n" \
+            -H "X-Admin-Key: $admin_key" http://127.0.0.1:5002/admin/harvest-db/health
+          cat /tmp/harvest_db_health.json; echo
+          rm -f /tmp/harvest_db_health.json
