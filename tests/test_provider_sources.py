@@ -133,6 +133,63 @@ def test_register_rejects_non_numeric_ftp_port_without_crashing(session):
     assert "ftp_port" in exc_info.value.errors
 
 
+def test_register_defaults_http_engine_limits_when_not_specified(session):
+    import json
+    source = provider_sources.register(session, _http_form())
+    config = json.loads(source.config)
+    assert config["request_timeout_s"] == 30
+    assert config["max_pages"] == 1000
+    assert config["max_retries"] == 5
+
+
+def test_register_respects_custom_http_engine_limits(session):
+    import json
+    source = provider_sources.register(session, _http_form(
+        request_timeout_s="10", max_pages="50", max_retries="2",
+    ))
+    config = json.loads(source.config)
+    assert config["request_timeout_s"] == 10
+    assert config["max_pages"] == 50
+    assert config["max_retries"] == 2
+
+
+@pytest.mark.parametrize("field", ["request_timeout_s", "max_pages", "max_retries"])
+def test_register_rejects_non_numeric_http_engine_limits(session, field):
+    with pytest.raises(provider_sources.ValidationError) as exc_info:
+        provider_sources.register(session, _http_form(**{field: "lots"}))
+    assert field in exc_info.value.errors
+
+
+def test_register_defaults_ssh_connect_timeout(session):
+    import json
+    source = provider_sources.register(session, _sftp_form())
+    assert json.loads(source.config)["connect_timeout_s"] == 30
+
+
+def test_register_respects_custom_ssh_connect_timeout(session):
+    import json
+    source = provider_sources.register(session, _sftp_form(sftp_connect_timeout_s="5"))
+    assert json.loads(source.config)["connect_timeout_s"] == 5
+
+
+def test_register_rejects_non_numeric_ssh_connect_timeout(session):
+    with pytest.raises(provider_sources.ValidationError) as exc_info:
+        provider_sources.register(session, _sftp_form(sftp_connect_timeout_s="lots"))
+    assert "sftp_connect_timeout_s" in exc_info.value.errors
+
+
+def test_register_defaults_ftp_connect_timeout(session):
+    import json
+    source = provider_sources.register(session, _ftp_form(ftp_use_tls="on"))
+    assert json.loads(source.config)["connect_timeout_s"] == 30
+
+
+def test_register_respects_custom_ftp_connect_timeout(session):
+    import json
+    source = provider_sources.register(session, _ftp_form(ftp_use_tls="on", ftp_connect_timeout_s="5"))
+    assert json.loads(source.config)["connect_timeout_s"] == 5
+
+
 def test_register_rejects_duplicate_name(session):
     provider_sources.register(session, _http_form())
     with pytest.raises(provider_sources.ValidationError) as exc_info:

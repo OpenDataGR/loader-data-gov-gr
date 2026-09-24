@@ -104,6 +104,19 @@ def test_proxies_to_the_registered_endpoint_with_auth_injected(client, _isolated
     assert kwargs["params"]["api_key"] == "the-real-secret-key"
 
 
+def test_proxy_uses_the_sources_configured_request_timeout(client, _isolated_db, monkeypatch):
+    _register_active_http_source(_isolated_db, request_timeout_s="5")
+    calls = []
+    monkeypatch.setattr(
+        proxy.requests, "get",
+        lambda url, **kwargs: (calls.append(kwargs), FakeUpstreamResponse())[-1],
+    )
+    monkeypatch.setattr(proxy, "assert_safe_http_url", lambda url: None)
+
+    client.get("/proxy/acme-open-data")
+    assert calls[0]["timeout"] == 5
+
+
 def test_per_ip_rate_limit_returns_429_once_exceeded(client, _isolated_db, monkeypatch):
     _register_active_http_source(_isolated_db, proxy_rate_limit_per_ip="1")
     monkeypatch.setattr(

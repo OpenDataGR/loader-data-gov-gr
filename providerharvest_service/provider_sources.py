@@ -218,6 +218,17 @@ def _http_fields(form: dict, errors: dict) -> tuple[str, dict, dict]:
         "proxy_rate_limit_per_ip": _parse_positive_int(
             form.get("proxy_rate_limit_per_ip"), 30, "proxy_rate_limit_per_ip", errors
         ),
+        # Every one of these has a real, previously-hardcoded default
+        # in engine/transport/direct_https.py (DEFAULT_TIMEOUT_S,
+        # DEFAULT_MAX_PAGES, DEFAULT_MAX_RETRIES) -- exposed here so a
+        # provider whose API is slow, paginates deeply, or is flaky in
+        # a way that needs more/fewer retries isn't stuck with values
+        # tuned for nothing in particular.
+        "request_timeout_s": _parse_positive_int(
+            form.get("request_timeout_s"), 30, "request_timeout_s", errors
+        ),
+        "max_pages": _parse_positive_int(form.get("max_pages"), 1000, "max_pages", errors),
+        "max_retries": _parse_positive_int(form.get("max_retries"), 5, "max_retries", errors),
     }
     return auth_type, credential_fields, config_extra
 
@@ -259,6 +270,9 @@ def _ssh_fields(form: dict, endpoint_url: str, errors: dict) -> tuple[dict, dict
         "remote_path": (form.get("sftp_remote_path") or "").strip() or "/",
         "glob_pattern": (form.get("sftp_glob_pattern") or "").strip() or "*",
         "host_key_fingerprint": fingerprint,
+        "connect_timeout_s": _parse_positive_int(
+            form.get("sftp_connect_timeout_s"), 30, "sftp_connect_timeout_s", errors
+        ),
     }
     return credential_fields, config_extra
 
@@ -298,6 +312,9 @@ def _ftp_fields(form: dict, endpoint_url: str, errors: dict) -> tuple[dict, dict
         "glob_pattern": (form.get("ftp_glob_pattern") or "").strip() or "*",
         "use_tls": use_tls,
         "plain_ftp_acknowledged": plain_ftp_acknowledged,
+        "connect_timeout_s": _parse_positive_int(
+            form.get("ftp_connect_timeout_s"), 30, "ftp_connect_timeout_s", errors
+        ),
     }
     return credential_fields, config_extra
 
@@ -412,16 +429,21 @@ def config_to_form_fields(source: ProviderSource) -> dict:
         data["items_path"] = pagination.get("items_path", "results")
         data["max_requests_per_minute"] = str(config.get("max_requests_per_minute", 60))
         data["proxy_rate_limit_per_ip"] = str(config.get("proxy_rate_limit_per_ip", 30))
+        data["request_timeout_s"] = str(config.get("request_timeout_s", 30))
+        data["max_pages"] = str(config.get("max_pages", 1000))
+        data["max_retries"] = str(config.get("max_retries", 5))
     elif source.transport_type in SSH_TRANSPORT_TYPES:
         data["sftp_port"] = str(config.get("port", 22))
         data["sftp_remote_path"] = config.get("remote_path", "/")
         data["sftp_glob_pattern"] = config.get("glob_pattern", "*")
         data["host_key_fingerprint"] = config.get("host_key_fingerprint", "")
+        data["sftp_connect_timeout_s"] = str(config.get("connect_timeout_s", 30))
     elif source.transport_type == "ftp":
         data["ftp_port"] = str(config.get("port", 21))
         data["ftp_remote_path"] = config.get("remote_path", "/")
         data["ftp_glob_pattern"] = config.get("glob_pattern", "*")
         data["ftp_use_tls"] = "on" if config.get("use_tls", True) else ""
+        data["ftp_connect_timeout_s"] = str(config.get("connect_timeout_s", 30))
     return data
 
 

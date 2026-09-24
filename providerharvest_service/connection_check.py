@@ -46,6 +46,9 @@ def _build_transport(source: ProviderSource, secret: SecretBundle) -> Transport:
             pagination=config.get("pagination", {}),
             auth_opts=config.get("auth_opts"),
             max_requests_per_minute=config.get("max_requests_per_minute", 60),
+            request_timeout_s=config.get("request_timeout_s", 30),
+            max_pages=config.get("max_pages", 1000),
+            max_retries=config.get("max_retries", 5),
         )
 
     if source.transport_type in ("sftp", "scp"):
@@ -57,6 +60,7 @@ def _build_transport(source: ProviderSource, secret: SecretBundle) -> Transport:
             remote_path=config.get("remote_path", "/"),
             glob_pattern=config.get("glob_pattern", "*"),
             pinned_host_key_fingerprint=config.get("host_key_fingerprint"),
+            connect_timeout_s=config.get("connect_timeout_s", 30),
         )
 
     if source.transport_type == "ftp":
@@ -68,6 +72,7 @@ def _build_transport(source: ProviderSource, secret: SecretBundle) -> Transport:
             glob_pattern=config.get("glob_pattern", "*"),
             use_tls=config.get("use_tls", True),
             plain_ftp_acknowledged=config.get("plain_ftp_acknowledged", False),
+            connect_timeout_s=config.get("connect_timeout_s", 30),
         )
 
     raise ValueError("Unsupported transport_type %r" % source.transport_type)

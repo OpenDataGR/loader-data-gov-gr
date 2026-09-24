@@ -164,7 +164,7 @@ def proxy_call(
     request_kwargs = auth_strategy.apply(
         {"params": dict(request.query_params)}, secret, config.get("auth_opts") or {}
     )
-    request_kwargs.setdefault("timeout", DEFAULT_TIMEOUT_S)
+    request_kwargs.setdefault("timeout", config.get("request_timeout_s", DEFAULT_TIMEOUT_S))
 
     _rate_limiter_for(source.id, config.get("max_requests_per_minute", 60)).acquire()
 

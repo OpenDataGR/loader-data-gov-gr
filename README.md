@@ -243,6 +243,23 @@ No consumer-level access control yet, matching this whole service's
 current "no auth wall" posture -- anyone who knows a source's name can
 call its proxy today.
 
+Every other previously-hardcoded engine limit is now configurable too,
+each on the registration form and stored in the same `config` JSON
+blob, each with the exact default the engine used to bake in --
+nothing about registering a source is tuned for values that don't
+actually fit that provider:
+- HTTP: `request_timeout_s` (30), `max_pages` (1000, the hard safety
+  cap on pagination depth), `max_retries` (5, on a 429/5xx). The first
+  two were already real `DirectHTTPSTransport` constructor params, just
+  never read from config; `max_retries` wasn't even a constructor
+  param at all before this -- it was `DEFAULT_MAX_RETRIES`, a bare
+  module constant used directly inside the retry loop, so making it
+  configurable meant a small, additive change to the transport itself
+  (existing callers unaffected -- same default, opt-in override).
+- SFTP/SCP and FTP: `connect_timeout_s` (30) each -- already
+  constructor params on `SFTPTransport`/`ScpTransport`/`FTPTransport`,
+  just never threaded through from config either.
+
 Whether a source is proxied at all is **opt-out, not opt-in**:
 `ProviderSource.proxy_enabled` defaults true (a checkbox on the
 registration form, pre-checked) -- a provider who wants scheduled-only
@@ -323,7 +340,7 @@ python -m venv .venv
 ```
 
 No CKAN installation, no Docker, no database -- this is the whole point
-of the split being checked for real, not just asserted. 228 tests,
+of the split being checked for real, not just asserted. 243 tests,
 all passing with zero CKAN present.
 
 ## Running the app locally

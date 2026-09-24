@@ -63,6 +63,7 @@ class DirectHTTPSTransport(Transport):
         max_requests_per_minute: int = 60,
         request_timeout_s: int = DEFAULT_TIMEOUT_S,
         max_pages: int = DEFAULT_MAX_PAGES,
+        max_retries: int = DEFAULT_MAX_RETRIES,
         allow_private_ranges: bool = False,
         on_request: Optional[Callable[[OutboundRequestEvent], None]] = None,
         harvest_source_id: str | None = None,
@@ -78,6 +79,7 @@ class DirectHTTPSTransport(Transport):
         self._rate_limiter = TokenBucket(max_requests_per_minute)
         self._timeout_s = request_timeout_s
         self._max_pages = max_pages
+        self._max_retries = max_retries
         self._allow_private_ranges = allow_private_ranges
         self._on_request = on_request
         self._harvest_source_id = harvest_source_id
@@ -140,7 +142,7 @@ class DirectHTTPSTransport(Transport):
                 return response
 
             attempt += 1
-            if attempt > DEFAULT_MAX_RETRIES:
+            if attempt > self._max_retries:
                 if response is not None:
                     response.raise_for_status()
                 raise RuntimeError(

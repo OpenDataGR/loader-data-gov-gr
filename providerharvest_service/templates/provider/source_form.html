@@ -131,6 +131,18 @@
         <label for="proxy_rate_limit_per_ip">Per-caller limit -- max requests per minute, per calling IP, through the proxy</label>
         <input type="number" class="small" id="proxy_rate_limit_per_ip" name="proxy_rate_limit_per_ip" value="{{ data.get('proxy_rate_limit_per_ip', '30') }}">
         {% if errors.proxy_rate_limit_per_ip %}<div class="error">{{ errors.proxy_rate_limit_per_ip }}</div>{% endif %}
+
+        <label for="request_timeout_s">Request timeout (seconds)</label>
+        <input type="number" class="small" id="request_timeout_s" name="request_timeout_s" value="{{ data.get('request_timeout_s', '30') }}">
+        {% if errors.request_timeout_s %}<div class="error">{{ errors.request_timeout_s }}</div>{% endif %}
+
+        <label for="max_pages">Max pages per harvest run (safety cap on pagination depth)</label>
+        <input type="number" class="small" id="max_pages" name="max_pages" value="{{ data.get('max_pages', '1000') }}">
+        {% if errors.max_pages %}<div class="error">{{ errors.max_pages }}</div>{% endif %}
+
+        <label for="max_retries">Max retries on a failed/throttled request</label>
+        <input type="number" class="small" id="max_retries" name="max_retries" value="{{ data.get('max_retries', '5') }}">
+        {% if errors.max_retries %}<div class="error">{{ errors.max_retries }}</div>{% endif %}
       </fieldset>
 
       <fieldset id="fieldset-ssh">
@@ -160,6 +172,10 @@
         <label for="host_key_fingerprint">Server host-key fingerprint (confirm this with the provider out-of-band first)</label>
         <input type="text" id="host_key_fingerprint" name="host_key_fingerprint" value="{{ data.get('host_key_fingerprint', '') }}">
         {% if errors.host_key_fingerprint %}<div class="error">{{ errors.host_key_fingerprint }}</div>{% endif %}
+
+        <label for="sftp_connect_timeout_s">Connection timeout (seconds)</label>
+        <input type="number" class="small" id="sftp_connect_timeout_s" name="sftp_connect_timeout_s" value="{{ data.get('sftp_connect_timeout_s', '30') }}">
+        {% if errors.sftp_connect_timeout_s %}<div class="error">{{ errors.sftp_connect_timeout_s }}</div>{% endif %}
       </fieldset>
 
       <fieldset id="fieldset-ftp">
@@ -188,6 +204,10 @@
           <label for="ftp_plain_ftp_acknowledged">I understand plain FTP sends credentials and files unencrypted</label>
         </div>
         {% if errors.plain_ftp_acknowledged %}<div class="error">{{ errors.plain_ftp_acknowledged }}</div>{% endif %}
+
+        <label for="ftp_connect_timeout_s">Connection timeout (seconds)</label>
+        <input type="number" class="small" id="ftp_connect_timeout_s" name="ftp_connect_timeout_s" value="{{ data.get('ftp_connect_timeout_s', '30') }}">
+        {% if errors.ftp_connect_timeout_s %}<div class="error">{{ errors.ftp_connect_timeout_s }}</div>{% endif %}
       </fieldset>
 
       <button type="submit">{{ macros.icon(("check" if editing else "plus"), 16) }} {{ "Save changes" if editing else "Register source" }}</button>

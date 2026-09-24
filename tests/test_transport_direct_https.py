@@ -129,6 +129,15 @@ def test_retries_on_429_then_succeeds():
     assert [e.status for e in events] == [429, 200]
 
 
+def test_custom_max_retries_gives_up_sooner():
+    responses = [FakeResponse(status_code=429), FakeResponse(status_code=429)]
+    transport, session, events = _transport(responses, max_retries=1)
+    with transport:
+        with pytest.raises(Exception):
+            transport.list_entries(cursor=None)
+    assert len(session.calls) == 2  # the original attempt + exactly 1 retry, not the default 5
+
+
 def test_audit_events_never_contain_headers_or_body():
     responses = [FakeResponse(json_body={"results": []})]
     transport, session, events = _transport(responses)

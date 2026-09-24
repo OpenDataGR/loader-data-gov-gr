@@ -172,3 +172,34 @@ def test_build_transport_uses_the_sources_configured_rate_limit(session):
     secret = provider_sources.credentials(session, source.id)
     transport = connection_check._build_transport(source, secret)
     assert transport._rate_limiter._capacity == 15
+
+
+def test_build_transport_uses_the_sources_configured_http_engine_limits(session):
+    source = _register_http(session, request_timeout_s="7", max_pages="3", max_retries="1")
+    secret = provider_sources.credentials(session, source.id)
+    transport = connection_check._build_transport(source, secret)
+    assert transport._timeout_s == 7
+    assert transport._max_pages == 3
+    assert transport._max_retries == 1
+
+
+def test_build_transport_uses_the_sources_configured_ssh_connect_timeout(session):
+    source = provider_sources.register(session, {
+        "name": "acme-sftp-timeout", "title": "t", "endpoint_url": "sftp.example.gr",
+        "transport_type": "sftp", "sftp_username": "u", "sftp_password": "p",
+        "host_key_fingerprint": "SHA256:abcdef", "sftp_connect_timeout_s": "9",
+    })
+    secret = provider_sources.credentials(session, source.id)
+    transport = connection_check._build_transport(source, secret)
+    assert transport._connect_timeout_s == 9
+
+
+def test_build_transport_uses_the_sources_configured_ftp_connect_timeout(session):
+    source = provider_sources.register(session, {
+        "name": "acme-ftp-timeout", "title": "t", "endpoint_url": "ftp.example.gr",
+        "transport_type": "ftp", "ftp_username": "u", "ftp_password": "p",
+        "ftp_use_tls": "on", "ftp_connect_timeout_s": "9",
+    })
+    secret = provider_sources.credentials(session, source.id)
+    transport = connection_check._build_transport(source, secret)
+    assert transport._connect_timeout_s == 9
