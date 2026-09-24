@@ -4,10 +4,13 @@ import re
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
-from providerharvest_service import connection_check, db
+from providerharvest_service import connection_check, db, harvest_db
 from providerharvest_service.app import app
 from providerharvest_service.engine.transport.base import Entry, Page, Transport
+from providerharvest_service.harvest_models import HarvestBase
 
 
 @pytest.fixture(autouse=True)
@@ -31,6 +34,24 @@ def _isolated_db(tmp_path):
     app.dependency_overrides[db.get_session] = _override
     yield session_factory
     app.dependency_overrides.pop(db.get_session, None)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_harvest_db(tmp_path):
+    engine = create_engine("sqlite:///%s" % (tmp_path / "harvest-test.db"))
+    HarvestBase.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine)
+
+    def _override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[harvest_db.get_session] = _override
+    yield session_factory
+    app.dependency_overrides.pop(harvest_db.get_session, None)
 
 
 @pytest.fixture
@@ -236,3 +257,56 @@ def test_delete_unknown_source_shows_not_found(client):
     resp = client.post("/provider/sources/no-such-id/delete", follow_redirects=False)
     assert resp.status_code == 303
     assert "flash_kind=error" in resp.headers["location"]
+
+
+def _register_activate_and_get_id(client):
+    source_id = _register_and_get_id(client)
+    client.post("/admin/sources/%s/activate" % source_id)
+    return source_id
+
+
+def test_harvest_now_stores_records_and_shows_them(client, monkeypatch):
+    source_id = _register_activate_and_get_id(client)
+    entries = [Entry(ref="r1", inline_data=b'{"id": 1}')]
+    monkeypatch.setattr(connection_check, "_build_transport", lambda src, secret: _FakeTransport(entries=entries))
+
+    resp = client.post("/provider/sources/%s/harvest-now" % source_id, follow_redirects=False)
+    assert resp.status_code == 303
+    assert "flash=Harvest+complete" in resp.headers["location"]
+
+    runs_page = client.get("/provider/sources/%s/runs" % source_id)
+    assert resp.status_code == 303
+    assert "success" in runs_page.text
+
+    run_id = re.search(r"/runs/([^\"]+)\"", runs_page.text).group(1)
+    detail = client.get("/provider/sources/%s/runs/%s" % (source_id, run_id))
+    assert '"id": 1' in detail.text
+
+
+def test_harvest_now_records_failure_without_500(client, monkeypatch):
+    source_id = _register_activate_and_get_id(client)
+    monkeypatch.setattr(
+        connection_check, "_build_transport",
+        lambda src, secret: _FakeTransport(error=ConnectionRefusedError("refused")),
+    )
+
+    resp = client.post("/provider/sources/%s/harvest-now" % source_id, follow_redirects=False)
+    assert resp.status_code == 303
+    assert "flash_kind=error" in resp.headers["location"]
+
+    runs_page = client.get("/provider/sources/%s/runs" % source_id)
+    assert "error" in runs_page.text
+
+
+def test_harvest_now_refuses_a_pending_source(client):
+    source_id = _register_and_get_id(client)  # never activated
+    resp = client.post("/provider/sources/%s/harvest-now" % source_id, follow_redirects=False)
+    assert resp.status_code == 303
+    assert "flash_kind=error" in resp.headers["location"]
+
+
+def test_runs_page_empty_state(client):
+    source_id = _register_activate_and_get_id(client)
+    resp = client.get("/provider/sources/%s/runs" % source_id)
+    assert resp.status_code == 200
+    assert "No harvest runs yet" in resp.text

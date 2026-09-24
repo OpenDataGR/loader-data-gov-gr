@@ -24,6 +24,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from providerharvest_service.harvest_models import HarvestBase
+
 
 class HarvestDbNotConfigured(RuntimeError):
     pass
@@ -51,7 +53,15 @@ def make_engine(url: str) -> Engine:
     # pool_pre_ping: a stale/dropped connection (e.g. the container
     # restarted) is detected and replaced on next checkout rather than
     # surfacing as a confusing mid-request error.
-    return create_engine(url, pool_pre_ping=True)
+    engine = create_engine(url, pool_pre_ping=True)
+    # A brand-new database with brand-new tables -- plain create_all()
+    # is correct and sufficient here (unlike db.py's SQLite file, which
+    # needed _sync_schema specifically because it already had rows in
+    # production when a column was added). Real migration tooling
+    # becomes worth it once a schema change needs to land against
+    # tables that already hold real data, not before.
+    HarvestBase.metadata.create_all(engine)
+    return engine
 
 
 def make_session_factory(engine: Engine) -> sessionmaker:

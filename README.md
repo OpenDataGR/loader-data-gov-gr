@@ -21,7 +21,7 @@ pipeline. Do not add a dependency from here back onto
 `ckanext.providerharvest` (or vice versa) -- the whole point is these
 are independently deployable.
 
-## Status: engine + CKAN adapter + working CI/CD + a live FTP/SFTP receiving server + token provisioning + full provider/admin source lifecycle (register/edit/delete) + connection health checks + a live API proxy
+## Status: engine + CKAN adapter + working CI/CD + a live FTP/SFTP receiving server + token provisioning + full provider/admin source lifecycle (register/edit/delete) + connection health checks + a live API proxy + a real, manually-triggered harvest that stores data in PostgreSQL
 
 `providerharvest_service/engine/` -- the transport implementations
 (HTTP/SFTP/SCP/FTP), the HTTP auth strategies (API key/Basic/OAuth2
@@ -166,9 +166,45 @@ becomes a hard requirement the first time `get_session()`/
 not just "the env var is set" -- deliberately its own endpoint rather
 than folded into `/health`, since that one is deploy.yml's own smoke
 test and coupling it to this new dependency would turn a Postgres blip
-into a false-positive failed deploy for unrelated changes. Nothing else
-uses this connection yet -- the actual harvested-data schema and the
-scheduler that populates it are the next slice.
+into a false-positive failed deploy for unrelated changes. Confirmed
+the hard way that the connection string needs the explicit
+`postgresql+psycopg://` scheme, not a bare `postgresql://` -- SQLAlchemy
+defaults the bare scheme to the `psycopg2` dialect regardless of what's
+actually installed, and this project installs `psycopg` (v3);
+`/admin/harvest-db/health` 503'd with "No module named 'psycopg2'"
+until that was fixed (`deploy/README.md`'s own provisioning workflow
+now self-corrects an already-stored bare-scheme URL, rather than
+requiring a one-off fix).
+
+`providerharvest_service/harvest_models.py` -- the actual harvested-
+data schema: `HarvestRun` (one execution attempt against a source --
+`status` "running"/"success"/"error", `records_count`, `error_message`)
+and `HarvestedRecord` (one fetched record's own parsed JSON `payload`,
+tied to its run). A separate `DeclarativeBase`/metadata from `models.py`'s
+own SQLite one, since these are genuinely different database engines --
+`HarvestRun.source_id` references `ProviderSource.id` *logically*, not
+via a real foreign key, and `source_name` is deliberately denormalized
+(copied at run time) so a run's history still reads sensibly even if
+its source is later renamed or deleted. A brand-new database with
+brand-new tables needs no migration tooling yet -- plain `create_all()`
+(called lazily, the first time `harvest_db.make_engine` actually runs)
+is correct and sufficient; real migration tooling becomes worth it once
+a schema change needs to land against tables that already hold data.
+
+`providerharvest_service/harvest_runner.py` -- `run_harvest` actually
+executes one: connects via the exact same `_build_transport` dispatch
+`connection_check` already proved, fetches records, and stores them.
+Manually triggered for this first slice ("Harvest now", a button on
+`/provider/sources/{id}/runs`) -- an automatic scheduler that runs this
+on each source's own `frequency` is the next slice, once this storage
+pipeline itself is proven. Only `transport_type="http"` sources are
+supported so far (SFTP/SCP/FTP are whole-file transports with nowhere
+yet decided for the files themselves to land) and only `status="active"`
+ones -- enforced in `run_harvest` itself, not just hidden in the UI, so
+a direct POST can't bypass the approval workflow. A failed fetch is
+recorded as `status="error"` with the real error message, never raised
+past the function -- same "a failed check is exactly as valid a result
+as a successful one" rule `connection_check` already uses.
 
 `providerharvest_service/models.py`'s `ProviderSource` +
 `providerharvest_service/provider_sources.py` -- this service's own
@@ -359,7 +395,7 @@ python -m venv .venv
 ```
 
 No CKAN installation, no Docker, no database -- this is the whole point
-of the split being checked for real, not just asserted. 251 tests,
+of the split being checked for real, not just asserted. 263 tests,
 all passing with zero CKAN present.
 
 ## Running the app locally

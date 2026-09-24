@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% import "_macros.html" as macros %}
+{% block title %}Run records -- {{ source.title }} -- loader.data.gov.gr{% endblock %}
+{% block content %}
+  <div class="panel">
+    <h1>Harvested records</h1>
+    <p class="subtitle">
+      <a href="/provider/sources/{{ source.id }}/runs">&larr; back to runs</a> --
+      {{ source.title }} <span class="name-slug">{{ source.name }}</span>
+    </p>
+
+    {% if not records %}
+      <div class="empty-state">
+        {{ macros.icon("inbox", 40) }}
+        <p>No records stored for this run.</p>
+      </div>
+    {% else %}
+      <p class="muted">Showing up to 50 records, oldest first.</p>
+      {% for record in records %}
+        <fieldset>
+          <legend><span class="name-slug">{{ record.ref }}</span></legend>
+          <pre style="white-space:pre-wrap; word-break:break-word; font-size:0.82rem; margin:0;">{{ record.payload | tojson(indent=2) }}</pre>
+        </fieldset>
+      {% endfor %}
+    {% endif %}
+  </div>
+{% endblock %}

@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% import "_macros.html" as macros %}
+{% block title %}Runs -- {{ source.title }} -- loader.data.gov.gr{% endblock %}
+{% block content %}
+  <div class="panel">
+    <div class="top-actions">
+      <h1 style="margin-bottom:0">Harvest runs -- {{ source.title }}</h1>
+      {% if source.status == "active" %}
+        <form method="post" action="/provider/sources/{{ source.id }}/harvest-now">
+          <button type="submit">{{ macros.icon("download", 16) }} Harvest now</button>
+        </form>
+      {% endif %}
+    </div>
+    <p class="subtitle">
+      <a href="/provider/sources">&larr; back to sources</a> &middot;
+      <span class="name-slug">{{ source.name }}</span>
+    </p>
+
+    {% if not runs %}
+      <div class="empty-state">
+        {{ macros.icon("history", 40) }}
+        <p>No harvest runs yet.</p>
+      </div>
+    {% else %}
+      <table>
+        <thead>
+          <tr><th>Started</th><th>Status</th><th>Records</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for run in runs %}
+          <tr>
+            <td class="muted">{{ run.started_at.strftime("%Y-%m-%d %H:%M:%S") }} UTC</td>
+            <td>
+              {% if run.status == "success" %}
+                <span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>success</span></span>
+              {% elif run.status == "error" %}
+                <span class="badge badge-error" title="{{ run.error_message }}">{{ macros.icon("rejected", 13) }}<span>error</span></span>
+              {% else %}
+                <span class="badge badge-pending">{{ macros.icon("pending", 13) }}<span>running</span></span>
+              {% endif %}
+              {% if run.status == "error" and run.error_message %}
+                <div class="muted">{{ run.error_message }}</div>
+              {% endif %}
+            </td>
+            <td>{{ run.records_count }}</td>
+            <td><a class="btn btn-secondary btn-sm" href="/provider/sources/{{ source.id }}/runs/{{ run.id }}">View records</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
+{% endblock %}

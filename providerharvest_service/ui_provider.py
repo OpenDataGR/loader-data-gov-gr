@@ -18,7 +18,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from providerharvest_service import build_info, connection_check, provider_sources
+from providerharvest_service import build_info, connection_check, harvest_db, harvest_runner, provider_sources
 from providerharvest_service.db import get_session
 
 router = APIRouter(prefix="/provider", tags=["provider-ui"])
@@ -148,6 +148,68 @@ def source_check_connection(source_id: str, session: Session = Depends(get_sessi
     return RedirectResponse(
         _redirect_with_flash("Connection check: %s" % source.last_check_message, kind=kind),
         status_code=303,
+    )
+
+
+@router.post("/sources/{source_id}/harvest-now")
+def harvest_now(
+    source_id: str,
+    session: Session = Depends(get_session),
+    hsession: Session = Depends(harvest_db.get_session),
+) -> RedirectResponse:
+    try:
+        run = harvest_runner.run_harvest(session, hsession, source_id)
+    except provider_sources.NotFound:
+        return RedirectResponse(_redirect_with_flash("No such source.", kind="error"), status_code=303)
+    except (harvest_runner.UnsupportedTransportType, provider_sources.InvalidTransition) as exc:
+        return RedirectResponse(_redirect_with_flash(str(exc), kind="error"), status_code=303)
+    if run.status == "success":
+        flash = "Harvest complete: %d record%s." % (
+            run.records_count, "" if run.records_count == 1 else "s",
+        )
+        kind = "success"
+    else:
+        flash = "Harvest failed: %s" % run.error_message
+        kind = "error"
+    return RedirectResponse(_redirect_with_flash(flash, kind=kind), status_code=303)
+
+
+@router.get("/sources/{source_id}/runs", response_class=HTMLResponse)
+def source_runs(
+    source_id: str,
+    request: Request,
+    session: Session = Depends(get_session),
+    hsession: Session = Depends(harvest_db.get_session),
+) -> HTMLResponse:
+    try:
+        source = provider_sources.get_or_404(session, source_id)
+    except provider_sources.NotFound:
+        return RedirectResponse(_redirect_with_flash("No such source.", kind="error"), status_code=303)
+    runs = harvest_runner.list_runs(hsession, source_id)
+    return templates.TemplateResponse(
+        request,
+        "provider/source_runs.html",
+        {"source": source, "runs": runs},
+    )
+
+
+@router.get("/sources/{source_id}/runs/{run_id}", response_class=HTMLResponse)
+def source_run_detail(
+    source_id: str,
+    run_id: str,
+    request: Request,
+    session: Session = Depends(get_session),
+    hsession: Session = Depends(harvest_db.get_session),
+) -> HTMLResponse:
+    try:
+        source = provider_sources.get_or_404(session, source_id)
+    except provider_sources.NotFound:
+        return RedirectResponse(_redirect_with_flash("No such source.", kind="error"), status_code=303)
+    records = harvest_runner.list_records(hsession, run_id)
+    return templates.TemplateResponse(
+        request,
+        "provider/source_run_detail.html",
+        {"source": source, "run_id": run_id, "records": records},
     )
 
 
