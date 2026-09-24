@@ -262,6 +262,24 @@
     .empty-state { text-align: center; padding: 2.5rem 1rem; color: var(--color-gray-700); }
     .empty-state svg { color: var(--color-gray-500); margin-bottom: 0.6rem; }
 
+    .actions-menu { position: relative; display: inline-block; }
+    .actions-menu-toggle { padding: 0.32rem 0.5rem; }
+    .actions-menu-list {
+      display: none;
+      position: absolute; right: 0; top: 100%; margin-top: 0.3rem;
+      background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius);
+      box-shadow: 0 4px 16px rgba(0, 51, 117, 0.15); min-width: 180px; z-index: 20; overflow: hidden;
+    }
+    .actions-menu-list.open { display: block; }
+    .actions-menu-list a, .actions-menu-list button {
+      display: flex; align-items: center; gap: 0.55rem; width: 100%;
+      padding: 0.55rem 0.8rem; font-size: 0.83rem; font-weight: 500; color: var(--color-text);
+      text-decoration: none; background: none; border: none; border-radius: 0; cursor: pointer; text-align: left;
+    }
+    .actions-menu-list a:hover, .actions-menu-list button:hover { background: #f2f4f8; }
+    .actions-menu-list button.danger { color: var(--status-rejected); }
+    .actions-menu-list input[type=text] { display: none; }
+
     .site-footer {
       background: var(--color-primary); color: #cfe0f5; font-size: 0.8rem;
       text-align: center; padding: 1rem; margin-top: auto;
@@ -305,5 +323,25 @@
       &middot; <a href="{{ changelog_url }}" target="_blank" rel="noopener noreferrer">Changelog</a>
     </div>
   </div>
+
+  <script>
+    function toggleActionsMenu(btn) {
+      var menu = btn.nextElementSibling;
+      var wasOpen = menu.classList.contains('open');
+      document.querySelectorAll('.actions-menu-list.open').forEach(function (m) { m.classList.remove('open'); });
+      if (!wasOpen) menu.classList.add('open');
+    }
+    document.addEventListener('click', function (e) {
+      if (!e.target.closest('.actions-menu')) {
+        document.querySelectorAll('.actions-menu-list.open').forEach(function (m) { m.classList.remove('open'); });
+      }
+    });
+    function fillRejectReason(form) {
+      var reason = prompt('Reason for rejection (optional):', '');
+      if (reason === null) return false; // cancelled
+      form.querySelector('input[name=reason]').value = reason;
+      return true;
+    }
+  </script>
 </body>
 </html>
