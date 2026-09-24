@@ -302,6 +302,38 @@ before relying on it.
    curl -T /path/to/local/file "sftp://<username>:<password>@127.0.0.1:2222/<filename>"
    ```
 
+## Shared PostgreSQL (cross-project infrastructure)
+
+A `postgres:16` container (`shared-postgres`) runs at
+`/opt/shared-infra/postgres` on this VM -- **deliberately outside**
+`/opt/data-projects/loader-data-gov-gr`, since it's meant to be shared
+across whatever projects on this VM need a real database, not owned by
+this one. Bound to `127.0.0.1:5432` only (never exposed externally,
+same as everything else here), resource-capped (`mem_limit: 2g`,
+`cpus: 1.0` in its `docker-compose.yml` -- confirmed applied via
+`docker inspect`, not just assumed from the compose file syntax:
+Swarm's `deploy.resources.limits` block is silently ignored outside
+Swarm mode, these top-level keys are the ones that actually work).
+
+This service's own database/role:
+```
+LOADER_HARVEST_DB_URL=postgresql://loader_harvest_app:<password>@127.0.0.1:5432/loader_harvest
+```
+in `/etc/loader-data-gov-gr.env`, alongside the other secrets --
+`loader_harvest_app` can only see the `loader_harvest` database, not
+any other project's. A second project wanting a database on this same
+instance just needs its own `CREATE DATABASE` + `CREATE ROLE` (scoped
+to that database only) against the same container -- nothing about
+the container itself needs to change.
+
+**This general pattern belongs in the `shared-vm-cicd-deploy` skill**
+(`ksfikas/claude-skills`, not this repo -- see this repo's own
+`CLAUDE.md`), not just written down here: it's genuinely cross-project
+infrastructure, the same way the self-hosted-runner/systemd/nginx
+conventions already documented there are. Not yet migrated there as of
+this writing -- flagging it rather than letting the only record of
+"how to get a database on this VM" live inside one project's own repo.
+
 ## First run
 
 Trigger `Deploy` manually (Actions tab, or `gh workflow run deploy.yml`)
