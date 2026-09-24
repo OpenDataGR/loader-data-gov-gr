@@ -89,14 +89,25 @@ reset-failed` in that same step needs no password either -- confirm
 that's still true here the same way it is for `opencar-data-gov-gr`
 before relying on it.
 
-5. **Admin API secret**, needed before any `/admin/*` endpoint works
-   (they fail-closed with a 503 otherwise). Stored in a separate,
-   permission-restricted file rather than inline in the (normally
-   world-readable) unit file:
+5. **Admin API secret and the envelope-encryption master key.** The
+   admin key gates `/admin/*` (503 otherwise); the master key is what
+   `engine/secrets/envelope.py` uses to encrypt every provider
+   credential and CKAN token at rest -- **without it, registering a
+   provider source, running a connection check, or calling its proxy
+   all 500 outright** (`MasterKeyNotConfigured`, raised from deep
+   inside `provider_sources.register`/`connection_check`/`proxy.py`).
+   Hit this for real in production once: the key had only ever been
+   exported in a manually-started process's shell, not written here --
+   invisible until that process was finally replaced by a real
+   `systemctl restart`/`Restart=always` cycle, which doesn't inherit a
+   human's old shell environment at all. Both belong in the same
+   separate, permission-restricted file rather than inline in the
+   (normally world-readable) unit file:
    ```bash
    sudo tee /etc/loader-data-gov-gr.env > /dev/null <<'EOF'
    LOADER_ADMIN_API_KEY=<generate with: python3 -c "import secrets; print(secrets.token_urlsafe(32))">
    LOADER_FTP_UPLOAD_ROOT=/srv/ftp-uploads
+   CKAN_PROVIDERHARVEST_MASTER_KEY=<generate with: python3 -c "import base64, os; print(base64.b64encode(os.urandom(32)).decode())">
    EOF
    sudo chown localadmin:localadmin /etc/loader-data-gov-gr.env
    sudo chmod 600 /etc/loader-data-gov-gr.env
@@ -106,6 +117,15 @@ before relying on it.
    sudo systemctl daemon-reload
    sudo systemctl restart loader-data-gov-gr
    curl -s -H "X-Admin-Key: <the key above>" http://127.0.0.1:5002/admin/ftp-accounts   # expect []
+   ```
+   Verify the master key specifically, not just the admin key -- it's
+   the one that silently keeps working right up until the next process
+   restart if it's ever missing:
+   ```bash
+   curl -s -X POST http://127.0.0.1:5002/provider/sources/new \
+     -d name=deploy-smoke-test -d title=t -d endpoint_url=https://example.com \
+     -d transport_type=http -d auth_type=api_key -d api_key=x
+   # expect a 303 redirect with flash=...registered..., NOT a 500
    ```
    The actual key currently in use lives wherever you're storing
    secrets for this project (a password manager) -- it is *not*
