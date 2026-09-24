@@ -203,3 +203,91 @@ def test_list_pending_only_returns_pending_sources(session):
 def test_get_or_404_raises_not_found_for_unknown_id(session):
     with pytest.raises(provider_sources.NotFound):
         provider_sources.get_or_404(session, "no-such-id")
+
+
+def test_update_changes_title_without_touching_credentials(session):
+    source = provider_sources.register(session, _http_form())
+    original_message = provider_sources._secrets_backend(session).get(source.id).fields
+
+    edit_form = provider_sources.config_to_form_fields(source)
+    edit_form["title"] = "Renamed title"
+    # Credential fields stay blank -- config_to_form_fields never
+    # includes them.
+    updated = provider_sources.update(session, source.id, edit_form)
+
+    assert updated.title == "Renamed title"
+    assert updated.name == source.name  # immutable
+    kept = provider_sources._secrets_backend(session).get(source.id).fields
+    assert kept == original_message
+
+
+def test_update_rotates_credential_when_a_new_value_is_typed(session):
+    source = provider_sources.register(session, _http_form(api_key="old-key"))
+
+    edit_form = provider_sources.config_to_form_fields(source)
+    edit_form["api_key"] = "new-key"
+    provider_sources.update(session, source.id, edit_form)
+
+    bundle = provider_sources._secrets_backend(session).get(source.id)
+    assert bundle.fields == {"api_key": "new-key"}
+
+
+def test_update_preserves_non_secret_ssh_config(session):
+    source = provider_sources.register(session, _sftp_form())
+    edit_form = provider_sources.config_to_form_fields(source)
+    edit_form["sftp_remote_path"] = "/new-path"
+    updated = provider_sources.update(session, source.id, edit_form)
+
+    import json
+    config = json.loads(updated.config)
+    assert config["remote_path"] == "/new-path"
+    # Credential (username/password) untouched.
+    bundle = provider_sources._secrets_backend(session).get(source.id)
+    assert bundle.fields["username"] == "acme"
+    assert bundle.fields["password"] == "hunter2"
+
+
+def test_update_switching_auth_type_requires_full_new_credential(session):
+    source = provider_sources.register(session, _http_form(auth_type="api_key", api_key="k"))
+    edit_form = provider_sources.config_to_form_fields(source)
+    edit_form["auth_type"] = "basic_auth"
+    # No basic_username/basic_password supplied -- the old api_key
+    # secret's shape doesn't apply to basic_auth, so this must fail
+    # validation rather than silently reusing the old value somehow.
+    with pytest.raises(provider_sources.ValidationError) as exc_info:
+        provider_sources.update(session, source.id, edit_form)
+    assert "credential_fields" in exc_info.value.errors
+
+
+def test_update_rejects_missing_title(session):
+    source = provider_sources.register(session, _http_form())
+    edit_form = provider_sources.config_to_form_fields(source)
+    edit_form["title"] = ""
+    with pytest.raises(provider_sources.ValidationError) as exc_info:
+        provider_sources.update(session, source.id, edit_form)
+    assert "title" in exc_info.value.errors
+
+
+def test_update_unknown_source_raises_not_found(session):
+    with pytest.raises(provider_sources.NotFound):
+        provider_sources.update(session, "no-such-id", _http_form())
+
+
+def test_delete_removes_the_source(session):
+    source = provider_sources.register(session, _http_form())
+    provider_sources.delete(session, source.id)
+    with pytest.raises(provider_sources.NotFound):
+        provider_sources.get_or_404(session, source.id)
+    assert provider_sources.list_all(session) == []
+
+
+def test_delete_unknown_source_raises_not_found(session):
+    with pytest.raises(provider_sources.NotFound):
+        provider_sources.delete(session, "no-such-id")
+
+
+def test_delete_works_regardless_of_status(session):
+    source = provider_sources.register(session, _http_form())
+    provider_sources.activate(session, source.id)
+    provider_sources.delete(session, source.id)
+    assert provider_sources.list_all(session) == []

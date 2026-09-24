@@ -47,6 +47,7 @@
             </td>
             <td>{{ macros.health_badge(s) }}</td>
             <td>
+              <a class="btn btn-secondary btn-sm" href="/provider/sources/{{ s.id }}/edit">{{ macros.icon("edit", 14) }} Edit</a>
               <form class="inline" method="post" action="/provider/sources/{{ s.id }}/check-connection">
                 <button type="submit" class="btn-secondary btn-sm">{{ macros.icon("pulse", 14) }} Test connection</button>
               </form>
@@ -59,6 +60,10 @@
                   <button type="submit" class="btn-sm">{{ macros.icon("play", 14) }} Resume</button>
                 </form>
               {% endif %}
+              <form class="inline" method="post" action="/provider/sources/{{ s.id }}/delete"
+                    onsubmit="return confirm('Permanently delete {{ s.name }}? This cannot be undone.');">
+                <button type="submit" class="btn-danger btn-sm">{{ macros.icon("trash", 14) }} Delete</button>
+              </form>
             </td>
           </tr>
           {% endfor %}

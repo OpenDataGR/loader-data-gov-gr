@@ -21,7 +21,7 @@ pipeline. Do not add a dependency from here back onto
 `ckanext.providerharvest` (or vice versa) -- the whole point is these
 are independently deployable.
 
-## Status: engine + CKAN adapter + working CI/CD + a live FTP/SFTP receiving server + token provisioning + provider/admin source-registration UI + connection health checks + a live API proxy
+## Status: engine + CKAN adapter + working CI/CD + a live FTP/SFTP receiving server + token provisioning + full provider/admin source lifecycle (register/edit/delete) + connection health checks + a live API proxy
 
 `providerharvest_service/engine/` -- the transport implementations
 (HTTP/SFTP/SCP/FTP), the HTTP auth strategies (API key/Basic/OAuth2
@@ -254,7 +254,18 @@ selected transport/auth type, matching the old blueprint's own
 `/provider/sources/new` are the provider-facing register/list/pause/
 resume flow; `/admin/sources/pending` + `/admin/sources` are the
 admin approval queue and the "every source, any status" dashboard.
-Both now show a **Health** column (reachable/unreachable/not checked,
+Both link to the same shared `/provider/sources/{id}/edit` (any field,
+any status, admin or provider -- one implementation, matching the
+single-stand-in-user model) and a `/{id}/delete` with a confirm
+prompt. Editing reuses the registration form itself, pre-filled from
+`provider_sources.config_to_form_fields` -- credential fields are
+always shown blank (never decrypted back to the browser); leaving one
+blank keeps the existing encrypted secret, typing a new value rotates
+it. That "leave blank to keep" behavior only holds when
+transport_type/auth_type aren't changing -- switching either requires
+the new credential's full shape, same validation as a fresh
+registration (see `provider_sources.update`'s own docstring). Both now
+show a **Health** column (reachable/unreachable/not checked,
 last-checked timestamp) and a "Test connection" button per source,
 wired to `connection_check.check_connection`. **No login wall on
 either yet** -- every visitor acts as the single stand-in admin/
@@ -294,7 +305,7 @@ python -m venv .venv
 ```
 
 No CKAN installation, no Docker, no database -- this is the whole point
-of the split being checked for real, not just asserted. 198 tests,
+of the split being checked for real, not just asserted. 215 tests,
 all passing with zero CKAN present.
 
 ## Running the app locally

@@ -157,3 +157,82 @@ def test_flash_message_with_special_characters_does_not_break_redirect(client):
     followed = client.get(location)
     assert followed.status_code == 200
     assert "No such source." in followed.text
+
+
+def _register_and_get_id(client):
+    client.post("/provider/sources/new", data=_valid_form())
+    listing = client.get("/provider/sources")
+    return re.search(r"/provider/sources/([^/]+)/check-connection", listing.text).group(1)
+
+
+def test_edit_form_renders_prefilled_without_the_secret(client):
+    source_id = _register_and_get_id(client)
+    resp = client.get("/provider/sources/%s/edit" % source_id)
+    assert resp.status_code == 200
+    assert "Edit source" in resp.text
+    assert "acme-open-data" in resp.text
+    # The stored API key must never come back to the browser.
+    assert "secret-key-123" not in resp.text
+
+
+def test_editing_updates_title_and_keeps_working(client, monkeypatch):
+    source_id = _register_and_get_id(client)
+
+    resp = client.post(
+        "/provider/sources/%s/edit" % source_id,
+        data={
+            "title": "Renamed",
+            "endpoint_url": "https://provider.example.gr/api/records",
+            "transport_type": "http",
+            "frequency": "DAILY",
+            "auth_type": "api_key",
+            "api_key": "",  # left blank -- keep the existing key
+            "api_key_location": "header",
+            "api_key_name": "X-API-Key",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "flash=Source+updated" in resp.headers["location"]
+
+    listing = client.get("/provider/sources")
+    assert "Renamed" in listing.text
+
+    monkeypatch.setattr(
+        connection_check, "_build_transport",
+        lambda source, secret: _FakeTransport(entries=[Entry(ref="r1")]),
+    )
+    check = client.post("/provider/sources/%s/check-connection" % source_id, follow_redirects=False)
+    assert "flash_kind=success" in check.headers["location"]
+
+
+def test_editing_with_validation_error_reshows_form(client):
+    source_id = _register_and_get_id(client)
+    resp = client.post(
+        "/provider/sources/%s/edit" % source_id,
+        data={"title": "", "endpoint_url": "https://x", "transport_type": "http", "auth_type": "api_key"},
+    )
+    assert resp.status_code == 400
+    assert "Edit source" in resp.text
+
+
+def test_editing_unknown_source_redirects_with_error(client):
+    resp = client.get("/provider/sources/no-such-id/edit", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "flash_kind=error" in resp.headers["location"]
+
+
+def test_delete_removes_source_from_list(client):
+    source_id = _register_and_get_id(client)
+    resp = client.post("/provider/sources/%s/delete" % source_id, follow_redirects=False)
+    assert resp.status_code == 303
+    assert "flash=Source+deleted" in resp.headers["location"]
+
+    listing = client.get("/provider/sources")
+    assert "acme-open-data" not in listing.text
+
+
+def test_delete_unknown_source_shows_not_found(client):
+    resp = client.post("/provider/sources/no-such-id/delete", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "flash_kind=error" in resp.headers["location"]

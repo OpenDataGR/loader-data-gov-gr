@@ -350,6 +350,172 @@ def register(session: Session, form: dict) -> ProviderSource:
     return row
 
 
+def config_to_form_fields(source: ProviderSource) -> dict:
+    """Reconstructs the non-secret form field values source_form.html
+    needs to pre-fill an edit, from a source's own row + its config
+    JSON blob. Deliberately never includes anything from the encrypted
+    secret -- credential fields are always left blank for the provider
+    to either leave alone (keeps the existing secret, see `update`) or
+    overwrite outright, never round-tripped through the browser."""
+    config = json.loads(source.config or "{}")
+    data = {
+        "name": source.name,
+        "title": source.title,
+        "endpoint_url": source.endpoint_url,
+        "transport_type": source.transport_type,
+        "frequency": source.frequency,
+        "notification_email": source.notification_email or "",
+        "proxy_enabled": "on" if source.proxy_enabled is not False else "",
+    }
+    if source.transport_type == "http":
+        data["auth_type"] = source.auth_type
+        auth_opts = config.get("auth_opts") or {}
+        data["api_key_location"] = auth_opts.get("location", "header")
+        data["api_key_name"] = auth_opts.get("name", "X-API-Key")
+        data["oauth2_token_url"] = auth_opts.get("token_url", "")
+        data["oauth2_scope"] = auth_opts.get("scope") or ""
+        pagination = config.get("pagination") or {}
+        data["items_path"] = pagination.get("items_path", "results")
+    elif source.transport_type in SSH_TRANSPORT_TYPES:
+        data["sftp_port"] = str(config.get("port", 22))
+        data["sftp_remote_path"] = config.get("remote_path", "/")
+        data["sftp_glob_pattern"] = config.get("glob_pattern", "*")
+        data["host_key_fingerprint"] = config.get("host_key_fingerprint", "")
+    elif source.transport_type == "ftp":
+        data["ftp_port"] = str(config.get("port", 21))
+        data["ftp_remote_path"] = config.get("remote_path", "/")
+        data["ftp_glob_pattern"] = config.get("glob_pattern", "*")
+        data["ftp_use_tls"] = "on" if config.get("use_tls", True) else ""
+    return data
+
+
+def _merge_existing_credentials(form: dict, transport_type: str, auth_type: str, existing: SecretBundle) -> dict:
+    """Edit-mode only: any raw credential-shaped field left blank in the
+    submitted form is filled in from the source's current stored
+    secret, so _http_fields/_ssh_fields/_ftp_fields's own "required"
+    validation passes unchanged and the existing credential stays in
+    effect -- reused server-side, never decrypted back to the browser.
+    A field the provider actually typed a new value into always wins.
+    Only called when transport_type/auth_type match what the source
+    already had (see `update`) -- across an actual change, the old
+    secret's shape doesn't apply and a fresh one must be entered."""
+    merged = dict(form)
+    fields = existing.fields
+
+    def _keep(form_key: str, secret_key: str) -> None:
+        if not (merged.get(form_key) or "").strip():
+            merged[form_key] = fields.get(secret_key, "")
+
+    if transport_type == "http":
+        if auth_type == "api_key":
+            _keep("api_key", "api_key")
+        elif auth_type == "basic_auth":
+            _keep("basic_username", "username")
+            _keep("basic_password", "password")
+        elif auth_type == "oauth2_client_credentials":
+            _keep("oauth2_client_id", "client_id")
+            _keep("oauth2_client_secret", "client_secret")
+        elif auth_type == "mtls":
+            _keep("mtls_client_cert", "client_cert_pem")
+            _keep("mtls_client_key", "client_key_pem")
+    elif transport_type in SSH_TRANSPORT_TYPES:
+        _keep("sftp_username", "username")
+        if not (merged.get("sftp_password") or "").strip() and not (merged.get("sftp_private_key") or "").strip():
+            if "private_key_pem" in fields:
+                merged["sftp_private_key"] = fields["private_key_pem"]
+                merged["sftp_private_key_passphrase"] = fields.get("private_key_passphrase", "")
+            else:
+                merged["sftp_password"] = fields.get("password", "")
+    elif transport_type == "ftp":
+        _keep("ftp_username", "username")
+        _keep("ftp_password", "password")
+    return merged
+
+
+def update(session: Session, source_id: str, form: dict) -> ProviderSource:
+    """Edits an existing source. ``name`` is immutable once
+    registered -- proxy URLs and bookmarks reference it directly, and
+    the form doesn't even offer to change it. Credential fields left
+    entirely blank keep the existing encrypted secret; typing a new
+    value rotates it. That "leave blank to keep" behavior only applies
+    when the submitted transport_type (and, for HTTP, auth_type) match
+    what the source already had -- switching either means the old
+    secret's shape no longer applies, so the new one must be fully
+    re-entered, same validation as a fresh registration. Does not touch
+    ``status`` -- editing an active source doesn't force it back
+    through re-approval (this whole service still runs as a single
+    stand-in user; revisit once real per-user auth exists)."""
+    source = get_or_404(session, source_id)
+    errors: dict[str, str] = {}
+
+    title = (form.get("title") or "").strip()
+    if not title:
+        errors["title"] = "required"
+
+    endpoint_url = (form.get("endpoint_url") or "").strip()
+    if not endpoint_url:
+        errors["endpoint_url"] = "required"
+
+    transport_type = form.get("transport_type") or source.transport_type
+    if transport_type not in TRANSPORT_TYPES:
+        errors["transport_type"] = "must be one of %s" % (TRANSPORT_TYPES,)
+        transport_type = source.transport_type
+
+    frequency = form.get("frequency") or "DAILY"
+    if frequency not in FREQUENCIES:
+        errors["frequency"] = "must be one of %s" % (FREQUENCIES,)
+        frequency = "DAILY"
+
+    notification_email = (form.get("notification_email") or "").strip() or None
+    proxy_enabled = _parse_bool(form.get("proxy_enabled"), default=False)
+
+    submitted_auth_type = form.get("auth_type") or source.auth_type
+    keep_existing_shape = transport_type == source.transport_type and (
+        transport_type != "http" or submitted_auth_type == source.auth_type
+    )
+    working_form = form
+    if keep_existing_shape:
+        existing_secret = credentials(session, source.id)
+        working_form = _merge_existing_credentials(form, transport_type, submitted_auth_type, existing_secret)
+
+    if transport_type in SSH_TRANSPORT_TYPES:
+        credential_fields, config = _ssh_fields(working_form, endpoint_url, errors)
+        auth_type = "ssh_credentials"
+    elif transport_type == "ftp":
+        credential_fields, config = _ftp_fields(working_form, endpoint_url, errors)
+        auth_type = "ftp_credentials"
+    else:
+        auth_type, credential_fields, config = _http_fields(working_form, errors)
+
+    if errors:
+        raise ValidationError(errors)
+
+    source.title = title
+    source.endpoint_url = endpoint_url
+    source.transport_type = transport_type
+    source.frequency = frequency
+    source.auth_type = auth_type
+    source.config = json.dumps(config)
+    source.notification_email = notification_email
+    source.proxy_enabled = proxy_enabled
+    session.flush()
+    _secrets_backend(session).rotate(source.id, credential_fields)
+    session.refresh(source)
+    return source
+
+
+def delete(session: Session, source_id: str) -> None:
+    """Permanently removes a source and its encrypted credential (the
+    secret lives on this same row, not a separate table -- deleting the
+    row deletes it too, no cascade needed). Allowed regardless of
+    status -- no special-casing "active" sources; this whole service
+    still runs as a single stand-in user, so there's no ownership check
+    to enforce here yet either."""
+    source = get_or_404(session, source_id)
+    session.delete(source)
+    session.commit()
+
+
 def get_or_404(session: Session, source_id: str) -> ProviderSource:
     row = session.get(ProviderSource, source_id)
     if row is None:

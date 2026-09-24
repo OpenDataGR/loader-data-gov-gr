@@ -1,10 +1,16 @@
 {% extends "base.html" %}
 {% import "_macros.html" as macros %}
-{% block title %}Register a source -- loader.data.gov.gr{% endblock %}
+{% block title %}{{ "Edit source" if editing else "Register a source" }} -- loader.data.gov.gr{% endblock %}
 {% block content %}
   <div class="panel">
-    <h1>Register a new source</h1>
-    <p class="subtitle">Connect a provider's API, SFTP/SCP drop, or FTP server for scheduled harvesting.</p>
+    <h1>{{ "Edit source" if editing else "Register a new source" }}</h1>
+    <p class="subtitle">
+      {% if editing %}
+        Credential fields below are always left blank -- leave them blank to keep the current one, or type a new value to replace it.
+      {% else %}
+        Connect a provider's API, SFTP/SCP drop, or FTP server for scheduled harvesting.
+      {% endif %}
+    </p>
 
     {% if errors %}
       <div class="flash flash-error">
@@ -16,10 +22,15 @@
       </div>
     {% endif %}
 
-    <form method="post" action="/provider/sources/new">
+    <form method="post" action="{{ '/provider/sources/%s/edit' % source_id if editing else '/provider/sources/new' }}">
       <label for="name">Name (unique, lowercase, e.g. <code>acme-open-data</code>)</label>
-      <input type="text" id="name" name="name" value="{{ data.get('name', '') }}">
-      {% if errors.name %}<div class="error">{{ errors.name }}</div>{% endif %}
+      {% if editing %}
+        <input type="text" value="{{ data.get('name', '') }}" disabled>
+        <div class="muted" style="margin-top:0.2rem;">Name can't be changed once registered -- proxy URLs and bookmarks reference it directly.</div>
+      {% else %}
+        <input type="text" id="name" name="name" value="{{ data.get('name', '') }}">
+        {% if errors.name %}<div class="error">{{ errors.name }}</div>{% endif %}
+      {% endif %}
 
       <label for="title">Title</label>
       <input type="text" id="title" name="title" value="{{ data.get('title', '') }}">
@@ -69,7 +80,7 @@
         </div>
 
         <div id="auth-api_key">
-          <label for="api_key">API key</label>
+          <label for="api_key">API key{% if editing %} (leave blank to keep current){% endif %}</label>
           <input type="text" id="api_key" name="api_key" value="{{ data.get('api_key', '') }}">
           <label for="api_key_location">Send as</label>
           <select id="api_key_location" name="api_key_location">
@@ -81,16 +92,16 @@
         </div>
 
         <div id="auth-basic_auth" style="display:none">
-          <label for="basic_username">Username</label>
+          <label for="basic_username">Username{% if editing %} (leave blank to keep current){% endif %}</label>
           <input type="text" id="basic_username" name="basic_username" value="{{ data.get('basic_username', '') }}">
-          <label for="basic_password">Password</label>
+          <label for="basic_password">Password{% if editing %} (leave blank to keep current){% endif %}</label>
           <input type="password" id="basic_password" name="basic_password" value="{{ data.get('basic_password', '') }}">
         </div>
 
         <div id="auth-oauth2_client_credentials" style="display:none">
-          <label for="oauth2_client_id">Client ID</label>
+          <label for="oauth2_client_id">Client ID{% if editing %} (leave blank to keep current){% endif %}</label>
           <input type="text" id="oauth2_client_id" name="oauth2_client_id" value="{{ data.get('oauth2_client_id', '') }}">
-          <label for="oauth2_client_secret">Client secret</label>
+          <label for="oauth2_client_secret">Client secret{% if editing %} (leave blank to keep current){% endif %}</label>
           <input type="password" id="oauth2_client_secret" name="oauth2_client_secret" value="{{ data.get('oauth2_client_secret', '') }}">
           <label for="oauth2_token_url">Token URL</label>
           <input type="text" id="oauth2_token_url" name="oauth2_token_url" value="{{ data.get('oauth2_token_url', '') }}">
@@ -99,9 +110,9 @@
         </div>
 
         <div id="auth-mtls" style="display:none">
-          <label for="mtls_client_cert">Client certificate (PEM)</label>
+          <label for="mtls_client_cert">Client certificate (PEM){% if editing %} (leave blank to keep current){% endif %}</label>
           <textarea id="mtls_client_cert" name="mtls_client_cert" rows="4">{{ data.get('mtls_client_cert', '') }}</textarea>
-          <label for="mtls_client_key">Client key (PEM)</label>
+          <label for="mtls_client_key">Client key (PEM){% if editing %} (leave blank to keep current){% endif %}</label>
           <textarea id="mtls_client_key" name="mtls_client_key" rows="4">{{ data.get('mtls_client_key', '') }}</textarea>
         </div>
 
@@ -120,10 +131,10 @@
         <input type="text" id="sftp_username" name="sftp_username" value="{{ data.get('sftp_username', '') }}">
         {% if errors.sftp_username %}<div class="error">{{ errors.sftp_username }}</div>{% endif %}
 
-        <label for="sftp_password">Password (leave blank if using a private key)</label>
+        <label for="sftp_password">Password (leave blank if using a private key{% if editing %}, or to keep the current credential{% endif %})</label>
         <input type="password" id="sftp_password" name="sftp_password" value="{{ data.get('sftp_password', '') }}">
 
-        <label for="sftp_private_key">Private key (PEM, optional)</label>
+        <label for="sftp_private_key">Private key (PEM, optional{% if editing %} -- leave both this and Password blank to keep the current credential{% endif %})</label>
         <textarea id="sftp_private_key" name="sftp_private_key" rows="4">{{ data.get('sftp_private_key', '') }}</textarea>
 
         <label for="sftp_private_key_passphrase">Private key passphrase (optional)</label>
@@ -148,7 +159,7 @@
         <label for="ftp_username">Username</label>
         <input type="text" id="ftp_username" name="ftp_username" value="{{ data.get('ftp_username', '') }}">
 
-        <label for="ftp_password">Password</label>
+        <label for="ftp_password">Password{% if editing %} (leave blank to keep current){% endif %}</label>
         <input type="password" id="ftp_password" name="ftp_password" value="{{ data.get('ftp_password', '') }}">
 
         <label for="ftp_port">Port</label>
@@ -171,7 +182,7 @@
         {% if errors.plain_ftp_acknowledged %}<div class="error">{{ errors.plain_ftp_acknowledged }}</div>{% endif %}
       </fieldset>
 
-      <button type="submit">{{ macros.icon("plus", 16) }} Register source</button>
+      <button type="submit">{{ macros.icon(("check" if editing else "plus"), 16) }} {{ "Save changes" if editing else "Register source" }}</button>
     </form>
   </div>
 

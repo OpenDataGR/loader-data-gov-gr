@@ -157,3 +157,20 @@ def test_check_connection_on_unreachable_source_shows_error(client, _isolated_db
 
     all_sources = client.get("/admin/sources")
     assert "unreachable" in all_sources.text
+
+
+def test_admin_can_delete_a_source(client, _isolated_db):
+    source_id = _register(_isolated_db)
+    resp = client.post("/admin/sources/%s/delete" % source_id, follow_redirects=False)
+    assert resp.status_code == 303
+    assert "flash=Source+deleted" in resp.headers["location"]
+
+    all_sources = client.get("/admin/sources")
+    assert "acme-open-data" not in all_sources.text
+
+
+def test_admin_edit_link_points_to_shared_edit_route(client, _isolated_db):
+    _register(_isolated_db)
+    resp = client.get("/admin/sources")
+    assert "/provider/sources/" in resp.text
+    assert "/edit" in resp.text

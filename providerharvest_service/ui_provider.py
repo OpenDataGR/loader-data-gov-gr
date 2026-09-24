@@ -74,6 +74,46 @@ async def new_source_submit(request: Request, session: Session = Depends(get_ses
     )
 
 
+@router.get("/sources/{source_id}/edit", response_class=HTMLResponse)
+def edit_source_form(source_id: str, request: Request, session: Session = Depends(get_session)):
+    try:
+        source = provider_sources.get_or_404(session, source_id)
+    except provider_sources.NotFound:
+        return RedirectResponse(_redirect_with_flash("No such source.", kind="error"), status_code=303)
+    data = provider_sources.config_to_form_fields(source)
+    return templates.TemplateResponse(
+        request,
+        "provider/source_form.html",
+        _form_template_vars(data, editing=True, source_id=source_id),
+    )
+
+
+@router.post("/sources/{source_id}/edit", response_class=HTMLResponse)
+async def edit_source_submit(source_id: str, request: Request, session: Session = Depends(get_session)):
+    form = await request.form()
+    try:
+        provider_sources.update(session, source_id, form)
+    except provider_sources.NotFound:
+        return RedirectResponse(_redirect_with_flash("No such source.", kind="error"), status_code=303)
+    except provider_sources.ValidationError as exc:
+        return templates.TemplateResponse(
+            request,
+            "provider/source_form.html",
+            _form_template_vars(form, errors=exc.errors, editing=True, source_id=source_id),
+            status_code=400,
+        )
+    return RedirectResponse(_redirect_with_flash("Source updated."), status_code=303)
+
+
+@router.post("/sources/{source_id}/delete")
+def delete_source(source_id: str, session: Session = Depends(get_session)) -> RedirectResponse:
+    try:
+        provider_sources.delete(session, source_id)
+    except provider_sources.NotFound:
+        return RedirectResponse(_redirect_with_flash("No such source.", kind="error"), status_code=303)
+    return RedirectResponse(_redirect_with_flash("Source deleted."), status_code=303)
+
+
 @router.post("/sources/{source_id}/pause")
 def source_pause(source_id: str, session: Session = Depends(get_session)) -> RedirectResponse:
     try:
@@ -115,7 +155,7 @@ def _redirect_with_flash(flash: str, kind: str = "success") -> str:
     return "/provider/sources?%s" % urlencode({"flash": flash, "flash_kind": kind})
 
 
-def _form_template_vars(data, errors=None) -> dict:
+def _form_template_vars(data, errors=None, editing=False, source_id=None) -> dict:
     if not data:
         # A genuinely fresh form (GET /sources/new): seed the checkbox
         # defaults HTML can't express via an <input> `value` -- an
@@ -130,4 +170,6 @@ def _form_template_vars(data, errors=None) -> dict:
         "transport_types": FIELD_TYPES,
         "frequencies": FREQUENCIES,
         "http_auth_types": HTTP_AUTH_TYPES,
+        "editing": editing,
+        "source_id": source_id,
     }

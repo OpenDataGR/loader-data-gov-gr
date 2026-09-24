@@ -132,6 +132,17 @@ def check_connection(source_id: str, request: Request, session: Session = Depend
     )
 
 
+@router.post("/{source_id}/delete")
+def delete_source(source_id: str, request: Request, session: Session = Depends(get_session)) -> RedirectResponse:
+    try:
+        provider_sources.delete(session, source_id)
+    except provider_sources.NotFound:
+        return RedirectResponse(
+            _came_from(request, "/admin/sources", "No such source.", kind="error"), status_code=303
+        )
+    return RedirectResponse(_came_from(request, "/admin/sources", "Source deleted."), status_code=303)
+
+
 _ALLOWED_REDIRECT_PATHS = ("/admin/sources", "/admin/sources/pending")
 
 
