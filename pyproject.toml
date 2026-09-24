@@ -14,6 +14,7 @@ dependencies = [
     "gunicorn>=22",
     "sqlalchemy>=2.0",
     "bcrypt>=4.0",
+    "pyjwt[crypto]>=2.8",
 ]
 
 [project.optional-dependencies]

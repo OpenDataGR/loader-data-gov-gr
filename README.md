@@ -124,14 +124,37 @@ tests, not just asserted: minting happens exactly once per user (a
 second call reuses the stored token without minting again, checked
 directly), the returned client actually carries the person's own token
 (not the sysadmin's), and different users get different tokens.
-**Not yet wired to anything that calls it** -- there's no auth
-middleware yet that identifies "who's making this request" in the
-first place (see below).
+
+`providerharvest_service/auth.py` -- the "who's making this request"
+piece: `require_current_username` validates a Keycloak-issued JWT
+bearer token (signature, issuer, audience, expiry) and returns the
+caller's `preferred_username`. Built and fully tested against a
+self-signed test keypair, independent of the real Keycloak client
+actually being registered yet -- `KEYCLOAK_JWKS_URL`/`KEYCLOAK_ISSUER`/
+`KEYCLOAK_AUDIENCE` are config values to fill in once that registration
+happens (see the architecture discussion this design came out of), the
+validation logic itself doesn't change. Key lookup is a narrow,
+injectable `kid -> PEM` callable rather than a hard dependency on any
+one JWKS-fetching library's own behavior, so tests exercise the real
+signature-verification code path -- forged/expired/wrong-issuer/
+wrong-audience/tampered tokens are rejected by the same logic that
+runs in production, not a mocked-away approximation of it.
+
+`GET /me` (in `app.py`) is the first endpoint to chain all of the
+above together for real: Keycloak JWT -> `require_current_username` ->
+`get_or_provision_ckan_client` -> a real CKAN Action API call
+(`organization_list_for_user`) made AS that specific person, returning
+which organizations they administer. That's the exact authorization
+check the whole per-user-token design exists for -- CKAN's own
+permission system answers it, not this service's own judgment.
+Confirmed via tests: token minted on first call, reused (not re-minted)
+on a second, and a request with no bearer token is rejected before any
+CKAN call is even attempted.
 
 Not yet built, in the rough order they'll likely be needed:
-- Auth middleware that identifies the caller (Keycloak-issued bearer
-  token, most likely) and calls `get_or_provision_ckan_client` for
-  them -- `ckan_tokens.py` has nothing to plug into yet.
+- Actually registering the Keycloak client (`providerharvest-api`) so
+  `KEYCLOAK_JWKS_URL`/`ISSUER`/`AUDIENCE` are real values instead of
+  unset config -- an Azure/Keycloak-console task, not code.
 - The rest of this service's own persistence (provider-source config,
   approval status, field-mapping profiles, encrypted credentials).
 - The real endpoints (register/test-connection/list/approve/reject/
@@ -151,7 +174,7 @@ python -m venv .venv
 ```
 
 No CKAN installation, no Docker, no database -- this is the whole point
-of the split being checked for real, not just asserted. 130 tests,
+of the split being checked for real, not just asserted. 144 tests,
 all passing with zero CKAN present.
 
 ## Running the app locally
