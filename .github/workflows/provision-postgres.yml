@@ -82,6 +82,16 @@ jobs:
             # 'psycopg2'"). Fix forward rather than leave it broken.
             sudo sed -i 's#^LOADER_HARVEST_DB_URL=postgresql://#LOADER_HARVEST_DB_URL=postgresql+psycopg://#' \
               /etc/loader-data-gov-gr.env
+            # Self-correcting: Postgres 15+ no longer grants CREATE/USAGE
+            # on the "public" schema to PUBLIC by default, so
+            # GRANT ALL PRIVILEGES ON DATABASE alone isn't enough --
+            # confirmed the hard way (a real harvest-now 500'd with
+            # "psycopg.errors.InsufficientPrivilege: permission denied
+            # for schema public" the first time HarvestBase tried to
+            # CREATE TABLE). Re-grant on every run; it's a no-op once
+            # already granted.
+            sudo docker compose exec -T postgres psql -U postgres -d loader_harvest -c \
+              "GRANT ALL ON SCHEMA public TO loader_harvest_app;"
           else
             app_pw=$(openssl rand -base64 24)
             sudo docker compose exec -T postgres psql -U postgres <<EOF
@@ -95,6 +105,13 @@ jobs:
           \$\$;
           GRANT ALL PRIVILEGES ON DATABASE loader_harvest TO loader_harvest_app;
           EOF
+            # Postgres 15+ default: "public" schema grants CREATE/USAGE
+            # to the owner only, not to PUBLIC -- must be granted
+            # explicitly to the app role, on the target database itself
+            # (not the "postgres" maintenance DB the block above ran
+            # against).
+            sudo docker compose exec -T postgres psql -U postgres -d loader_harvest -c \
+              "GRANT ALL ON SCHEMA public TO loader_harvest_app;"
             sudo tee -a /etc/loader-data-gov-gr.env > /dev/null <<EOF
           LOADER_HARVEST_DB_URL=postgresql+psycopg://loader_harvest_app:$app_pw@127.0.0.1:5432/loader_harvest
           EOF
