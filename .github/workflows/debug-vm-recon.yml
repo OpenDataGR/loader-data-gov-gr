@@ -1,0 +1,42 @@
+name: VM recon (read-only)
+
+# Manual-only, read-only reconnaissance for planning infrastructure
+# changes on the shared VM -- never installs/modifies anything itself.
+on:
+  workflow_dispatch:
+
+jobs:
+  recon:
+    runs-on: [self-hosted, loader]
+    steps:
+      - name: System resources
+        run: |
+          echo "--- OS ---"
+          cat /etc/os-release | grep -E "^(NAME|VERSION)="
+          echo "--- Memory ---"
+          free -h
+          echo "--- Disk ---"
+          df -h /
+          echo "--- CPU ---"
+          nproc
+
+      - name: Existing PostgreSQL / port 5432
+        run: |
+          echo "--- postgresql packages already installed? ---"
+          dpkg -l | grep -i postgres || echo "none found"
+          echo "--- anything listening on 5432? ---"
+          (sudo ss -tlnp | grep 5432) || echo "port 5432 free"
+          echo "--- systemd services with 'postgres' in the name ---"
+          systemctl list-units --type=service --all | grep -i postgres || echo "none found"
+
+      - name: Other services on this VM (context on what's already sharing it)
+        run: |
+          echo "--- listening ports ---"
+          sudo ss -tlnp
+          echo "--- systemd services (non-default, likely project-specific) ---"
+          systemctl list-units --type=service --state=running --no-legend | grep -viE "systemd-|dbus|cron|networkd|resolved|udev|ssh|snapd|multipathd|polkit|rsyslog|unattended|packagekit"
+
+      - name: Sudo capability check (read-only)
+        run: |
+          echo "--- can this account run apt/systemctl non-interactively? ---"
+          sudo -n true 2>&1 && echo "passwordless sudo: yes (at least for this)" || echo "passwordless sudo: no / limited"
