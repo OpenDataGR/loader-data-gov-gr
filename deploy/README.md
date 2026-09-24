@@ -315,6 +315,20 @@ same as everything else here), resource-capped (`mem_limit: 2g`,
 Swarm's `deploy.resources.limits` block is silently ignored outside
 Swarm mode, these top-level keys are the ones that actually work).
 
+**Redeployable, not a one-off**: [`deploy/shared-postgres/docker-compose.yml`](shared-postgres/docker-compose.yml)
+is the actual, committed source of truth for the container (kept in
+this repo pragmatically -- only this project uses it so far -- not
+because it belongs to it), and `.github/workflows/
+provision-shared-postgres.yml` (manual-dispatch) is idempotent and
+safe to leave in the repo permanently: it generates its own passwords
+directly on the VM only the first time it's actually needed, never
+overwrites an existing `.env`/database/role, and re-syncs the compose
+file from this repo on every run. If `/opt/shared-infra/postgres` were
+ever lost (VM rebuild, disk issue), re-running that workflow stands it
+back up from what's actually committed here -- confirmed by literally
+re-running it against the already-provisioned instance and watching it
+correctly detect "already provisioned" and touch nothing.
+
 This service's own database/role:
 ```
 LOADER_HARVEST_DB_URL=postgresql://loader_harvest_app:<password>@127.0.0.1:5432/loader_harvest

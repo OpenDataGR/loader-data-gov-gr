@@ -1,0 +1,104 @@
+name: Provision shared PostgreSQL
+
+# Idempotent and safe to leave in the repo / re-run at any time --
+# unlike the earlier one-off version of this workflow (deleted once
+# its job was done, since it depended on since-deleted GitHub secrets
+# for a genuine one-time action), this one generates its own passwords
+# directly on the VM, only the first time it actually needs to, and
+# never overwrites anything that already exists. Exists so this
+# project stays redeployable: if /opt/shared-infra/postgres were ever
+# lost (VM rebuild, disk issue), re-running this workflow stands it
+# back up from the docker-compose.yml this repo actually commits,
+# rather than depending on a one-time action nobody can reproduce.
+#
+# Deliberately provisions outside /opt/data-projects/loader-data-gov-gr
+# -- this is cross-project infrastructure (see deploy/README.md), not
+# owned by this service; the compose file lives in this repo pragmatically
+# (only this project uses it so far), not because it belongs to it.
+on:
+  workflow_dispatch:
+
+jobs:
+  provision:
+    runs-on: [self-hosted, loader]
+    steps:
+      - name: Confirm docker compose is available
+        run: sudo docker compose version
+
+      - name: Sync the compose file from this repo's own committed copy
+        run: |
+          sudo mkdir -p /opt/shared-infra/postgres
+          sudo chown -R localadmin:localadmin /opt/shared-infra
+          sudo -u localadmin cp \
+            /opt/data-projects/loader-data-gov-gr/deploy/shared-postgres/docker-compose.yml \
+            /opt/shared-infra/postgres/docker-compose.yml
+
+      - name: Generate the superuser password, only if not already provisioned
+        run: |
+          if [ -f /opt/shared-infra/postgres/.env ]; then
+            echo "Already provisioned -- .env exists, leaving it untouched."
+          else
+            pw=$(openssl rand -base64 24)
+            sudo -u localadmin tee /opt/shared-infra/postgres/.env > /dev/null <<EOF
+          POSTGRES_PASSWORD=$pw
+          EOF
+            sudo chmod 600 /opt/shared-infra/postgres/.env
+            echo "Generated a fresh superuser password."
+          fi
+
+      - name: Start (or confirm already running) the container
+        run: |
+          cd /opt/shared-infra/postgres
+          sudo docker compose up -d
+          echo "--- waiting for healthy ---"
+          for i in $(seq 1 24); do
+            status=$(sudo docker inspect --format='{{.State.Health.Status}}' shared-postgres 2>/dev/null || echo "starting")
+            echo "status: $status"
+            if [ "$status" = "healthy" ]; then break; fi
+            sleep 2
+          done
+          sudo docker ps --filter name=shared-postgres
+
+      - name: Verify the resource caps actually took effect
+        run: |
+          echo "--- memory limit (bytes; expect 2147483648 for 2g) ---"
+          sudo docker inspect shared-postgres --format='{{.HostConfig.Memory}}'
+          echo "--- CPU quota (NanoCpus; expect 1000000000 for 1.0 cpu) ---"
+          sudo docker inspect shared-postgres --format='{{.HostConfig.NanoCpus}}'
+
+      - name: Ensure loader's own database/role exist (idempotent either way)
+        run: |
+          cd /opt/shared-infra/postgres
+          if sudo grep -q '^LOADER_HARVEST_DB_URL=' /etc/loader-data-gov-gr.env 2>/dev/null; then
+            echo "loader's own DB URL is already provisioned -- confirming the role/db still exist, not regenerating the password."
+            sudo docker compose exec -T postgres psql -U postgres -c \
+              "SELECT rolname FROM pg_roles WHERE rolname = 'loader_harvest_app'; SELECT datname FROM pg_database WHERE datname = 'loader_harvest';"
+          else
+            app_pw=$(openssl rand -base64 24)
+            sudo docker compose exec -T postgres psql -U postgres <<EOF
+          SELECT 'CREATE DATABASE loader_harvest' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'loader_harvest')\gexec
+          DO \$\$
+          BEGIN
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'loader_harvest_app') THEN
+              CREATE ROLE loader_harvest_app LOGIN PASSWORD '$app_pw';
+            END IF;
+          END
+          \$\$;
+          GRANT ALL PRIVILEGES ON DATABASE loader_harvest TO loader_harvest_app;
+          EOF
+            sudo tee -a /etc/loader-data-gov-gr.env > /dev/null <<EOF
+          LOADER_HARVEST_DB_URL=postgresql://loader_harvest_app:$app_pw@127.0.0.1:5432/loader_harvest
+          EOF
+            echo "Provisioned loader_harvest / loader_harvest_app for the first time."
+          fi
+
+      - name: Confirm the stored connection string actually still works
+        run: |
+          url=$(sudo grep '^LOADER_HARVEST_DB_URL=' /etc/loader-data-gov-gr.env | cut -d= -f2-)
+          sudo docker exec -e PGPASSWORD="$(echo "$url" | sed -E 's#.*://[^:]+:([^@]+)@.*#\1#')" shared-postgres \
+            psql -U loader_harvest_app -d loader_harvest -h 127.0.0.1 -c "SELECT current_user, current_database();"
+
+      - name: Confirm the env file still has exactly the expected keys
+        run: |
+          echo "--- resulting file (values redacted by GitHub, keys only) ---"
+          sudo sed 's/=.*/=<redacted>/' /etc/loader-data-gov-gr.env
