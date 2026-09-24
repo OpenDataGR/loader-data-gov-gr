@@ -1,0 +1,19 @@
+name: Debug logs
+
+# Manual-only: prints the service's recent systemd journal so a real
+# production error can be diagnosed from its actual traceback instead
+# of guessed at. Read-only -- touches nothing.
+on:
+  workflow_dispatch:
+    inputs:
+      lines:
+        description: "Number of journal lines to print"
+        required: false
+        default: "200"
+
+jobs:
+  logs:
+    runs-on: [self-hosted, loader]
+    steps:
+      - name: Print recent journal
+        run: journalctl -u loader-data-gov-gr -n ${{ github.event.inputs.lines }} --no-pager
