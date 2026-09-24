@@ -11,6 +11,16 @@ survives redeploys without any extra configuration.
 
 Exposes factory functions (not just a single module-level engine) so
 tests can point at an isolated database instead of the real default.
+
+No Alembic/migration framework -- ``_sync_schema`` below is the whole
+answer to "a model gained a column since the last deploy": SQLAlchemy's
+own ``create_all()`` only ever creates tables that don't exist yet, it
+never alters one that's already there (confirmed the hard way: adding
+``ProviderSource.last_check_*`` broke every page that queries it in
+production with "no such column: provider_source.last_check_at" until
+this existed). SQLite's ``ALTER TABLE ... ADD COLUMN`` is the one schema
+change it supports without a full rebuild, which is exactly what a new
+nullable column needs -- existing rows simply get NULL for it.
 """
 
 from __future__ import annotations
@@ -18,7 +28,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -33,9 +43,33 @@ def default_db_url() -> str:
     return "sqlite:///%s" % path
 
 
+def _sync_schema(engine: Engine) -> None:
+    """Adds any column a model declares but an already-existing table is
+    missing. A no-op for a brand-new table (create_all already made it
+    complete) or a NOT NULL column with no default -- SQLite itself
+    refuses that combination against a table with existing rows, which
+    is the right outcome: that case needs a real backfill, not a silent
+    schema patch, so it's left to raise loudly if it's ever hit."""
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            if table.name not in existing_tables:
+                continue
+            existing_columns = {col["name"] for col in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name in existing_columns:
+                    continue
+                ddl = "ALTER TABLE %s ADD COLUMN %s %s" % (
+                    table.name, column.name, column.type.compile(engine.dialect)
+                )
+                conn.execute(text(ddl))
+
+
 def make_engine(url: str) -> Engine:
     engine = create_engine(url, connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
+    _sync_schema(engine)
     return engine
 
 
