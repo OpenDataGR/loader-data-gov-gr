@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime
 import uuid
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, LargeBinary, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -68,6 +68,30 @@ class FtpGroup(Base):
     groupname: Mapped[str] = mapped_column(String, primary_key=True)
     gid: Mapped[int] = mapped_column(Integer, nullable=False)
     members: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class CkanUserToken(Base):
+    """One row per person, storing their personal CKAN API token
+    envelope-encrypted (see engine/secrets/envelope.py -- the exact
+    same AES-256-GCM scheme already built for provider credentials,
+    reused here rather than inventing a second secret store).
+
+    Per the "per-user token does both" design: this token is minted
+    once (via the standing sysadmin credential, at first actual need,
+    not preemptively) and then used for BOTH the org-membership
+    authorization check and every subsequent write -- so CKAN's own
+    permission system enforces org membership for real on every call,
+    rather than this service's own logic being the only thing
+    standing between a caller and writing to the wrong org.
+    """
+
+    __tablename__ = "ckan_user_token"
+
+    username: Mapped[str] = mapped_column(String, primary_key=True)
+    ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    data_key_wrapped: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    algorithm: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
 
 
 class FtpAllowedIp(Base):

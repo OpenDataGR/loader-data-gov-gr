@@ -21,7 +21,7 @@ pipeline. Do not add a dependency from here back onto
 `ckanext.providerharvest` (or vice versa) -- the whole point is these
 are independently deployable.
 
-## Status: engine + CKAN adapter + a bare health check + CI (CD scaffolded, needs secrets)
+## Status: engine + CKAN adapter + working CI/CD + a live FTP/SFTP receiving server + token provisioning
 
 `providerharvest_service/engine/` -- the transport implementations
 (HTTP/SFTP/SCP/FTP), the HTTP auth strategies (API key/Basic/OAuth2
@@ -93,27 +93,51 @@ validated to sit under `LOADER_FTP_UPLOAD_ROOT` (default
 VM path. Generated passwords are bcrypt-hashed and shown exactly once,
 at creation (or rotation) -- never returned again.
 
-**Deliberately not yet in this slice**: syncing this data into a
-running ProFTPD (or a dedicated sshd for SFTP) and generating the
-nftables rules the IP whitelist implies. Getting a real server's
-expected password-hash format right needs verifying against actual
-ProFTPD docs rather than guessing at it -- that's its own next piece,
-not bundled into the API/data-model slice that's already tested and
-working.
+**The FTP/SFTP receiving server itself is live and confirmed working**
+on `MIN01RG96PVM02` -- ProFTPD, `mod_sql`-backed virtual users reading
+directly from the same SQLite database the admin API writes to (no
+separate sync step), serving both plain FTP (port 21) and SFTP via
+`mod_sftp` (port 2222, its own `<VirtualHost>`) with one shared
+account/credential set for either protocol. Real login + real file
+upload confirmed on both. Two real, non-obvious fixes live in code
+because of this: `models.FtpGroup` (an empty table ProFTPD's `mod_sql`
+queries unconditionally during auth, even unused) and
+`admin_ftp._hash_password`'s explicit `$2a$` bcrypt prefix (ProFTPD's
+`mod_sql_passwd` here silently rejects bcrypt's own `$2b$` default).
+See [`deploy/README.md`](deploy/README.md) for the full setup, both
+gotchas explained, and what's still open (FTPS was explicitly dropped
+in favor of SFTP, which needs no certificate; IP whitelist enforcement
+is designed -- the data model and admin API both support it -- but not
+enforced anywhere yet, deliberately paused after three real ProFTPD/
+firewall approaches all turned out to be dead ends or to require
+touching shared Azure networking beyond this one project's scope).
+
+`providerharvest_service/ckan_tokens.py` -- the token-provisioning flow:
+`get_or_provision_ckan_client(session, username)` returns a
+`CKANActionClient` bound to that person's own personal CKAN API token,
+minting one via the standing sysadmin credential (`CKAN_BASE_URL` +
+`CKAN_SYSADMIN_API_TOKEN`) the first time they need one and storing it
+envelope-encrypted (`CkanUserToken`, via the exact same
+`engine/secrets/envelope.py` AES-256-GCM scheme already built for
+provider credentials -- no second secret store invented). Confirmed via
+tests, not just asserted: minting happens exactly once per user (a
+second call reuses the stored token without minting again, checked
+directly), the returned client actually carries the person's own token
+(not the sysadmin's), and different users get different tokens.
+**Not yet wired to anything that calls it** -- there's no auth
+middleware yet that identifies "who's making this request" in the
+first place (see below).
 
 Not yet built, in the rough order they'll likely be needed:
-- Syncing FTP accounts into a real ProFTPD (+ a dedicated sshd for
-  SFTP) and generating nftables rules for the IP whitelist.
+- Auth middleware that identifies the caller (Keycloak-issued bearer
+  token, most likely) and calls `get_or_provision_ckan_client` for
+  them -- `ckan_tokens.py` has nothing to plug into yet.
 - The rest of this service's own persistence (provider-source config,
   approval status, field-mapping profiles, encrypted credentials).
-- The token-provisioning flow itself: minting a per-user CKAN API token
-  via the standing sysadmin credential the first time a user needs one
-  (lazily, not at every login), and storing it via `engine/secrets`
-  (the same envelope-encryption already built for provider credentials).
 - The real endpoints (register/test-connection/list/approve/reject/
-  pause/resume) and their own auth middleware (validating the caller's
-  identity and looking up their stored per-user token to construct a
-  `CKANActionClient`).
+  pause/resume) -- this is the actual parity work with
+  `ckanext-providerharvest`; everything above is infrastructure this
+  depends on, not the feature itself.
 - Its own scheduler/queue for running harvests -- `ckanext-harvest`'s
   gather/fetch/import machinery doesn't come along; this service owns
   that job-queue concern itself now.
@@ -127,7 +151,7 @@ python -m venv .venv
 ```
 
 No CKAN installation, no Docker, no database -- this is the whole point
-of the split being checked for real, not just asserted. 108 tests,
+of the split being checked for real, not just asserted. 130 tests,
 all passing with zero CKAN present.
 
 ## Running the app locally
