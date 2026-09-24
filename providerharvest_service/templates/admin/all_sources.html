@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}All sources{% endblock %}
+{% block content %}
+  <h1>All registered sources</h1>
+
+  {% if not sources %}
+    <p class="muted">No sources registered yet.</p>
+  {% else %}
+    <table>
+      <thead>
+        <tr><th>Name</th><th>Transport</th><th>Endpoint</th><th>Status</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for s in sources %}
+        <tr>
+          <td>{{ s.title }}<br><span class="muted">{{ s.name }}</span></td>
+          <td>{{ s.transport_type }}</td>
+          <td>{{ s.endpoint_url }}</td>
+          <td>
+            <span class="status status-{{ s.status }}">{{ s.status }}</span>
+            {% if s.status == "rejected" and s.rejection_reason %}
+              <div class="muted">{{ s.rejection_reason }}</div>
+            {% endif %}
+          </td>
+          <td>
+            {% if s.status == "pending" %}
+              <form class="inline" method="post" action="/admin/sources/{{ s.id }}/activate">
+                <button type="submit">Activate</button>
+              </form>
+              <form class="inline" method="post" action="/admin/sources/{{ s.id }}/reject">
+                <input type="text" name="reason" placeholder="reason (optional)">
+                <button type="submit">Reject</button>
+              </form>
+            {% elif s.status == "active" %}
+              <form class="inline" method="post" action="/admin/sources/{{ s.id }}/pause">
+                <button type="submit">Pause</button>
+              </form>
+            {% elif s.status == "paused" %}
+              <form class="inline" method="post" action="/admin/sources/{{ s.id }}/resume">
+                <button type="submit">Resume</button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+{% endblock %}

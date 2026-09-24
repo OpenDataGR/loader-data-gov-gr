@@ -21,7 +21,7 @@ pipeline. Do not add a dependency from here back onto
 `ckanext.providerharvest` (or vice versa) -- the whole point is these
 are independently deployable.
 
-## Status: engine + CKAN adapter + working CI/CD + a live FTP/SFTP receiving server + token provisioning
+## Status: engine + CKAN adapter + working CI/CD + a live FTP/SFTP receiving server + token provisioning + provider/admin source-registration UI
 
 `providerharvest_service/engine/` -- the transport implementations
 (HTTP/SFTP/SCP/FTP), the HTTP auth strategies (API key/Basic/OAuth2
@@ -151,16 +151,53 @@ Confirmed via tests: token minted on first call, reused (not re-minted)
 on a second, and a request with no bearer token is rejected before any
 CKAN call is even attempted.
 
+`providerharvest_service/models.py`'s `ProviderSource` +
+`providerharvest_service/provider_sources.py` -- this service's own
+provider-source registration/approval lifecycle, independent of CKAN
+(spec'd off `ckanext-providerharvest`'s `logic/action.py` and
+`blueprints/provider_ui.py`, ported as *behavior* -- field shapes,
+validation rules, the `pending -> active/rejected`,
+`active <-> paused` state machine -- not as code; that plugin calls
+`toolkit.get_action(...)` in-process, this service has no such thing
+to call). Credentials (API key/basic/OAuth2/mTLS for HTTP, or
+password/private-key for SFTP/SCP/FTP) are envelope-encrypted on the
+row itself via the exact same AES-256-GCM scheme already used for
+`CkanUserToken`, never stored in plaintext. **Deliberately does not
+yet touch CKAN at all**: approving a source just flips its status --
+no `harvest_source_create`/package/DataStore provisioning over the
+Action API yet, that's a later slice once an actual harvest run needs
+those to exist. Field-mapping rows (`row_rules`) and the
+test-connection/fetch-host-key dry-run endpoints aren't ported yet
+either -- registering a source today requires knowing (and typing in)
+an SFTP/SCP host-key fingerprint gathered out-of-band, rather than
+fetching it through this UI.
+
+`providerharvest_service/ui_provider.py` + `ui_admin.py` -- the two
+self-service/admin web UIs (server-rendered Jinja2 templates under
+`providerharvest_service/templates/`, no JS build step -- a small
+inline `<script>` just toggles which fieldset is visible for the
+selected transport/auth type, matching the old blueprint's own
+"works without JS, nicer with it" convention). `/provider/sources` +
+`/provider/sources/new` are the provider-facing register/list/pause/
+resume flow; `/admin/sources/pending` + `/admin/sources` are the
+admin approval queue and the "every source, any status" dashboard.
+**No login wall on either yet** -- every visitor acts as the single
+stand-in admin/provider user the whole service currently runs as (see
+"not yet built" below); that's a deliberate, temporary simplification
+to prove the registration/approval workflow first, not an oversight.
+
 Not yet built, in the rough order they'll likely be needed:
 - Actually registering the Keycloak client (`providerharvest-api`) so
   `KEYCLOAK_JWKS_URL`/`ISSUER`/`AUDIENCE` are real values instead of
-  unset config -- an Azure/Keycloak-console task, not code.
-- The rest of this service's own persistence (provider-source config,
-  approval status, field-mapping profiles, encrypted credentials).
-- The real endpoints (register/test-connection/list/approve/reject/
-  pause/resume) -- this is the actual parity work with
-  `ckanext-providerharvest`; everything above is infrastructure this
-  depends on, not the feature itself.
+  unset config -- an Azure/Keycloak-console task, not code -- and then
+  wiring the two UIs above to it (real per-user login, a real "which
+  org can this person register a source for" check via
+  `organization_list_for_user`, replacing the single stand-in user).
+- Field-mapping profiles (`row_rules`) and the test-connection/
+  fetch-host-key dry-run endpoints the old blueprint had.
+- Provisioning an approved source for real in CKAN (harvest-source
+  package, DataStore resource) over the Action API via
+  `CKANActionClient` -- deliberately deferred, see above.
 - Its own scheduler/queue for running harvests -- `ckanext-harvest`'s
   gather/fetch/import machinery doesn't come along; this service owns
   that job-queue concern itself now.
@@ -174,7 +211,7 @@ python -m venv .venv
 ```
 
 No CKAN installation, no Docker, no database -- this is the whole point
-of the split being checked for real, not just asserted. 144 tests,
+of the split being checked for real, not just asserted. 170 tests,
 all passing with zero CKAN present.
 
 ## Running the app locally

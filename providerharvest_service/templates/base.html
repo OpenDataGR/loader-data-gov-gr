@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}loader.data.gov.gr{% endblock %}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+    nav { margin-bottom: 1.5rem; padding-bottom: 0.75rem; border-bottom: 1px solid #ddd; }
+    nav a { margin-right: 1.25rem; text-decoration: none; color: #0a5; font-weight: 600; }
+    h1 { font-size: 1.4rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #eee; font-size: 0.92rem; }
+    th { background: #fafafa; }
+    .flash { background: #eef8ee; border: 1px solid #bde5bd; padding: 0.6rem 0.9rem; border-radius: 4px; margin-bottom: 1rem; }
+    .status { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 3px; font-size: 0.8rem; font-weight: 600; }
+    .status-pending { background: #fff3cd; color: #856404; }
+    .status-active { background: #d4edda; color: #155724; }
+    .status-paused { background: #e2e3e5; color: #383d41; }
+    .status-rejected { background: #f8d7da; color: #721c24; }
+    form.inline { display: inline; }
+    label { display: block; margin-top: 0.8rem; font-weight: 600; font-size: 0.9rem; }
+    input[type=text], input[type=password], input[type=email], input[type=url], input[type=number], select, textarea {
+      width: 100%; max-width: 480px; padding: 0.35rem 0.5rem; margin-top: 0.2rem; box-sizing: border-box;
+    }
+    fieldset { margin-top: 1.2rem; border: 1px solid #ddd; border-radius: 4px; }
+    legend { font-weight: 700; padding: 0 0.4rem; }
+    .error { color: #b00020; font-size: 0.85rem; margin-top: 0.2rem; }
+    button { margin-top: 1.2rem; padding: 0.5rem 1.1rem; cursor: pointer; }
+    .muted { color: #777; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="/provider/sources">Provider: my sources</a>
+    <a href="/admin/sources/pending">Admin: pending approval</a>
+    <a href="/admin/sources">Admin: all sources</a>
+  </nav>
+  {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+  {% block content %}{% endblock %}
+</body>
+</html>

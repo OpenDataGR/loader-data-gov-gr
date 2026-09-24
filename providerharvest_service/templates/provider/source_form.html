@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}Register a source{% endblock %}
+{% block content %}
+  <h1>Register a new source</h1>
+
+  {% if errors %}
+    <div class="flash" style="background:#fdecea;border-color:#f5c2c0;">
+      Please fix the errors below.
+      {% if errors.credential_fields %}<div class="error">{{ errors.credential_fields }}</div>{% endif %}
+    </div>
+  {% endif %}
+
+  <form method="post" action="/provider/sources/new">
+    <label for="name">Name (unique, lowercase, e.g. <code>acme-open-data</code>)</label>
+    <input type="text" id="name" name="name" value="{{ data.get('name', '') }}">
+    {% if errors.name %}<div class="error">{{ errors.name }}</div>{% endif %}
+
+    <label for="title">Title</label>
+    <input type="text" id="title" name="title" value="{{ data.get('title', '') }}">
+    {% if errors.title %}<div class="error">{{ errors.title }}</div>{% endif %}
+
+    <label for="endpoint_url">Endpoint URL / host</label>
+    <input type="text" id="endpoint_url" name="endpoint_url" value="{{ data.get('endpoint_url', '') }}"
+           placeholder="https://provider.example.gr/api/records or sftp.example.gr">
+    {% if errors.endpoint_url %}<div class="error">{{ errors.endpoint_url }}</div>{% endif %}
+
+    <label for="transport_type">Transport</label>
+    <select id="transport_type" name="transport_type" onchange="showTransportFields()">
+      {% for t in transport_types %}
+        <option value="{{ t }}" {% if data.get('transport_type', 'http') == t %}selected{% endif %}>{{ t }}</option>
+      {% endfor %}
+    </select>
+    {% if errors.transport_type %}<div class="error">{{ errors.transport_type }}</div>{% endif %}
+
+    <label for="frequency">Harvest frequency</label>
+    <select id="frequency" name="frequency">
+      {% for f in frequencies %}
+        <option value="{{ f }}" {% if data.get('frequency', 'DAILY') == f %}selected{% endif %}>{{ f }}</option>
+      {% endfor %}
+    </select>
+    {% if errors.frequency %}<div class="error">{{ errors.frequency }}</div>{% endif %}
+
+    <label for="notification_email">Notification e-mail (optional)</label>
+    <input type="email" id="notification_email" name="notification_email" value="{{ data.get('notification_email', '') }}">
+
+    <fieldset id="fieldset-http">
+      <legend>HTTP API settings</legend>
+
+      <label for="auth_type">Authentication</label>
+      <select id="auth_type" name="auth_type" onchange="showAuthFields()">
+        {% for a in http_auth_types %}
+          <option value="{{ a }}" {% if data.get('auth_type', 'api_key') == a %}selected{% endif %}>{{ a }}</option>
+        {% endfor %}
+      </select>
+
+      <div id="auth-api_key">
+        <label for="api_key">API key</label>
+        <input type="text" id="api_key" name="api_key" value="{{ data.get('api_key', '') }}">
+        <label for="api_key_location">Send as</label>
+        <select id="api_key_location" name="api_key_location">
+          <option value="header" {% if data.get('api_key_location', 'header') == 'header' %}selected{% endif %}>header</option>
+          <option value="query" {% if data.get('api_key_location') == 'query' %}selected{% endif %}>query parameter</option>
+        </select>
+        <label for="api_key_name">Header/parameter name</label>
+        <input type="text" id="api_key_name" name="api_key_name" value="{{ data.get('api_key_name', 'X-API-Key') }}">
+      </div>
+
+      <div id="auth-basic_auth" style="display:none">
+        <label for="basic_username">Username</label>
+        <input type="text" id="basic_username" name="basic_username" value="{{ data.get('basic_username', '') }}">
+        <label for="basic_password">Password</label>
+        <input type="password" id="basic_password" name="basic_password" value="{{ data.get('basic_password', '') }}">
+      </div>
+
+      <div id="auth-oauth2_client_credentials" style="display:none">
+        <label for="oauth2_client_id">Client ID</label>
+        <input type="text" id="oauth2_client_id" name="oauth2_client_id" value="{{ data.get('oauth2_client_id', '') }}">
+        <label for="oauth2_client_secret">Client secret</label>
+        <input type="password" id="oauth2_client_secret" name="oauth2_client_secret" value="{{ data.get('oauth2_client_secret', '') }}">
+        <label for="oauth2_token_url">Token URL</label>
+        <input type="text" id="oauth2_token_url" name="oauth2_token_url" value="{{ data.get('oauth2_token_url', '') }}">
+        <label for="oauth2_scope">Scope (optional)</label>
+        <input type="text" id="oauth2_scope" name="oauth2_scope" value="{{ data.get('oauth2_scope', '') }}">
+      </div>
+
+      <div id="auth-mtls" style="display:none">
+        <label for="mtls_client_cert">Client certificate (PEM)</label>
+        <textarea id="mtls_client_cert" name="mtls_client_cert" rows="4">{{ data.get('mtls_client_cert', '') }}</textarea>
+        <label for="mtls_client_key">Client key (PEM)</label>
+        <textarea id="mtls_client_key" name="mtls_client_key" rows="4">{{ data.get('mtls_client_key', '') }}</textarea>
+      </div>
+
+      <label for="items_path">Records path in the response (optional)</label>
+      <input type="text" id="items_path" name="items_path" value="{{ data.get('items_path', 'results') }}">
+    </fieldset>
+
+    <fieldset id="fieldset-ssh">
+      <legend>SFTP/SCP settings</legend>
+      <label for="sftp_username">Username</label>
+      <input type="text" id="sftp_username" name="sftp_username" value="{{ data.get('sftp_username', '') }}">
+      {% if errors.sftp_username %}<div class="error">{{ errors.sftp_username }}</div>{% endif %}
+
+      <label for="sftp_password">Password (leave blank if using a private key)</label>
+      <input type="password" id="sftp_password" name="sftp_password" value="{{ data.get('sftp_password', '') }}">
+
+      <label for="sftp_private_key">Private key (PEM, optional)</label>
+      <textarea id="sftp_private_key" name="sftp_private_key" rows="4">{{ data.get('sftp_private_key', '') }}</textarea>
+
+      <label for="sftp_private_key_passphrase">Private key passphrase (optional)</label>
+      <input type="password" id="sftp_private_key_passphrase" name="sftp_private_key_passphrase" value="{{ data.get('sftp_private_key_passphrase', '') }}">
+
+      <label for="sftp_port">Port</label>
+      <input type="number" id="sftp_port" name="sftp_port" value="{{ data.get('sftp_port', '22') }}">
+
+      <label for="sftp_remote_path">Remote path</label>
+      <input type="text" id="sftp_remote_path" name="sftp_remote_path" value="{{ data.get('sftp_remote_path', '/') }}">
+
+      <label for="sftp_glob_pattern">File pattern</label>
+      <input type="text" id="sftp_glob_pattern" name="sftp_glob_pattern" value="{{ data.get('sftp_glob_pattern', '*') }}">
+
+      <label for="host_key_fingerprint">Server host-key fingerprint (confirm this with the provider out-of-band first)</label>
+      <input type="text" id="host_key_fingerprint" name="host_key_fingerprint" value="{{ data.get('host_key_fingerprint', '') }}">
+      {% if errors.host_key_fingerprint %}<div class="error">{{ errors.host_key_fingerprint }}</div>{% endif %}
+    </fieldset>
+
+    <fieldset id="fieldset-ftp">
+      <legend>FTP settings</legend>
+      <label for="ftp_username">Username</label>
+      <input type="text" id="ftp_username" name="ftp_username" value="{{ data.get('ftp_username', '') }}">
+
+      <label for="ftp_password">Password</label>
+      <input type="password" id="ftp_password" name="ftp_password" value="{{ data.get('ftp_password', '') }}">
+
+      <label for="ftp_port">Port</label>
+      <input type="number" id="ftp_port" name="ftp_port" value="{{ data.get('ftp_port', '21') }}">
+
+      <label for="ftp_remote_path">Remote path</label>
+      <input type="text" id="ftp_remote_path" name="ftp_remote_path" value="{{ data.get('ftp_remote_path', '/') }}">
+
+      <label for="ftp_glob_pattern">File pattern</label>
+      <input type="text" id="ftp_glob_pattern" name="ftp_glob_pattern" value="{{ data.get('ftp_glob_pattern', '*') }}">
+
+      <label><input type="checkbox" name="ftp_use_tls" {% if data.get('ftp_use_tls') == 'on' %}checked{% endif %}> Use FTPS (TLS) -- recommended</label>
+      <label><input type="checkbox" name="ftp_plain_ftp_acknowledged" {% if data.get('ftp_plain_ftp_acknowledged') == 'on' %}checked{% endif %}> I understand plain FTP sends credentials and files unencrypted</label>
+      {% if errors.plain_ftp_acknowledged %}<div class="error">{{ errors.plain_ftp_acknowledged }}</div>{% endif %}
+    </fieldset>
+
+    <button type="submit">Register source</button>
+  </form>
+
+  <script>
+    function showTransportFields() {
+      var t = document.getElementById('transport_type').value;
+      document.getElementById('fieldset-http').style.display = (t === 'http') ? '' : 'none';
+      document.getElementById('fieldset-ssh').style.display = (t === 'sftp' || t === 'scp') ? '' : 'none';
+      document.getElementById('fieldset-ftp').style.display = (t === 'ftp') ? '' : 'none';
+    }
+    function showAuthFields() {
+      var a = document.getElementById('auth_type').value;
+      ['api_key', 'basic_auth', 'oauth2_client_credentials', 'mtls'].forEach(function (name) {
+        document.getElementById('auth-' + name).style.display = (name === a) ? '' : 'none';
+      });
+    }
+    showTransportFields();
+    showAuthFields();
+  </script>
+{% endblock %}

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}My sources{% endblock %}
+{% block content %}
+  <h1>My registered sources</h1>
+  <p><a href="/provider/sources/new">+ Register a new source</a></p>
+
+  {% if not sources %}
+    <p class="muted">No sources registered yet.</p>
+  {% else %}
+    <table>
+      <thead>
+        <tr><th>Name</th><th>Transport</th><th>Endpoint</th><th>Frequency</th><th>Status</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for s in sources %}
+        <tr>
+          <td>{{ s.title }}<br><span class="muted">{{ s.name }}</span></td>
+          <td>{{ s.transport_type }}</td>
+          <td>{{ s.endpoint_url }}</td>
+          <td>{{ s.frequency }}</td>
+          <td>
+            <span class="status status-{{ s.status }}">{{ s.status }}</span>
+            {% if s.status == "rejected" and s.rejection_reason %}
+              <div class="muted">{{ s.rejection_reason }}</div>
+            {% endif %}
+          </td>
+          <td>
+            {% if s.status == "active" %}
+              <form class="inline" method="post" action="/provider/sources/{{ s.id }}/pause">
+                <button type="submit">Pause</button>
+              </form>
+            {% elif s.status == "paused" %}
+              <form class="inline" method="post" action="/provider/sources/{{ s.id }}/resume">
+                <button type="submit">Resume</button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+{% endblock %}
