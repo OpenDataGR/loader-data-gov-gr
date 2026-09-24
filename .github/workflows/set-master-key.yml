@@ -1,0 +1,37 @@
+name: Set master key (one-off)
+
+# Manual-only, one-time provisioning helper: appends
+# CKAN_PROVIDERHARVEST_MASTER_KEY to the existing /etc/loader-data-gov-gr.env
+# (which already holds LOADER_ADMIN_API_KEY/LOADER_FTP_UPLOAD_ROOT and is
+# already wired into the systemd unit via EnvironmentFile=) and restarts
+# the service. Appends only -- never overwrites the file, so the two
+# existing values are untouched. The key value itself comes from a
+# repo secret, never a plain workflow input, so it's redacted in every
+# log rather than sitting in Actions run history in plaintext.
+on:
+  workflow_dispatch:
+
+jobs:
+  set-key:
+    runs-on: [self-hosted, loader]
+    steps:
+      - name: Append master key to the existing env file
+        run: |
+          set -e
+          if sudo grep -q '^CKAN_PROVIDERHARVEST_MASTER_KEY=' /etc/loader-data-gov-gr.env 2>/dev/null; then
+            echo "CKAN_PROVIDERHARVEST_MASTER_KEY already present -- refusing to duplicate/overwrite it."
+            exit 1
+          fi
+          sudo tee -a /etc/loader-data-gov-gr.env > /dev/null <<EOF
+          CKAN_PROVIDERHARVEST_MASTER_KEY=${{ secrets.ONETIME_MASTER_KEY }}
+          EOF
+          echo "--- resulting file (values redacted by GitHub, keys only) ---"
+          sudo sed 's/=.*/=<redacted>/' /etc/loader-data-gov-gr.env
+
+      - name: Restart and smoke-test
+        run: |
+          set -e
+          sudo systemctl restart loader-data-gov-gr
+          sleep 5
+          systemctl is-active --quiet loader-data-gov-gr && echo "Service restarted OK" || (journalctl -u loader-data-gov-gr -n 30 --no-pager; exit 1)
+          curl -sf http://127.0.0.1:5002/health
