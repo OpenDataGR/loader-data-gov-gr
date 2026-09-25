@@ -49,3 +49,27 @@ def get_build_info() -> dict:
         "build_time": _format_commit_time(commit_iso),
         "commit_url": "%s/commit/%s" % (GITHUB_REPO_URL, commit),
     }
+
+
+def get_changelog(limit: int = 50) -> list[dict]:
+    """The last ``limit`` commits' own date + one-line message, for the
+    footer's changelog modal -- shown in-app instead of sending an
+    admin off to GitHub. Same "read straight from the deployed clone's
+    own .git" approach as ``get_build_info``; an empty list (never a
+    crash) if this isn't running from a git checkout at all."""
+    try:
+        output = subprocess.check_output(
+            ["git", "log", "-n", str(limit), "--format=%ad\x1f%s", "--date=format:%Y-%m-%d"],
+            cwd=_REPO_ROOT,
+            stderr=subprocess.DEVNULL,
+        ).decode()
+    except (OSError, subprocess.CalledProcessError):
+        return []
+
+    entries = []
+    for line in output.splitlines():
+        if not line:
+            continue
+        date, _, message = line.partition("\x1f")
+        entries.append({"date": date, "message": message})
+    return entries

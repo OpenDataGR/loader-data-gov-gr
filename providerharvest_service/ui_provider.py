@@ -24,7 +24,7 @@ from providerharvest_service.db import get_session
 router = APIRouter(prefix="/provider", tags=["provider-ui"])
 templates = Jinja2Templates(directory="providerharvest_service/templates")
 templates.env.globals["build_info"] = build_info.get_build_info()
-templates.env.globals["changelog_url"] = "%s/commits/master" % build_info.GITHUB_REPO_URL
+templates.env.globals["changelog"] = build_info.get_changelog()
 templates.env.globals["now"] = datetime.datetime.now
 
 FIELD_TYPES = provider_sources.TRANSPORT_TYPES
