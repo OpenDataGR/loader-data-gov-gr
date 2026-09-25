@@ -1,0 +1,23 @@
+name: Debug rebex listing (one-off)
+on:
+  workflow_dispatch:
+jobs:
+  debug:
+    runs-on: [self-hosted, loader]
+    steps:
+      - name: Try listing a few candidate paths against the real server
+        run: |
+          cd /opt/data-projects/loader-data-gov-gr
+          ./venv/bin/python -c "
+          import paramiko
+          t = paramiko.Transport(('test.rebex.net', 22))
+          t.connect(username='demo', password='password')
+          sftp = paramiko.SFTPClient.from_transport(t)
+          for path in ['.', '/', '', '/pub/example']:
+              try:
+                  print(repr(path), '->', [a.filename for a in sftp.listdir_attr(path)])
+              except Exception as exc:
+                  print(repr(path), '-> ERROR', exc)
+          sftp.close()
+          t.close()
+          "
