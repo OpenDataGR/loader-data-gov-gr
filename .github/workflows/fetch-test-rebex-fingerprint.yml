@@ -1,0 +1,22 @@
+name: Fetch test.rebex.net host key fingerprint (one-off)
+
+# One-time lookup: gets the real, current SHA256 host-key fingerprint
+# of the public Rebex SFTP test server (test.rebex.net, a demo/test
+# endpoint Rebex itself publishes for exactly this purpose), using this
+# project's own fetch_host_key_fingerprint -- so the value is in the
+# exact format/algorithm SFTPTransport's own host-key pinning expects,
+# not guessed or taken from an unrelated tool's output.
+on:
+  workflow_dispatch:
+
+jobs:
+  fetch:
+    runs-on: [self-hosted, loader]
+    steps:
+      - name: Fetch the real fingerprint
+        run: |
+          cd /opt/data-projects/loader-data-gov-gr
+          ./venv/bin/python -c "
+          from providerharvest_service.engine.transport.ssh_common import fetch_host_key_fingerprint
+          print(fetch_host_key_fingerprint('test.rebex.net', 22, timeout_s=10))
+          "
