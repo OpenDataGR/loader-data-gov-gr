@@ -1,27 +1,53 @@
 {% extends "base.html" %}
 {% import "_macros.html" as macros %}
-{% block title %}Run records -- {{ source.title }} -- loader.data.gov.gr{% endblock %}
+{% block title %}Run details -- {{ source.title }} -- loader.data.gov.gr{% endblock %}
 {% block content %}
   <div class="panel">
-    <h1>Harvested records</h1>
+    <h1>{{ "Harvested files" if files is not none else "Harvested records" }}</h1>
     <p class="subtitle">
       <a href="/provider/sources/{{ source.id }}/runs">&larr; back to runs</a> --
       {{ source.title }} <span class="name-slug">{{ source.name }}</span>
     </p>
 
-    {% if not records %}
-      <div class="empty-state">
-        {{ macros.icon("inbox", 40) }}
-        <p>No records stored for this run.</p>
-      </div>
+    {% if files is not none %}
+      {% if not files %}
+        <div class="empty-state">
+          {{ macros.icon("inbox", 40) }}
+          <p>No files stored for this run.</p>
+        </div>
+      {% else %}
+        <p class="muted">Showing up to 50 files, oldest first.</p>
+        <table>
+          <thead>
+            <tr><th>Filename</th><th>Type</th><th>Size</th><th></th></tr>
+          </thead>
+          <tbody>
+            {% for file in files %}
+            <tr>
+              <td class="name-slug">{{ file.filename }}</td>
+              <td class="muted">{{ file.content_type }}</td>
+              <td class="muted">{{ "%.1f KB" % (file.size / 1024) }}</td>
+              <td><a class="btn btn-secondary btn-sm" href="/provider/sources/{{ source.id }}/runs/{{ run_id }}/files/{{ file.id }}">{{ macros.icon("download", 14) }} Download</a></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% endif %}
     {% else %}
-      <p class="muted">Showing up to 50 records, oldest first.</p>
-      {% for record in records %}
-        <fieldset>
-          <legend><span class="name-slug">{{ record.ref }}</span></legend>
-          <pre style="white-space:pre-wrap; word-break:break-word; font-size:0.82rem; margin:0;">{{ record.payload | tojson(indent=2) }}</pre>
-        </fieldset>
-      {% endfor %}
+      {% if not records %}
+        <div class="empty-state">
+          {{ macros.icon("inbox", 40) }}
+          <p>No records stored for this run.</p>
+        </div>
+      {% else %}
+        <p class="muted">Showing up to 50 records, oldest first.</p>
+        {% for record in records %}
+          <fieldset>
+            <legend><span class="name-slug">{{ record.ref }}</span></legend>
+            <pre style="white-space:pre-wrap; word-break:break-word; font-size:0.82rem; margin:0;">{{ record.payload | tojson(indent=2) }}</pre>
+          </fieldset>
+        {% endfor %}
+      {% endif %}
     {% endif %}
   </div>
 {% endblock %}

@@ -118,13 +118,28 @@ def test_due_sources_excludes_a_non_active_source(config_session, harvest_sessio
     assert scheduler.due_sources(config_session, harvest_session) == []
 
 
-def test_due_sources_excludes_a_non_http_source(config_session, harvest_session):
+def test_due_sources_includes_an_active_sftp_source_too(config_session, harvest_session):
+    # sftp/scp/ftp are whole-file sources harvest_runner can execute
+    # (see harvest_runner.SUPPORTED_TRANSPORT_TYPES) same as http --
+    # the scheduler must pick these up on their own frequency too, not
+    # just http ones.
     source = provider_sources.register(config_session, {
         "name": "acme-sftp", "title": "t", "endpoint_url": "sftp.example.gr",
         "transport_type": "sftp", "sftp_username": "u", "sftp_password": "p",
         "host_key_fingerprint": "SHA256:abcdef", "frequency": "DAILY",
     })
     provider_sources.activate(config_session, source.id)
+    assert [s.id for s in scheduler.due_sources(config_session, harvest_session)] == [source.id]
+
+
+def test_due_sources_excludes_a_genuinely_unsupported_transport_type(config_session, harvest_session):
+    # No real registration path can produce this -- constructed
+    # directly to prove this filter is real defense-in-depth, not
+    # dead code now that TRANSPORT_TYPES and SUPPORTED_TRANSPORT_TYPES
+    # are the same set.
+    source = _register_active_http(config_session)
+    source.transport_type = "carrier-pigeon"
+    config_session.commit()
     assert scheduler.due_sources(config_session, harvest_session) == []
 
 

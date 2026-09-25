@@ -73,18 +73,19 @@ def _as_aware_utc(dt: datetime.datetime | None) -> datetime.datetime | None:
 def due_sources(
     config_session: Session, harvest_session: Session, now: datetime.datetime | None = None
 ) -> list[ProviderSource]:
-    """Every active, HTTP-transport source whose own ``frequency``
-    interval has elapsed since its last run (or that has never run, or
-    whose last run has been stuck "running" past ``STUCK_RUN_
-    THRESHOLD``). A paused/pending/rejected source, a non-HTTP one, or
-    a ``MANUAL`` one is never returned -- same restrictions ``harvest_
-    runner.run_harvest`` itself enforces, checked here too so a tick
-    doesn't even attempt a source it would just have to skip.
+    """Every active source, of a transport type ``harvest_runner`` can
+    actually run, whose own ``frequency`` interval has elapsed since its
+    last run (or that has never run, or whose last run has been stuck
+    "running" past ``STUCK_RUN_THRESHOLD``). A paused/pending/rejected
+    source, an unsupported transport type, or a ``MANUAL`` one is never
+    returned -- same restrictions ``harvest_runner.run_harvest`` itself
+    enforces, checked here too so a tick doesn't even attempt a source
+    it would just have to skip.
     """
     now = now or _utcnow()
     due = []
     for source in provider_sources.list_all(config_session):
-        if source.status != "active" or source.transport_type != "http":
+        if source.status != "active" or source.transport_type not in harvest_runner.SUPPORTED_TRANSPORT_TYPES:
             continue
         interval = FREQUENCY_INTERVALS.get(source.frequency)
         if interval is None:  # MANUAL, or any future frequency this scheduler doesn't know yet

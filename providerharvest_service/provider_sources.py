@@ -273,6 +273,13 @@ def _ssh_fields(form: dict, endpoint_url: str, errors: dict) -> tuple[dict, dict
         "connect_timeout_s": _parse_positive_int(
             form.get("sftp_connect_timeout_s"), 30, "sftp_connect_timeout_s", errors
         ),
+        # Same default as harvest_runner.DEFAULT_MAX_FILE_SIZE_BYTES --
+        # not imported from there to keep this module framework/engine-
+        # agnostic (see its own docstring); harvest_runner falls back to
+        # its own constant if a source's config predates this field.
+        "max_file_size_bytes": _parse_positive_int(
+            form.get("sftp_max_file_size_bytes"), 20 * 1024 * 1024, "sftp_max_file_size_bytes", errors
+        ),
     }
     return credential_fields, config_extra
 
@@ -314,6 +321,9 @@ def _ftp_fields(form: dict, endpoint_url: str, errors: dict) -> tuple[dict, dict
         "plain_ftp_acknowledged": plain_ftp_acknowledged,
         "connect_timeout_s": _parse_positive_int(
             form.get("ftp_connect_timeout_s"), 30, "ftp_connect_timeout_s", errors
+        ),
+        "max_file_size_bytes": _parse_positive_int(
+            form.get("ftp_max_file_size_bytes"), 20 * 1024 * 1024, "ftp_max_file_size_bytes", errors
         ),
     }
     return credential_fields, config_extra
@@ -438,12 +448,14 @@ def config_to_form_fields(source: ProviderSource) -> dict:
         data["sftp_glob_pattern"] = config.get("glob_pattern", "*")
         data["host_key_fingerprint"] = config.get("host_key_fingerprint", "")
         data["sftp_connect_timeout_s"] = str(config.get("connect_timeout_s", 30))
+        data["sftp_max_file_size_bytes"] = str(config.get("max_file_size_bytes", 20 * 1024 * 1024))
     elif source.transport_type == "ftp":
         data["ftp_port"] = str(config.get("port", 21))
         data["ftp_remote_path"] = config.get("remote_path", "/")
         data["ftp_glob_pattern"] = config.get("glob_pattern", "*")
         data["ftp_use_tls"] = "on" if config.get("use_tls", True) else ""
         data["ftp_connect_timeout_s"] = str(config.get("connect_timeout_s", 30))
+        data["ftp_max_file_size_bytes"] = str(config.get("max_file_size_bytes", 20 * 1024 * 1024))
     return data
 
 

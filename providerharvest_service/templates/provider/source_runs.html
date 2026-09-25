@@ -24,7 +24,7 @@
     {% else %}
       <table>
         <thead>
-          <tr><th>Started</th><th>Status</th><th>Records</th><th></th></tr>
+          <tr><th>Started</th><th>Status</th><th>Items</th><th></th></tr>
         </thead>
         <tbody>
           {% for run in runs %}
@@ -43,7 +43,7 @@
               {% endif %}
             </td>
             <td>{{ run.records_count }}</td>
-            <td><a class="btn btn-secondary btn-sm" href="/provider/sources/{{ source.id }}/runs/{{ run.id }}">View records</a></td>
+            <td><a class="btn btn-secondary btn-sm" href="/provider/sources/{{ source.id }}/runs/{{ run.id }}">View details</a></td>
           </tr>
           {% endfor %}
         </tbody>

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String
+from sqlalchemy import DateTime, ForeignKey, Integer, JSON, LargeBinary, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from providerharvest_service.models import _new_id, _utcnow
@@ -44,6 +44,9 @@ class HarvestRun(HarvestBase):
     records: Mapped[list["HarvestedRecord"]] = relationship(
         back_populates="run", cascade="all, delete-orphan"
     )
+    files: Mapped[list["HarvestedFile"]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
 
 
 class HarvestedRecord(HarvestBase):
@@ -63,3 +66,30 @@ class HarvestedRecord(HarvestBase):
     fetched_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     run: Mapped["HarvestRun"] = relationship(back_populates="records")
+
+
+class HarvestedFile(HarvestBase):
+    """One fetched whole file from one run, for SFTP/SCP/FTP sources --
+    HTTP sources use ``HarvestedRecord`` instead (per-record JSON, not
+    whole files). Stored as a blob directly in this DB (bytea via
+    ``LargeBinary``), not on a filesystem or in object storage: these
+    sources are documented to feed several small files (each fetch well
+    under 30s), so there's no real infra benefit yet to a separate
+    storage layer -- same "own DB, prove the smallest slice" choice
+    every other piece of this service's storage has made. Revisit if a
+    source ever actually needs large files -- ``harvest_runner``'s own
+    ``max_file_size_bytes`` cap exists specifically so an unexpectedly
+    huge file errors the run instead of silently blowing up this
+    table."""
+
+    __tablename__ = "harvested_file"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_new_id)
+    run_id: Mapped[str] = mapped_column(ForeignKey("harvest_run.id"), nullable=False, index=True)
+    filename: Mapped[str] = mapped_column(String, nullable=False)
+    content_type: Mapped[str] = mapped_column(String, nullable=False, default="application/octet-stream")
+    size: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    fetched_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    run: Mapped["HarvestRun"] = relationship(back_populates="files")

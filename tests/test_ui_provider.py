@@ -1,4 +1,5 @@
 import base64
+import io
 import os
 import re
 
@@ -118,9 +119,10 @@ def test_pause_and_resume_flow(client, _isolated_db):
 
 
 class _FakeTransport(Transport):
-    def __init__(self, entries=None, error=None):
+    def __init__(self, entries=None, error=None, files=None):
         self._entries = entries or []
         self._error = error
+        self._files = files or {}  # ref -> bytes, for file-transport tests
 
     def connect(self):
         if self._error:
@@ -130,7 +132,9 @@ class _FakeTransport(Transport):
         return Page(entries=self._entries, next_cursor=None)
 
     def open_entry(self, entry):
-        raise NotImplementedError
+        if entry.ref not in self._files:
+            raise NotImplementedError
+        return io.BytesIO(self._files[entry.ref])
 
     def close(self):
         pass
@@ -310,3 +314,71 @@ def test_runs_page_empty_state(client):
     resp = client.get("/provider/sources/%s/runs" % source_id)
     assert resp.status_code == 200
     assert "No harvest runs yet" in resp.text
+
+
+def _valid_sftp_form(**overrides):
+    form = {
+        "name": "acme-sftp", "title": "Acme SFTP", "endpoint_url": "sftp.example.gr",
+        "transport_type": "sftp", "frequency": "DAILY",
+        "sftp_username": "u", "sftp_password": "p", "host_key_fingerprint": "SHA256:abcdef",
+    }
+    form.update(overrides)
+    return form
+
+
+def _register_activate_sftp_and_get_id(client):
+    client.post("/provider/sources/new", data=_valid_sftp_form())
+    listing = client.get("/provider/sources")
+    source_id = re.search(r"/provider/sources/([^/]+)/check-connection", listing.text).group(1)
+    client.post("/admin/sources/%s/activate" % source_id)
+    return source_id
+
+
+def test_harvest_now_stores_and_serves_whole_files_for_an_sftp_source(client, monkeypatch):
+    source_id = _register_activate_sftp_and_get_id(client)
+    entries = [Entry(ref="/incoming/data.csv", metadata={"size": 12})]
+    monkeypatch.setattr(
+        connection_check, "_build_transport",
+        lambda src, secret: _FakeTransport(entries=entries, files={"/incoming/data.csv": b"a,b\n1,2\n"}),
+    )
+
+    resp = client.post("/provider/sources/%s/harvest-now" % source_id, follow_redirects=False)
+    assert resp.status_code == 303
+    assert "flash=Harvest+complete" in resp.headers["location"]
+
+    runs_page = client.get("/provider/sources/%s/runs" % source_id)
+    assert "success" in runs_page.text
+    run_id = re.search(r"/runs/([^\"]+)\"", runs_page.text).group(1)
+
+    detail = client.get("/provider/sources/%s/runs/%s" % (source_id, run_id))
+    assert "data.csv" in detail.text
+    assert "Harvested files" in detail.text
+
+    file_id = re.search(r"/runs/%s/files/([^\"]+)\"" % re.escape(run_id), detail.text).group(1)
+    download = client.get("/provider/sources/%s/runs/%s/files/%s" % (source_id, run_id, file_id))
+    assert download.status_code == 200
+    assert download.content == b"a,b\n1,2\n"
+    assert download.headers["content-type"].startswith("text/csv")
+    assert 'filename="data.csv"' in download.headers["content-disposition"]
+
+
+def test_file_download_404s_for_a_file_from_a_different_run(client, monkeypatch):
+    source_id = _register_activate_sftp_and_get_id(client)
+    monkeypatch.setattr(
+        connection_check, "_build_transport",
+        lambda src, secret: _FakeTransport(entries=[Entry(ref="/f.txt")], files={"/f.txt": b"hi"}),
+    )
+    client.post("/provider/sources/%s/harvest-now" % source_id)
+    runs_page = client.get("/provider/sources/%s/runs" % source_id)
+    run_id = re.search(r"/runs/([^\"]+)\"", runs_page.text).group(1)
+    detail = client.get("/provider/sources/%s/runs/%s" % (source_id, run_id))
+    file_id = re.search(r"/runs/%s/files/([^\"]+)\"" % re.escape(run_id), detail.text).group(1)
+
+    resp = client.get("/provider/sources/%s/runs/not-the-real-run/files/%s" % (source_id, file_id))
+    assert resp.status_code == 404
+
+
+def test_file_download_404s_for_an_unknown_file_id(client):
+    source_id = _register_activate_sftp_and_get_id(client)
+    resp = client.get("/provider/sources/%s/runs/some-run/files/no-such-file" % source_id)
+    assert resp.status_code == 404

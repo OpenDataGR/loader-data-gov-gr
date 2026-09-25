@@ -366,13 +366,37 @@ matches data.gov.gr's own tokens (navy gradient masthead, Inter font,
 Bootstrap-standard status colors -- confirmed against the live site's
 own `data_gov_gr.css`), so this reads as part of the same platform.
 
+`harvest_runner.py` also stores whole files now, not just HTTP records:
+`sftp`/`scp`/`ftp` sources are whole-file transports (`FILE_TRANSPORT_
+TYPES`), so instead of `HarvestedRecord` each fetched file becomes a
+`HarvestedFile` row (filename, a content type from a small fixed
+extension table -- deliberately not `mimetypes.guess_type`, which
+consults the OS's own registered types and gave a different answer on
+a Windows dev box than a Linux production VM would; size; the raw
+bytes). Stored as a Postgres blob (`LargeBinary`) directly in the same
+`loader_harvest` DB, not a filesystem path or object storage -- these
+sources are documented to feed several small files (each fetch well
+under 30s), so there's no real infra benefit yet to a separate storage
+layer, matching every other storage choice this service has made so
+far (own DB, prove the smallest slice first). Revisit if a source ever
+actually needs large files. `open_entry`'s stream is read in capped
+chunks (`max_file_size_bytes`, a new per-source config field alongside
+`connect_timeout_s`, default 20MB) rather than a single `.read()` --
+the file transports deliberately hand back unbuffered handles so a
+huge/misconfigured file errors the run before it's fully buffered into
+memory, not after. A file is downloaded via `GET /provider/sources/
+{id}/runs/{run_id}/files/{file_id}`, served with its own content type
+and a `Content-Disposition: attachment` header.
+
 `providerharvest_service/scheduler.py` -- the automatic recurring
 harvester: `run_due_harvests` runs `harvest_runner.run_harvest` on
-every active HTTP source whose own `frequency` (DAILY/WEEKLY/MONTHLY)
-has elapsed since its last run (or that's never run, or whose last run
-has been stuck "running" for over an hour -- a worker that crashed
-mid-fetch shouldn't permanently block that source). `MANUAL` sources
-are never picked up here, by design. `start_background_thread` runs
+every active source of a transport type `harvest_runner` supports
+(`SUPPORTED_TRANSPORT_TYPES` -- http, sftp, scp, ftp) whose own
+`frequency` (DAILY/WEEKLY/MONTHLY) has elapsed since its last run (or
+that's never run, or whose last run has been stuck "running" for over
+an hour -- a worker that crashed mid-fetch shouldn't permanently block
+that source). `MANUAL` sources are never picked up here, by design.
+`start_background_thread` runs
 this on a periodic daemon thread (`LOADER_SCHEDULER_INTERVAL_S`,
 default 300s), started from `app.py`'s own `lifespan` and stopped
 cleanly on shutdown via a `threading.Event`, not just left to
@@ -400,12 +424,6 @@ Not yet built, in the rough order they'll likely be needed:
   `organization_list_for_user`, replacing the single stand-in user).
 - Field-mapping profiles (`row_rules`) and the fetch-host-key dry-run
   endpoint the old blueprint had.
-- SFTP/SCP/FTP file-based harvest storage -- those transports are
-  whole-file, not record-based, and there's nowhere yet decided for
-  the files themselves to land (own DB as a blob? a filesystem path?
-  object storage?); `run_harvest`/the scheduler above both explicitly
-  refuse a non-HTTP source (`UnsupportedTransportType`) until that's
-  designed, rather than silently doing nothing useful.
 - Provisioning an approved source for real in CKAN (harvest-source
   package, DataStore resource) over the Action API via
   `CKANActionClient` -- deliberately deferred; harvested data lands in
@@ -420,7 +438,7 @@ python -m venv .venv
 ```
 
 No CKAN installation, no Docker, no database -- this is the whole point
-of the split being checked for real, not just asserted. 284 tests,
+of the split being checked for real, not just asserted. 293 tests,
 all passing with zero CKAN present.
 
 ## Running the app locally

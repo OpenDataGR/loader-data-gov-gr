@@ -13,8 +13,8 @@ from __future__ import annotations
 import datetime
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
@@ -164,8 +164,10 @@ def harvest_now(
     except (harvest_runner.UnsupportedTransportType, provider_sources.InvalidTransition) as exc:
         return RedirectResponse(_redirect_with_flash(str(exc), kind="error"), status_code=303)
     if run.status == "success":
-        flash = "Harvest complete: %d record%s." % (
-            run.records_count, "" if run.records_count == 1 else "s",
+        source = provider_sources.get_or_404(session, source_id)
+        noun = "record" if source.transport_type == "http" else "file"
+        flash = "Harvest complete: %d %s%s." % (
+            run.records_count, noun, "" if run.records_count == 1 else "s",
         )
         kind = "success"
     else:
@@ -205,11 +207,35 @@ def source_run_detail(
         source = provider_sources.get_or_404(session, source_id)
     except provider_sources.NotFound:
         return RedirectResponse(_redirect_with_flash("No such source.", kind="error"), status_code=303)
-    records = harvest_runner.list_records(hsession, run_id)
+    is_file_transport = source.transport_type in harvest_runner.FILE_TRANSPORT_TYPES
+    records = None if is_file_transport else harvest_runner.list_records(hsession, run_id)
+    files = harvest_runner.list_files(hsession, run_id) if is_file_transport else None
     return templates.TemplateResponse(
         request,
         "provider/source_run_detail.html",
-        {"source": source, "run_id": run_id, "records": records},
+        {"source": source, "run_id": run_id, "records": records, "files": files},
+    )
+
+
+@router.get("/sources/{source_id}/runs/{run_id}/files/{file_id}")
+def source_run_file_download(
+    source_id: str,
+    run_id: str,
+    file_id: str,
+    session: Session = Depends(get_session),
+    hsession: Session = Depends(harvest_db.get_session),
+) -> Response:
+    try:
+        provider_sources.get_or_404(session, source_id)
+    except provider_sources.NotFound:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such source.")
+    harvested_file = harvest_runner.get_file(hsession, file_id)
+    if harvested_file is None or harvested_file.run_id != run_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such file.")
+    return Response(
+        content=harvested_file.content,
+        media_type=harvested_file.content_type,
+        headers={"Content-Disposition": "attachment; filename=\"%s\"" % harvested_file.filename},
     )
 
 

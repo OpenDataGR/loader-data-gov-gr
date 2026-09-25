@@ -176,6 +176,10 @@
         <label for="sftp_connect_timeout_s">Connection timeout (seconds)</label>
         <input type="number" class="small" id="sftp_connect_timeout_s" name="sftp_connect_timeout_s" value="{{ data.get('sftp_connect_timeout_s', '30') }}">
         {% if errors.sftp_connect_timeout_s %}<div class="error">{{ errors.sftp_connect_timeout_s }}</div>{% endif %}
+
+        <label for="sftp_max_file_size_bytes">Max file size (bytes)</label>
+        <input type="number" class="small" id="sftp_max_file_size_bytes" name="sftp_max_file_size_bytes" value="{{ data.get('sftp_max_file_size_bytes', 20971520) }}">
+        {% if errors.sftp_max_file_size_bytes %}<div class="error">{{ errors.sftp_max_file_size_bytes }}</div>{% endif %}
       </fieldset>
 
       <fieldset id="fieldset-ftp">
@@ -208,6 +212,10 @@
         <label for="ftp_connect_timeout_s">Connection timeout (seconds)</label>
         <input type="number" class="small" id="ftp_connect_timeout_s" name="ftp_connect_timeout_s" value="{{ data.get('ftp_connect_timeout_s', '30') }}">
         {% if errors.ftp_connect_timeout_s %}<div class="error">{{ errors.ftp_connect_timeout_s }}</div>{% endif %}
+
+        <label for="ftp_max_file_size_bytes">Max file size (bytes)</label>
+        <input type="number" class="small" id="ftp_max_file_size_bytes" name="ftp_max_file_size_bytes" value="{{ data.get('ftp_max_file_size_bytes', 20971520) }}">
+        {% if errors.ftp_max_file_size_bytes %}<div class="error">{{ errors.ftp_max_file_size_bytes }}</div>{% endif %}
       </fieldset>
 
       <button type="submit">{{ macros.icon(("check" if editing else "plus"), 16) }} {{ "Save changes" if editing else "Register source" }}</button>
