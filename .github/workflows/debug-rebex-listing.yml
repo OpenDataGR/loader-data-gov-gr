@@ -5,23 +5,18 @@ jobs:
   debug:
     runs-on: [self-hosted, loader]
     steps:
-      - name: Reproduce with this project's own SFTPTransport
+      - name: Inspect the actual stored source row
         run: |
           cd /opt/data-projects/loader-data-gov-gr
           ./venv/bin/python -c "
-          from providerharvest_service.engine.transport.sftp import SFTPTransport
-          from providerharvest_service.engine.secrets.base import SecretBundle
-
-          secret = SecretBundle(fields={'username': 'demo', 'password': 'password'})
-          t = SFTPTransport(
-              'test.rebex.net', secret=secret, remote_path='/', glob_pattern='readme.txt',
-              pinned_host_key_fingerprint='SHA256:d7Te2DHmvBNSWJNBWik2KbDTjmWtYHe2bvXTMM9lVg4',
-          )
-          with t:
-              page = t.list_entries(cursor=None)
-              print('entries:', [(e.ref, e.metadata) for e in page.entries])
-              for entry in page.entries:
-                  handle = t.open_entry(entry)
-                  print('content:', handle.read())
-                  handle.close()
+          import os
+          os.environ.setdefault('LOADER_DB_PATH', 'data/loader.db')
+          from providerharvest_service import db, provider_sources
+          session = db.SessionLocal()
+          source = provider_sources.get_or_404(session, '1169d0f1-36ba-44ca-976e-dace0918710e')
+          print('transport_type:', source.transport_type)
+          print('auth_type:', source.auth_type)
+          print('endpoint_url:', source.endpoint_url)
+          print('status:', source.status)
+          print('config:', source.config)
           "
