@@ -32,8 +32,12 @@ def test_get_build_info_falls_back_cleanly_when_git_binary_is_missing(monkeypatc
 
 
 def test_get_changelog_reads_real_commit_history_in_this_repo():
+    # Not "== 5" -- CI's own checkout is shallow (fetch-depth: 1), so
+    # there may genuinely be only one commit available to read, same
+    # as production's full clone would only ever have fewer than
+    # `limit` right after this repo's very first commit.
     entries = build_info.get_changelog(limit=5)
-    assert len(entries) == 5
+    assert 1 <= len(entries) <= 5
     for entry in entries:
         assert entry["date"]
         assert entry["message"]
