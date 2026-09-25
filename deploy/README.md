@@ -107,6 +107,7 @@ before relying on it.
    sudo tee /etc/loader-data-gov-gr.env > /dev/null <<'EOF'
    LOADER_ADMIN_API_KEY=<generate with: python3 -c "import secrets; print(secrets.token_urlsafe(32))">
    LOADER_FTP_UPLOAD_ROOT=/srv/ftp-uploads
+   LOADER_PUBLIC_BASE_URL=https://loader.data.gov.gr
    CKAN_PROVIDERHARVEST_MASTER_KEY=<generate with: python3 -c "import base64, os; print(base64.b64encode(os.urandom(32)).decode())">
    EOF
    sudo chown localadmin:localadmin /etc/loader-data-gov-gr.env
@@ -130,6 +131,19 @@ before relying on it.
    The actual key currently in use lives wherever you're storing
    secrets for this project (a password manager) -- it is *not*
    recorded in this repo, on purpose.
+
+   `LOADER_PUBLIC_BASE_URL` is what `push_ingest.py`'s registration
+   confirmation page uses to show a provider their real upload URL --
+   deliberately not inferred from the incoming request. Application
+   Gateway terminates the real HTTPS and forwards to nginx over plain
+   HTTP, and nginx's own `X-Forwarded-Proto $scheme` then reports
+   *its own* connection's scheme (always "http", since nginx never
+   terminates TLS here) rather than passing through what Application
+   Gateway already set -- confirmed the hard way (a real registration
+   showed `http://loader.data.gov.gr/push/...` instead of `https://`
+   before this existed). Fixing the header chain would need nginx to
+   stop overwriting it *and* gunicorn/uvicorn configured to trust it
+   from 127.0.0.1 -- an explicit configured value sidesteps both.
 
 6. **FTP-push receiving server.** Plain FTP over `mod_sql`-backed
    virtual users is confirmed working end-to-end (real login + real

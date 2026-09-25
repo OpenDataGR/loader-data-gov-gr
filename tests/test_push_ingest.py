@@ -89,6 +89,19 @@ def test_registering_a_push_source_shows_credentials_once(client):
     assert "/push/acme-push/upload" in resp.text
 
 
+def test_upload_url_uses_the_configured_public_base_when_set(client, monkeypatch):
+    monkeypatch.setenv("LOADER_PUBLIC_BASE_URL", "https://loader.data.gov.gr")
+    resp = client.post(
+        "/provider/sources/new",
+        data={"name": "acme-push", "title": "Acme push", "transport_type": "push", "frequency": "MANUAL"},
+        follow_redirects=False,
+    )
+    assert "https://loader.data.gov.gr/push/acme-push/upload" in resp.text
+    # Not the test client's own default host -- proves the configured
+    # base URL actually won, not that it happened to match anyway.
+    assert "http://testserver" not in resp.text
+
+
 def test_upload_stores_the_file_for_an_active_push_source(client, _isolated_db):
     source_id, api_key = _register_and_activate_push_source(client, _isolated_db)
 

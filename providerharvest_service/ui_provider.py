@@ -11,6 +11,7 @@ below gain a real owner check; for now there's exactly one provider.
 from __future__ import annotations
 
 import datetime
+import os
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -80,7 +81,7 @@ async def new_source_submit(request: Request, session: Session = Depends(get_ses
             {
                 "source": source,
                 "api_key": generated_api_key,
-                "upload_url": str(request.url_for("push_upload", source_name=source.name)),
+                "upload_url": _push_upload_url(request, source.name),
             },
         )
     return RedirectResponse(
@@ -255,6 +256,27 @@ def source_run_file_download(
         media_type=harvested_file.content_type,
         headers={"Content-Disposition": "attachment; filename=\"%s\"" % harvested_file.filename},
     )
+
+
+def _push_upload_url(request: Request, source_name: str) -> str:
+    """``request.url_for`` alone gets the scheme wrong in production:
+    Application Gateway terminates the real HTTPS and forwards to
+    nginx over plain HTTP, and nginx's own ``X-Forwarded-Proto
+    $scheme`` then reports *its own* connection's scheme (always
+    "http", since nginx itself never terminates TLS here) rather than
+    passing through the real one Application Gateway already set --
+    confirmed the hard way: a real registration's credentials page
+    showed ``http://loader.data.gov.gr/push/...`` instead of
+    ``https://``. Fixing that would need nginx to stop overwriting the
+    header *and* gunicorn/uvicorn configured to trust it from
+    127.0.0.1 -- two more layers to get exactly right. An explicit,
+    configured base URL sidesteps all of that; ``request.url_for`` is
+    only the fallback for local dev/tests, where it's already correct.
+    """
+    base = os.environ.get("LOADER_PUBLIC_BASE_URL")
+    if not base:
+        return str(request.url_for("push_upload", source_name=source_name))
+    return "%s/push/%s/upload" % (base.rstrip("/"), source_name)
 
 
 def _redirect_with_flash(flash: str, kind: str = "success") -> str:
