@@ -184,6 +184,36 @@ def run_harvest(config_session: Session, harvest_session: Session, source_id: st
     return run
 
 
+def record_pushed_file(harvest_session: Session, source, filename: str, content: bytes) -> HarvestRun:
+    """The push-mode counterpart to ``run_harvest``: no transport, no
+    connection, no polling -- a provider pushed this file to us
+    directly (see ``push_ingest.py``'s upload endpoint), already read
+    and size-capped by the caller. Still recorded as a normal
+    ``HarvestRun`` + ``HarvestedFile`` pair, same as a pulled file,
+    so run history/download UI works identically regardless of which
+    direction the data actually moved."""
+    run = HarvestRun(source_id=source.id, source_name=source.name, status="running")
+    harvest_session.add(run)
+    harvest_session.commit()
+    try:
+        harvest_session.add(HarvestedFile(
+            run_id=run.id,
+            filename=filename,
+            content_type=_guess_content_type(filename),
+            size=len(content),
+            content=content,
+        ))
+        run.records_count = 1
+        run.status = "success"
+    except Exception as exc:  # noqa: BLE001 -- recorded verbatim, this IS the diagnostic
+        run.status = "error"
+        run.error_message = str(exc)
+    finally:
+        run.finished_at = _utcnow()
+        harvest_session.commit()
+    return run
+
+
 def list_runs(harvest_session: Session, source_id: str, limit: int = 20) -> list[HarvestRun]:
     return list(
         harvest_session.scalars(

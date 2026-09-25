@@ -68,6 +68,21 @@ async def new_source_submit(request: Request, session: Session = Depends(get_ses
             _form_template_vars(form, errors=exc.errors),
             status_code=400,
         )
+    generated_api_key = getattr(source, "generated_api_key", None)
+    if generated_api_key:
+        # The one and only moment this plaintext key is ever visible
+        # anywhere -- only a bcrypt hash of it is persisted (see
+        # provider_sources._push_fields), so this page can't be
+        # revisited or reconstructed later.
+        return templates.TemplateResponse(
+            request,
+            "provider/push_credentials.html",
+            {
+                "source": source,
+                "api_key": generated_api_key,
+                "upload_url": str(request.url_for("push_upload", source_name=source.name)),
+            },
+        )
     return RedirectResponse(
         _redirect_with_flash("Source %r registered and awaiting admin approval." % source.name),
         status_code=303,
@@ -207,7 +222,10 @@ def source_run_detail(
         source = provider_sources.get_or_404(session, source_id)
     except provider_sources.NotFound:
         return RedirectResponse(_redirect_with_flash("No such source.", kind="error"), status_code=303)
-    is_file_transport = source.transport_type in harvest_runner.FILE_TRANSPORT_TYPES
+    # Every transport except http stores whole files (HarvestedFile),
+    # not per-record JSON (HarvestedRecord) -- sftp/scp/ftp via
+    # run_harvest, push via push_ingest.record_pushed_file.
+    is_file_transport = source.transport_type != "http"
     records = None if is_file_transport else harvest_runner.list_records(hsession, run_id)
     files = harvest_runner.list_files(hsession, run_id) if is_file_transport else None
     return templates.TemplateResponse(

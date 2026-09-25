@@ -55,6 +55,8 @@
     <svg width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v4h4"/><path d="M12 8v4l3 2"/></svg>
   {% elif name == "download" %}
     <svg width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11m0 0-4-4m4 4 4-4"/><path d="M4 18v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></svg>
+  {% elif name == "push" %}
+    <svg width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4m0 0-4 4m4-4 4 4"/><path d="M4 18v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></svg>
   {% endif %}
 {%- endmacro %}
 
@@ -100,16 +102,16 @@
     <button type="button" class="btn-secondary btn-sm actions-menu-toggle" onclick="toggleActionsMenu(this)" aria-label="More actions" aria-haspopup="true">{{ icon("more", 16) }}</button>
     <div class="actions-menu-list">
       <a href="/provider/sources/{{ s.id }}/edit">{{ icon("edit", 14) }} Edit</a>
-      <form method="post" action="{{ action_prefix }}/{{ s.id }}/check-connection">
-        <button type="submit">{{ icon("pulse", 14) }} Test connection</button>
-      </form>
-      {% if s.transport_type == "http" %}
-        <a href="/provider/sources/{{ s.id }}/runs">{{ icon("history", 14) }} View runs</a>
-        {% if s.status == "active" %}
-          <form method="post" action="/provider/sources/{{ s.id }}/harvest-now">
-            <button type="submit">{{ icon("download", 14) }} Harvest now</button>
-          </form>
-        {% endif %}
+      {% if s.transport_type != "push" %}
+        <form method="post" action="{{ action_prefix }}/{{ s.id }}/check-connection">
+          <button type="submit">{{ icon("pulse", 14) }} Test connection</button>
+        </form>
+      {% endif %}
+      <a href="/provider/sources/{{ s.id }}/runs">{{ icon("history", 14) }} View runs</a>
+      {% if s.status == "active" and s.transport_type != "push" %}
+        <form method="post" action="/provider/sources/{{ s.id }}/harvest-now">
+          <button type="submit">{{ icon("download", 14) }} Harvest now</button>
+        </form>
       {% endif %}
       {% if is_admin and s.status == "pending" %}
         <form method="post" action="{{ action_prefix }}/{{ s.id }}/reject" onsubmit="return fillRejectReason(this);">

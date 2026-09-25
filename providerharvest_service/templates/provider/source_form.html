@@ -218,6 +218,17 @@
         {% if errors.ftp_max_file_size_bytes %}<div class="error">{{ errors.ftp_max_file_size_bytes }}</div>{% endif %}
       </fieldset>
 
+      <fieldset id="fieldset-push">
+        <legend>{{ macros.icon("push", 15) }} Push settings</legend>
+        <p class="muted" style="margin-top:0.2rem;">
+          No credentials to enter here -- once registered and approved, you'll be given a one-time
+          API key and an upload URL to push files to instead of us connecting out to fetch them.
+        </p>
+        <label for="push_max_file_size_bytes">Max file size (bytes)</label>
+        <input type="number" class="small" id="push_max_file_size_bytes" name="push_max_file_size_bytes" value="{{ data.get('push_max_file_size_bytes', 20971520) }}">
+        {% if errors.push_max_file_size_bytes %}<div class="error">{{ errors.push_max_file_size_bytes }}</div>{% endif %}
+      </fieldset>
+
       <button type="submit">{{ macros.icon(("check" if editing else "plus"), 16) }} {{ "Save changes" if editing else "Register source" }}</button>
     </form>
   </div>
@@ -229,6 +240,15 @@
       document.getElementById('fieldset-http').style.display = (t === 'http') ? '' : 'none';
       document.getElementById('fieldset-ssh').style.display = (t === 'sftp' || t === 'scp') ? '' : 'none';
       document.getElementById('fieldset-ftp').style.display = (t === 'ftp') ? '' : 'none';
+      document.getElementById('fieldset-push').style.display = (t === 'push') ? '' : 'none';
+      // A push-mode source has no endpoint of its own -- we never
+      // connect anywhere for one, the provider calls us instead.
+      var endpointInput = document.getElementById('endpoint_url');
+      var endpointLabel = endpointInput.previousElementSibling;
+      endpointInput.style.display = (t === 'push') ? 'none' : '';
+      if (endpointLabel && endpointLabel.tagName === 'LABEL') {
+        endpointLabel.style.display = (t === 'push') ? 'none' : '';
+      }
       // Fallback for browsers without CSS :has() support -- the base
       // stylesheet's :has(input:checked) rule already covers this, this
       // just makes the card highlight work everywhere.

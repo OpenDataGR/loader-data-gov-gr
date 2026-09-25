@@ -1,4 +1,5 @@
 import base64
+import json
 import os
 
 import pytest
@@ -390,3 +391,83 @@ def test_delete_works_regardless_of_status(session):
     provider_sources.activate(session, source.id)
     provider_sources.delete(session, source.id)
     assert provider_sources.list_all(session) == []
+
+
+# -- push mode --------------------------------------------------------
+
+
+def _push_form(**overrides):
+    form = {"name": "acme-push", "title": "Acme push", "transport_type": "push", "frequency": "MANUAL"}
+    form.update(overrides)
+    return form
+
+
+def test_register_push_source_needs_no_endpoint_url(session):
+    source = provider_sources.register(session, _push_form())
+    assert source.transport_type == "push"
+    assert source.endpoint_url == ""
+
+
+def test_register_push_source_exposes_the_plaintext_key_once(session):
+    source = provider_sources.register(session, _push_form())
+    assert isinstance(source.generated_api_key, str)
+    assert len(source.generated_api_key) > 20
+
+
+def test_register_push_source_never_persists_the_plaintext_key(session):
+    import bcrypt
+
+    source = provider_sources.register(session, _push_form())
+    config = json.loads(source.config)
+    assert "push_api_key_hash" in config
+    assert config["push_api_key_hash"] != source.generated_api_key
+    assert bcrypt.checkpw(source.generated_api_key.encode("utf-8"), config["push_api_key_hash"].encode("ascii"))
+
+    # And the envelope-encrypted secret (used by every other transport
+    # for its own outbound credentials) is genuinely empty for push --
+    # there's nothing for this service to decrypt-and-use, the key is
+    # only ever verified, never read back.
+    assert provider_sources.credentials(session, source.id).fields == {}
+
+
+def test_register_push_source_default_max_file_size(session):
+    source = provider_sources.register(session, _push_form())
+    assert json.loads(source.config)["max_file_size_bytes"] == 20 * 1024 * 1024
+
+
+def test_register_push_source_custom_max_file_size(session):
+    source = provider_sources.register(session, _push_form(push_max_file_size_bytes="1000"))
+    assert json.loads(source.config)["max_file_size_bytes"] == 1000
+
+
+def test_config_to_form_fields_never_leaks_the_key_hash(session):
+    source = provider_sources.register(session, _push_form())
+    data = provider_sources.config_to_form_fields(source)
+    assert "push_api_key_hash" not in data
+    assert data["push_max_file_size_bytes"] == str(20 * 1024 * 1024)
+
+
+def test_a_non_push_source_never_gets_a_generated_api_key(session):
+    source = provider_sources.register(session, _http_form())
+    assert getattr(source, "generated_api_key", None) is None
+
+
+def test_editing_a_push_source_keeps_the_existing_key_hash(session):
+    source = provider_sources.register(session, _push_form())
+    original_hash = json.loads(source.config)["push_api_key_hash"]
+
+    edit_form = provider_sources.config_to_form_fields(source)
+    edit_form["title"] = "Renamed"
+    updated = provider_sources.update(session, source.id, edit_form)
+
+    assert updated.title == "Renamed"
+    assert json.loads(updated.config)["push_api_key_hash"] == original_hash
+
+
+def test_switching_an_existing_source_to_push_via_edit_is_rejected(session):
+    source = provider_sources.register(session, _http_form())
+    edit_form = provider_sources.config_to_form_fields(source)
+    edit_form["transport_type"] = "push"
+    with pytest.raises(provider_sources.ValidationError) as exc_info:
+        provider_sources.update(session, source.id, edit_form)
+    assert "transport_type" in exc_info.value.errors

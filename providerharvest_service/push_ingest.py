@@ -1,0 +1,105 @@
+"""Push-mode ingestion: the provider calls *us* instead of us pulling
+from them -- for providers whose own systems can only push files
+outward (or who'd rather not expose their own endpoint at all), and as
+an HTTPS-only alternative to a real FTP/SFTP receiving server (which
+needs its own public IP/network path this VM doesn't have yet -- see
+README's roadmap). Needs zero new infrastructure: this is just another
+route on the same app, reachable over the exact same HTTPS path
+everything else already uses.
+
+Deliberately narrow, matching the agreed first slice:
+  * Only ``transport_type="push"`` sources, only ``status="active"``
+    ones -- same "don't even reveal a pending/rejected source exists"
+    posture ``proxy.py`` already uses (a single 404 for "no such
+    source", "wrong transport type", and "not active yet" alike).
+  * One file per call, authenticated by the per-source API key
+    generated at registration (``provider_sources._push_fields``) and
+    checked here via bcrypt -- never decrypted/reversible, the key is
+    only ever verified, never read back.
+  * Read in capped chunks (same ``max_file_size_bytes`` config knob
+    the pull-mode file transports use), so an oversized upload is
+    rejected before being fully buffered into memory -- same reasoning
+    as ``harvest_runner._read_capped``, just against an async
+    ``UploadFile`` instead of a sync stream.
+"""
+
+from __future__ import annotations
+
+import json
+
+import bcrypt
+from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile, status
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from providerharvest_service import harvest_db, harvest_runner
+from providerharvest_service.db import get_session
+from providerharvest_service.models import ProviderSource
+
+router = APIRouter(prefix="/push", tags=["push-ingest"])
+
+_READ_CHUNK_BYTES = 65536
+
+
+def _get_active_push_source_or_404(session: Session, source_name: str) -> ProviderSource:
+    source = session.scalar(select(ProviderSource).where(ProviderSource.name == source_name))
+    # Same 404 whether the name doesn't exist, isn't a push source, or
+    # isn't active yet -- a pending/rejected/paused source's existence
+    # must not be discoverable via this public route, same posture
+    # proxy.py's own lookup already uses.
+    if source is None or source.transport_type != "push" or source.status != "active":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such push source")
+    return source
+
+
+def _check_api_key(source: ProviderSource, presented_key: str) -> None:
+    config = json.loads(source.config or "{}")
+    stored_hash = config.get("push_api_key_hash", "")
+    # bcrypt.checkpw itself is constant-time on the hash comparison; an
+    # empty stored_hash (should never happen for a real push source,
+    # but never trust that blindly) must still fail closed rather than
+    # raise or vacuously pass.
+    if not stored_hash or not bcrypt.checkpw(presented_key.encode("utf-8"), stored_hash.encode("ascii")):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid API key")
+
+
+async def _read_capped(upload: UploadFile, max_bytes: int) -> bytes:
+    """Async counterpart to ``harvest_runner._read_capped`` -- same
+    "cap while streaming, never fully buffer an oversized upload"
+    reasoning, just against ``UploadFile``'s async read instead of a
+    sync file-like object."""
+    chunks = []
+    total = 0
+    while True:
+        chunk = await upload.read(_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise harvest_runner.FileTooLargeError(
+                "file exceeds max_file_size_bytes=%d (stopped after %d bytes read)" % (max_bytes, total)
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+@router.post("/{source_name}/upload")
+async def push_upload(
+    source_name: str,
+    file: UploadFile = File(...),
+    x_api_key: str = Header(...),
+    session: Session = Depends(get_session),
+    hsession: Session = Depends(harvest_db.get_session),
+) -> dict:
+    source = _get_active_push_source_or_404(session, source_name)
+    _check_api_key(source, x_api_key)
+
+    config = json.loads(source.config or "{}")
+    max_file_size = config.get("max_file_size_bytes", harvest_runner.DEFAULT_MAX_FILE_SIZE_BYTES)
+    try:
+        content = await _read_capped(file, max_file_size)
+    except harvest_runner.FileTooLargeError as exc:
+        raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, str(exc)) from exc
+
+    run = harvest_runner.record_pushed_file(hsession, source, file.filename or "upload.bin", content)
+    return {"status": run.status, "run_id": run.id, "size": len(content)}

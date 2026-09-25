@@ -415,7 +415,62 @@ be harvesting). Proved end-to-end locally before shipping: register a
 source, activate it, touch nothing else, and watch it get harvested by
 itself on the next tick -- no "Harvest now" click.
 
+`providerharvest_service/push_ingest.py` -- `transport_type="push"`,
+the inverse of every other transport: the provider calls *this*
+service instead of it connecting out. Exists specifically because real
+FTP/SFTP-push receiving (a provider given this VM's own IP/credentials
+to push to, via the ProFTPD server `deploy/README.md` already sets up
+and confirms working end-to-end) needs a public network path into the
+VM that doesn't exist yet -- this VM's NIC has no public IP, and
+Application Gateway can't carry raw FTP/SFTP no matter how it's
+configured (it's Layer-7 HTTP(S)-only). Attaching a public IP directly
+to the VM's NIC would also be a real step backwards: NSG rules can't
+tell which public IP a packet arrived through, so a second public IP
+on the same NIC would make port 80/443 *also* reachable directly on
+it, bypassing the Application Gateway's WAF entirely -- a Load
+Balancer (whose rules only forward the specific ports configured, no
+others) or Azure Storage's native SFTP support (a separate, fully
+Azure-managed endpoint, no VM networking involved at all) are the two
+options that don't have that problem, whenever real FTP/SFTP-push
+support is actually built.
+
+Meanwhile, `push_ingest.py` gets the same underlying capability
+("provider pushes, we don't pull") shipped today with zero new
+infrastructure -- it's just another route on the same app, reachable
+over the exact same HTTPS path everything else already uses:
+- Registering a push-mode source needs no endpoint/credentials at all
+  (there's nothing to connect to) -- instead we generate an API key
+  and show it to the provider exactly once, on its own confirmation
+  page (`provider/push_credentials.html`), alongside the exact upload
+  URL to give them.
+- That key is stored as a bcrypt hash (`push_api_key_hash`, in the
+  source's own `config` blob), not through the envelope-encryption
+  path every other transport's *outbound* credentials use -- it only
+  ever needs to be verified against what a caller presents, never
+  decrypted and used by this service itself, so one-way hashing is
+  strictly safer here. Same "generate once, never recoverable again"
+  choice already made for FTP-push account passwords (`admin_ftp.py`).
+- `POST /push/{source_name}/upload` (multipart, `X-Api-Key` header)
+  checks that key, reads the file in capped chunks (same
+  `max_file_size_bytes` config knob and reasoning as the pull-mode
+  file transports), and stores it via `harvest_runner.
+  record_pushed_file` -- a normal `HarvestRun`+`HarvestedFile` pair,
+  so run history/download UI works identically to a pulled file. Same
+  404-regardless-of-reason posture as `proxy.py`'s lookup (unknown
+  name, wrong transport type, and not-yet-active source all get the
+  same response) -- a pending/rejected source's existence must not be
+  discoverable via this public route.
+- Never touched by `scheduler.py` -- there's nothing to poll; the
+  provider's own upload calls are what create runs, on no schedule at
+  all.
+
 Not yet built, in the rough order they'll likely be needed:
+- Real FTP/SFTP-push receiving for providers who can only push, not
+  call an HTTPS endpoint -- the ProFTPD server itself is proven
+  working end-to-end already (see `deploy/README.md`'s FTP-push
+  section); what's missing is purely the public network path into
+  this VM (see `push_ingest.py`'s own docstring above for why this
+  isn't trivial), a decision outside this repo's own scope.
 - Actually registering the Keycloak client (`providerharvest-api`) so
   `KEYCLOAK_JWKS_URL`/`ISSUER`/`AUDIENCE` are real values instead of
   unset config -- an Azure/Keycloak-console task, not code -- and then
@@ -438,7 +493,7 @@ python -m venv .venv
 ```
 
 No CKAN installation, no Docker, no database -- this is the whole point
-of the split being checked for real, not just asserted. 293 tests,
+of the split being checked for real, not just asserted. 309 tests,
 all passing with zero CKAN present.
 
 ## Running the app locally

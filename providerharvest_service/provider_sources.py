@@ -21,8 +21,10 @@ from __future__ import annotations
 
 import json
 import re
+import secrets
 from urllib.parse import urlparse
 
+import bcrypt
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -30,7 +32,7 @@ from providerharvest_service.engine.secrets.base import SecretBundle
 from providerharvest_service.engine.secrets.envelope import EnvelopeSecretsBackend
 from providerharvest_service.models import ProviderSource, _new_id
 
-TRANSPORT_TYPES = ("http", "sftp", "scp", "ftp")
+TRANSPORT_TYPES = ("http", "sftp", "scp", "ftp", "push")
 SSH_TRANSPORT_TYPES = ("sftp", "scp")
 FREQUENCIES = ("MANUAL", "DAILY", "WEEKLY", "MONTHLY")
 HTTP_AUTH_TYPES = ("api_key", "basic_auth", "oauth2_client_credentials", "mtls")
@@ -329,6 +331,39 @@ def _ftp_fields(form: dict, endpoint_url: str, errors: dict) -> tuple[dict, dict
     return credential_fields, config_extra
 
 
+def _push_fields(form: dict, errors: dict) -> tuple[dict, dict, str]:
+    """Returns (credential_fields, config_extra, plaintext_api_key) for
+    a push-mode source -- one that never connects anywhere; instead the
+    provider calls this service's own upload endpoint (see
+    ``push_ingest.py``) and presents this key on every call. There's
+    nothing for the provider to type in here: we generate the key right
+    now.
+
+    Stored as a one-way bcrypt hash in ``config`` (verified the same
+    way ``push_ingest.py`` checks it: hash-and-compare, never
+    decrypted) rather than through the envelope-encryption secret path
+    every other transport's *outbound* credentials use -- deliberately:
+    this key only ever needs to be *verified* against what a caller
+    presents, never read back out and used by this service itself, so
+    a one-way hash is strictly safer (a compromised master key or DB
+    dump exposes nothing usable). Matches the same "never re-shown,
+    never recoverable" choice already made for FTP-push account
+    passwords (``admin_ftp.py``'s own ``_hash_password``), for the same
+    reason. ``credential_fields`` is returned empty only to keep the
+    same 2-tuple-plus shape every ``_x_fields`` function has; nothing
+    is ever stored via the secrets backend for a push-mode source."""
+    config_extra = {
+        "max_file_size_bytes": _parse_positive_int(
+            form.get("push_max_file_size_bytes"), 20 * 1024 * 1024, "push_max_file_size_bytes", errors
+        ),
+    }
+    plaintext_key = secrets.token_urlsafe(32)
+    config_extra["push_api_key_hash"] = bcrypt.hashpw(
+        plaintext_key.encode("utf-8"), bcrypt.gensalt()
+    ).decode("ascii")
+    return {}, config_extra, plaintext_key
+
+
 def register(session: Session, form: dict) -> ProviderSource:
     """Validates a registration form (a plain str-keyed dict -- from a
     submitted HTML form, or built directly by a test) and creates a new
@@ -349,14 +384,18 @@ def register(session: Session, form: dict) -> ProviderSource:
     if not title:
         errors["title"] = "required"
 
-    endpoint_url = (form.get("endpoint_url") or "").strip()
-    if not endpoint_url:
-        errors["endpoint_url"] = "required"
-
     transport_type = form.get("transport_type") or "http"
     if transport_type not in TRANSPORT_TYPES:
         errors["transport_type"] = "must be one of %s" % (TRANSPORT_TYPES,)
         transport_type = "http"
+
+    # A push-mode source has no endpoint of its own to describe -- we
+    # never connect anywhere for one, the provider calls us instead
+    # (see push_ingest.py) -- so there's nothing meaningful to require
+    # here.
+    endpoint_url = (form.get("endpoint_url") or "").strip()
+    if not endpoint_url and transport_type != "push":
+        errors["endpoint_url"] = "required"
 
     frequency = form.get("frequency") or "DAILY"
     if frequency not in FREQUENCIES:
@@ -376,12 +415,16 @@ def register(session: Session, form: dict) -> ProviderSource:
     # proxies HTTP sources anyway), harmless to store for the others.
     proxy_enabled = _parse_bool(form.get("proxy_enabled"), default=False)
 
+    plaintext_api_key = None
     if transport_type in SSH_TRANSPORT_TYPES:
         credential_fields, config = _ssh_fields(form, endpoint_url, errors)
         auth_type = "ssh_credentials"  # inert for sftp/scp, matches base_generic's own dispatch
     elif transport_type == "ftp":
         credential_fields, config = _ftp_fields(form, endpoint_url, errors)
         auth_type = "ftp_credentials"  # inert for ftp
+    elif transport_type == "push":
+        credential_fields, config, plaintext_api_key = _push_fields(form, errors)
+        auth_type = "push_api_key"  # inert; push_ingest.py checks the key itself, not auth_strategies
     else:
         auth_type, credential_fields, config = _http_fields(form, errors)
 
@@ -408,6 +451,16 @@ def register(session: Session, form: dict) -> ProviderSource:
     session.flush()  # makes `row` persistent/gettable before the secrets backend looks it up
     _secrets_backend(session).put(harvest_source_id=row.id, fields=credential_fields)
     session.refresh(row)
+    if plaintext_api_key:
+        # Shown exactly once, on the registration confirmation page --
+        # only the bcrypt hash above is ever persisted, and bcrypt is
+        # one-way, so this plaintext is genuinely never recoverable
+        # again after this response. A plain instance attribute, not a
+        # mapped column: never written to the database, gone once this
+        # object is garbage collected. Same "generate once, never show
+        # again" rule this codebase already applies to FTP-push account
+        # passwords (admin_ftp.py) and CKAN tokens.
+        row.generated_api_key = plaintext_api_key
     return row
 
 
@@ -456,6 +509,8 @@ def config_to_form_fields(source: ProviderSource) -> dict:
         data["ftp_use_tls"] = "on" if config.get("use_tls", True) else ""
         data["ftp_connect_timeout_s"] = str(config.get("connect_timeout_s", 30))
         data["ftp_max_file_size_bytes"] = str(config.get("max_file_size_bytes", 20 * 1024 * 1024))
+    elif source.transport_type == "push":
+        data["push_max_file_size_bytes"] = str(config.get("max_file_size_bytes", 20 * 1024 * 1024))
     return data
 
 
@@ -522,14 +577,14 @@ def update(session: Session, source_id: str, form: dict) -> ProviderSource:
     if not title:
         errors["title"] = "required"
 
-    endpoint_url = (form.get("endpoint_url") or "").strip()
-    if not endpoint_url:
-        errors["endpoint_url"] = "required"
-
     transport_type = form.get("transport_type") or source.transport_type
     if transport_type not in TRANSPORT_TYPES:
         errors["transport_type"] = "must be one of %s" % (TRANSPORT_TYPES,)
         transport_type = source.transport_type
+
+    endpoint_url = (form.get("endpoint_url") or "").strip()
+    if not endpoint_url and transport_type != "push":
+        errors["endpoint_url"] = "required"
 
     frequency = form.get("frequency") or "DAILY"
     if frequency not in FREQUENCIES:
@@ -554,6 +609,29 @@ def update(session: Session, source_id: str, form: dict) -> ProviderSource:
     elif transport_type == "ftp":
         credential_fields, config = _ftp_fields(working_form, endpoint_url, errors)
         auth_type = "ftp_credentials"
+    elif transport_type == "push":
+        # Never rotates the key through this generic edit path -- there
+        # is no form field for it to even submit, and regenerating one
+        # on every unrelated edit (e.g. just renaming the title) would
+        # silently break whatever the provider already configured with
+        # the old one. Only supported when the source was already
+        # push-mode (the common case, editing title/frequency/max
+        # size); switching an existing source *into* push mode via
+        # edit isn't supported yet -- there's no one-time-reveal page
+        # in this flow to show a freshly generated key on, unlike
+        # `register`.
+        max_file_size_bytes = _parse_positive_int(
+            form.get("push_max_file_size_bytes"), 20 * 1024 * 1024, "push_max_file_size_bytes", errors
+        )
+        existing_hash = json.loads(source.config or "{}").get("push_api_key_hash") if source.transport_type == "push" else None
+        if not existing_hash:
+            errors["transport_type"] = (
+                "switching to push mode isn't supported via edit yet -- "
+                "delete and re-register the source as push instead, so its generated key can be shown once"
+            )
+            existing_hash = ""
+        credential_fields, config = {}, {"max_file_size_bytes": max_file_size_bytes, "push_api_key_hash": existing_hash}
+        auth_type = "push_api_key"
     else:
         auth_type, credential_fields, config = _http_fields(working_form, errors)
 
