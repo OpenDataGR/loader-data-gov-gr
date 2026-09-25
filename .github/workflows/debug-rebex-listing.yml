@@ -5,19 +5,23 @@ jobs:
   debug:
     runs-on: [self-hosted, loader]
     steps:
-      - name: Try listing a few candidate paths against the real server
+      - name: Reproduce with this project's own SFTPTransport
         run: |
           cd /opt/data-projects/loader-data-gov-gr
           ./venv/bin/python -c "
-          import paramiko
-          t = paramiko.Transport(('test.rebex.net', 22))
-          t.connect(username='demo', password='password')
-          sftp = paramiko.SFTPClient.from_transport(t)
-          for path in ['.', '/', '', '/pub/example']:
-              try:
-                  print(repr(path), '->', [a.filename for a in sftp.listdir_attr(path)])
-              except Exception as exc:
-                  print(repr(path), '-> ERROR', exc)
-          sftp.close()
-          t.close()
+          from providerharvest_service.engine.transport.sftp import SFTPTransport
+          from providerharvest_service.engine.secrets.base import SecretBundle
+
+          secret = SecretBundle(fields={'username': 'demo', 'password': 'password'})
+          t = SFTPTransport(
+              'test.rebex.net', secret=secret, remote_path='/', glob_pattern='readme.txt',
+              pinned_host_key_fingerprint='SHA256:d7Te2DHmvBNSWJNBWik2KbDTjmWtYHe2bvXTMM9lVg4',
+          )
+          with t:
+              page = t.list_entries(cursor=None)
+              print('entries:', [(e.ref, e.metadata) for e in page.entries])
+              for entry in page.entries:
+                  handle = t.open_entry(entry)
+                  print('content:', handle.read())
+                  handle.close()
           "
