@@ -1,0 +1,31 @@
+name: Purge orphaned harvest data (one-off)
+
+# One-time cleanup: deletes the HarvestRun/HarvestedRecord rows left
+# behind in the loader_harvest Postgres DB by the two test sources
+# used to prove the harvest-now pipeline end-to-end in real production
+# (harvest-run-proof, jsonplaceholder-demo) -- both ProviderSource rows
+# are already deleted, but that's a different database (SQLite config
+# vs. this Postgres harvest store), so nothing cascaded. Deleted after
+# a single run, same as every other one-off workflow this project has
+# used (set-master-key.yml, teardown-old-shared-postgres.yml, etc.).
+on:
+  workflow_dispatch:
+
+jobs:
+  purge:
+    runs-on: [self-hosted, loader]
+    steps:
+      - name: Delete orphaned rows for the two known test source ids
+        run: |
+          cd /opt/data-projects/loader-data-gov-gr-postgres
+          sudo docker compose exec -T postgres psql -U postgres -d loader_harvest <<'EOSQL'
+          DELETE FROM harvested_record
+            WHERE run_id IN (
+              SELECT id FROM harvest_run
+              WHERE source_id IN ('f3315fd0-e7f3-4f63-94d6-8bc4849cc2d5', '4da07f9e-d297-4e8b-bf52-c20853680fcc')
+            );
+          DELETE FROM harvest_run
+            WHERE source_id IN ('f3315fd0-e7f3-4f63-94d6-8bc4849cc2d5', '4da07f9e-d297-4e8b-bf52-c20853680fcc');
+          SELECT count(*) AS remaining_runs FROM harvest_run;
+          SELECT count(*) AS remaining_records FROM harvested_record;
+          EOSQL
