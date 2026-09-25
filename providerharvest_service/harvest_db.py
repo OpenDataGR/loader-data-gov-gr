@@ -89,6 +89,17 @@ def get_session() -> Session:
         session.close()
 
 
+def get_session_factory() -> sessionmaker:
+    """The lazily-initialized default session factory itself, not a
+    single Session -- for a caller like the background scheduler that
+    needs to open and close many independent sessions over the
+    process's lifetime, not just one per FastAPI request the way
+    ``get_session`` hands out. Raises ``HarvestDbNotConfigured`` the
+    same way ``get_session``/``check_connectivity`` do if
+    ``LOADER_HARVEST_DB_URL`` isn't set."""
+    return _ensure_initialized()
+
+
 def check_connectivity() -> None:
     """A real round-trip, not just 'the engine object was constructed
     without raising' -- proves the actual network path (this process

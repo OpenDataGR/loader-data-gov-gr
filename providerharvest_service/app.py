@@ -15,11 +15,12 @@ Run directly with ``providerharvest-service`` (see pyproject.toml's
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, status
 
-from providerharvest_service import harvest_db
+from providerharvest_service import db, harvest_db, scheduler
 from providerharvest_service.admin_auth import require_admin_key
 from providerharvest_service.admin_ftp import router as ftp_accounts_router
 from providerharvest_service.auth import require_current_username
@@ -29,7 +30,25 @@ from providerharvest_service.proxy import router as proxy_router
 from providerharvest_service.ui_admin import router as admin_sources_ui_router
 from providerharvest_service.ui_provider import router as provider_sources_ui_router
 
-app = FastAPI(title="providerharvest-service")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Starts the recurring-harvest scheduler's background thread once
+    the app is actually serving, not at import time -- so importing
+    this module (e.g. from a test) never has the side effect of
+    spawning it. A bare ``TestClient(app)`` (no ``with`` block) never
+    triggers ASGI lifespan at all, which is exactly why every existing
+    test in this repo can construct the real ``app`` without a real
+    harvest-scheduler thread running underneath it.
+    """
+    thread = scheduler.start_background_thread(db.SessionLocal, harvest_db.get_session_factory)
+    yield
+    if thread is not None:
+        thread.stop_event.set()
+        thread.join(timeout=5)
+
+
+app = FastAPI(title="providerharvest-service", lifespan=lifespan)
 app.include_router(ftp_accounts_router)
 app.include_router(provider_sources_ui_router)
 app.include_router(admin_sources_ui_router)

@@ -366,6 +366,31 @@ matches data.gov.gr's own tokens (navy gradient masthead, Inter font,
 Bootstrap-standard status colors -- confirmed against the live site's
 own `data_gov_gr.css`), so this reads as part of the same platform.
 
+`providerharvest_service/scheduler.py` -- the automatic recurring
+harvester: `run_due_harvests` runs `harvest_runner.run_harvest` on
+every active HTTP source whose own `frequency` (DAILY/WEEKLY/MONTHLY)
+has elapsed since its last run (or that's never run, or whose last run
+has been stuck "running" for over an hour -- a worker that crashed
+mid-fetch shouldn't permanently block that source). `MANUAL` sources
+are never picked up here, by design. `start_background_thread` runs
+this on a periodic daemon thread (`LOADER_SCHEDULER_INTERVAL_S`,
+default 300s), started from `app.py`'s own `lifespan` and stopped
+cleanly on shutdown via a `threading.Event`, not just left to
+`daemon=True`. Deployed as `gunicorn -w 4` (see deploy/loader-data-gov-gr.service),
+so all four worker processes run their own copy of this loop --
+coordinated with a Postgres session-level advisory lock
+(`pg_try_advisory_lock`, held for the whole tick and released
+explicitly, not the simpler but wrong-here transaction-scoped
+`pg_try_advisory_xact_lock`, since `run_harvest` itself commits
+partway through its own work) so only one worker's tick actually scans
+for due sources and starts runs; skipped entirely against a non-
+Postgres session (the SQLite stand-in tests use, with no such
+concurrency to guard against). `LOADER_SCHEDULER_ENABLED=0` disables
+it outright (e.g. for a one-off diagnostic process that shouldn't also
+be harvesting). Proved end-to-end locally before shipping: register a
+source, activate it, touch nothing else, and watch it get harvested by
+itself on the next tick -- no "Harvest now" click.
+
 Not yet built, in the rough order they'll likely be needed:
 - Actually registering the Keycloak client (`providerharvest-api`) so
   `KEYCLOAK_JWKS_URL`/`ISSUER`/`AUDIENCE` are real values instead of
@@ -375,12 +400,12 @@ Not yet built, in the rough order they'll likely be needed:
   `organization_list_for_user`, replacing the single stand-in user).
 - Field-mapping profiles (`row_rules`) and the fetch-host-key dry-run
   endpoint the old blueprint had.
-- A real scheduler/queue that runs `connection_check`'s same
-  `_build_transport` on each source's `frequency`, actually fetching
-  and storing harvested records/files (own DB, not CKAN DataStore --
-  see next point) rather than a person clicking "Test connection".
-  Storage + a data-browsing UI (run history, sample records) are the
-  next two slices once the scheduler exists.
+- SFTP/SCP/FTP file-based harvest storage -- those transports are
+  whole-file, not record-based, and there's nowhere yet decided for
+  the files themselves to land (own DB as a blob? a filesystem path?
+  object storage?); `run_harvest`/the scheduler above both explicitly
+  refuse a non-HTTP source (`UnsupportedTransportType`) until that's
+  designed, rather than silently doing nothing useful.
 - Provisioning an approved source for real in CKAN (harvest-source
   package, DataStore resource) over the Action API via
   `CKANActionClient` -- deliberately deferred; harvested data lands in
@@ -395,7 +420,7 @@ python -m venv .venv
 ```
 
 No CKAN installation, no Docker, no database -- this is the whole point
-of the split being checked for real, not just asserted. 263 tests,
+of the split being checked for real, not just asserted. 284 tests,
 all passing with zero CKAN present.
 
 ## Running the app locally
