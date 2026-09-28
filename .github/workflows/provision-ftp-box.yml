@@ -1,0 +1,154 @@
+name: Provision FTP box
+
+# Idempotent and safe to leave in the repo / re-run at any time --
+# same "prove it's redeployable, not a one-off hand-run script"
+# convention as provision-postgres.yml. Provisions the dedicated
+# external FTP/SFTP-receiving box (a separate machine from loader's
+# own app VM -- see ftp-forwarder/README.md for why): installs
+# ProFTPD (mod_sql-backed accounts, mod_sftp for SFTP -- the exact
+# same proven, already-debugged recipe deploy/README.md documents for
+# the app VM's own FTP-push feature, just with its own dedicated local
+# account database instead of loader's config DB, since this is a
+# different machine entirely), and the ftp-forwarder package's
+# account-sync service (keeps that local database in sync with
+# loader's own admin panel).
+#
+# Deliberately does NOT start the file-relay service
+# (loader-ftp-forwarder.service) yet: that needs at least one real
+# provider account configured in ftp-forwarder's own config.yml,
+# which doesn't exist until a real push-mode provider is registered
+# and pointed at this box -- a later, separate step.
+on:
+  workflow_dispatch:
+
+jobs:
+  provision:
+    runs-on: [self-hosted, loader-ftp]
+    env:
+      SYNC_KEY: ${{ secrets.LOADER_FTP_SYNC_KEY }}
+    steps:
+      - name: Pull the ftp-forwarder checkout up to date
+        run: |
+          # This repo is private -- a plain unauthenticated `git clone`
+          # from this job would fail, same reason deploy.yml itself
+          # only ever does `git pull` too. The *first* clone here is a
+          # one-time, manually-authenticated step (see this repo's own
+          # deploy/README.md "one-time setup" for the pattern, and
+          # ftp-forwarder/README.md for this box's own copy of it) --
+          # this workflow only ever updates what's already there.
+          if [ ! -d /opt/data-projects/loader-ftp-forwarder/.git ]; then
+            echo "::error::/opt/data-projects/loader-ftp-forwarder is not a git checkout yet -- do the one-time manual clone from ftp-forwarder/README.md first."
+            exit 1
+          fi
+          cd /opt/data-projects/loader-ftp-forwarder
+          git pull
+
+      - name: Install ProFTPD (core, SQLite backend, crypto/sftp module) and Python venv support
+        run: |
+          sudo apt update
+          sudo apt install -y proftpd-core proftpd-mod-sqlite proftpd-mod-crypto sqlite3 python3-venv
+
+      - name: Enable the SQL and SFTP modules (idempotent -- no-op if already uncommented)
+        run: |
+          sudo sed -i \
+            -e 's/^#LoadModule mod_sql\.c/LoadModule mod_sql.c/' \
+            -e 's/^#LoadModule mod_sql_sqlite\.c/LoadModule mod_sql_sqlite.c/' \
+            -e 's/^#LoadModule mod_sql_passwd\.c/LoadModule mod_sql_passwd.c/' \
+            -e 's/^#LoadModule mod_sftp\.c/LoadModule mod_sftp.c/' \
+            /etc/proftpd/modules.conf
+          grep -n "^LoadModule mod_sql\|^LoadModule mod_sftp" /etc/proftpd/modules.conf
+
+      - name: Create the dedicated, non-login system account every virtual user maps to
+        run: |
+          id virtualftp 2>/dev/null || sudo useradd --system --no-create-home --shell /usr/sbin/nologin virtualftp
+          id virtualftp
+
+      - name: Create the FTP upload root
+        run: |
+          sudo mkdir -p /srv/ftp
+          sudo chown virtualftp:virtualftp /srv/ftp
+          sudo chmod 755 /srv/ftp
+
+      - name: Generate SSH host keys for mod_sftp, if missing
+        run: |
+          if [ ! -f /etc/proftpd/ssh_host_ed25519_key ]; then
+            sudo ssh-keygen -t ed25519 -f /etc/proftpd/ssh_host_ed25519_key -N ''
+          fi
+          if [ ! -f /etc/proftpd/ssh_host_rsa_key ]; then
+            sudo ssh-keygen -t rsa -b 4096 -f /etc/proftpd/ssh_host_rsa_key -N ''
+          fi
+          sudo chown root:root /etc/proftpd/ssh_host_*_key
+          sudo chmod 600 /etc/proftpd/ssh_host_*_key
+
+      - name: Write the FTP (port 21) and SFTP (port 2222) SQL-backed virtual-user config
+        run: |
+          VUID=$(id -u virtualftp)
+          VGID=$(id -g virtualftp)
+          sudo tee /etc/proftpd/conf.d/loader-virtual-users.conf > /dev/null <<EOF
+          SQLBackend sqlite3
+          SQLConnectInfo /etc/proftpd/ftp-accounts.db
+          SQLPasswordEngine on
+          SQLAuthTypes bcrypt
+          SQLUserInfo ftp_account username password_hash NULL NULL home_directory NULL
+          SQLDefaultUID $VUID
+          SQLDefaultGID $VGID
+          RequireValidShell off
+          DefaultRoot ~
+          EOF
+
+          sudo tee /etc/proftpd/conf.d/loader-sftp.conf > /dev/null <<EOF
+          <VirtualHost 0.0.0.0>
+            Port 2222
+            <IfModule mod_sftp.c>
+              SFTPEngine on
+              SFTPHostKey /etc/proftpd/ssh_host_rsa_key
+              SFTPHostKey /etc/proftpd/ssh_host_ed25519_key
+              SFTPAuthMethods password
+              SFTPCompression delayed
+            </IfModule>
+            SQLBackend sqlite3
+            SQLConnectInfo /etc/proftpd/ftp-accounts.db
+            SQLPasswordEngine on
+            SQLAuthTypes bcrypt
+            SQLUserInfo ftp_account username password_hash NULL NULL home_directory NULL
+            SQLDefaultUID $VUID
+            SQLDefaultGID $VGID
+            RequireValidShell off
+            DefaultRoot ~
+          </VirtualHost>
+          EOF
+          sudo proftpd -t
+
+      - name: Install the ftp-forwarder Python package
+        run: |
+          cd /opt/data-projects/loader-ftp-forwarder/ftp-forwarder
+          python3 -m venv .venv
+          ./.venv/bin/pip install -e ".[dev,linux]"
+
+      - name: Store the loader FTP-sync key (its own restricted file, never inline in any config)
+        run: |
+          sudo mkdir -p /etc/ftp-forwarder/secrets
+          echo -n "$SYNC_KEY" | sudo tee /etc/ftp-forwarder/secrets/ftp-sync.key > /dev/null
+          sudo chmod 600 /etc/ftp-forwarder/secrets/ftp-sync.key
+
+      - name: Install and start the account-sync service
+        run: |
+          sudo cp /opt/data-projects/loader-ftp-forwarder/ftp-forwarder/deploy/loader-ftp-forwarder-sync.service /etc/systemd/system/
+          sudo systemctl daemon-reload
+          sudo systemctl enable --now loader-ftp-forwarder-sync
+          sleep 3
+          sudo systemctl is-active --quiet loader-ftp-forwarder-sync && echo "sync service running" || (sudo journalctl -u loader-ftp-forwarder-sync -n 30 --no-pager; exit 1)
+
+      - name: Confirm the local account database was actually created by the sync
+        run: |
+          sudo sqlite3 /etc/proftpd/ftp-accounts.db ".tables"
+          sudo sqlite3 /etc/proftpd/ftp-accounts.db "SELECT count(*) AS account_count FROM ftp_account;"
+
+      - name: Enable and (re)start ProFTPD
+        run: |
+          sudo systemctl enable proftpd
+          sudo systemctl restart proftpd
+          sudo systemctl is-active --quiet proftpd && echo "proftpd running" || (sudo journalctl -u proftpd -n 30 --no-pager; exit 1)
+
+      - name: Confirm both listeners are actually up
+        run: sudo ss -tlnp | grep -E ':21 |:2222 '

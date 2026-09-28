@@ -56,6 +56,38 @@ here (the same proven, already-debugged setup loader's own
 `mod_sql`-backed virtual users, `mod_sftp` for SFTP, one account
 system, both protocols).
 
+## One-time setup on the box itself
+
+`.github/workflows/provision-ftp-box.yml` (idempotent, safe to re-run)
+handles everything *after* this -- ProFTPD install/config, the
+account-sync service, generating SSH host keys -- but the very first
+clone of this repo onto the box is a one-time, manually-authenticated
+step the workflow deliberately doesn't try to automate (this repo is
+private, so an unauthenticated `git clone` from the workflow itself
+would fail -- same reason the main app VM's own `deploy.yml` only ever
+does `git pull`, never an initial `clone`; see that repo's own
+`deploy/README.md` for the identical pattern there):
+
+```bash
+sudo mkdir -p /opt/data-projects
+sudo chown "$(whoami)":"$(whoami)" /opt/data-projects
+git clone https://github.com/OpenDataGR/loader-data-gov-gr.git /opt/data-projects/loader-ftp-forwarder
+```
+
+(Use whichever git credential -- SSH deploy key or a PAT -- you'd
+normally use for a private OpenDataGR clone; same as however the main
+app VM's own persistent checkout was authenticated.)
+
+Also register a self-hosted GitHub Actions runner on this box for this
+same repo, with its own distinct name/label (`loader-ftp`, not the
+main app VM's own `loader`) -- see this repo's own
+`deploy/README.md` for the general runner-registration steps, and use
+`--labels self-hosted,loader-ftp` here instead.
+
+Once both of those are done, `workflow_dispatch` on
+`provision-ftp-box.yml` (targeting the `loader-ftp`-labeled runner)
+does the rest, and stays safe to re-run any time after.
+
 ## Config
 
 `ftp_forwarder.cli` takes one YAML file:
