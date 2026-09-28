@@ -1,0 +1,15 @@
+# Copy to /etc/ftp-forwarder/config.yml and fill in real accounts --
+# see the top-level README for the full field reference.
+loader_base_url: https://loader.data.gov.gr
+
+accounts:
+  - name: example-provider
+    watch_dir: /srv/ftp/example-provider
+    source_name: example-provider-push
+    api_key_file: /etc/ftp-forwarder/secrets/example-provider.key
+
+archive_subdir: .forwarded
+max_retries: 5
+retry_backoff_s: 1.0
+worker_count: 8
+catch_up_interval_s: 60

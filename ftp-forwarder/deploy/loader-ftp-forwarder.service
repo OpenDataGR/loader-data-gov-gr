@@ -1,0 +1,12 @@
+[Unit]
+Description=loader-ftp-forwarder (file relay: watches FTP/SFTP uploads, forwards to loader)
+After=network.target
+
+[Service]
+User=localadmin
+WorkingDirectory=/opt/data-projects/loader-ftp-forwarder/ftp-forwarder
+ExecStart=/opt/data-projects/loader-ftp-forwarder/ftp-forwarder/.venv/bin/ftp-forwarder /etc/ftp-forwarder/config.yml
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

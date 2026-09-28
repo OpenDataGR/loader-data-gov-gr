@@ -1,0 +1,40 @@
+name: FTP forwarder tests
+
+# ftp-forwarder is a genuinely separate deployable package (runs on
+# its own dedicated FTP-receiving box, not loader's own app server) --
+# its own CI job, mirroring tests.yml's own shape. Runs on real Linux
+# (ubuntu-latest), not just this dev environment's Windows box, so it
+# also confirms the one genuinely OS-specific module (watcher.py,
+# which needs inotify_simple) actually imports cleanly for real --
+# something a Windows dev machine can't verify at all.
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [master]
+    paths: ["ftp-forwarder/**"]
+  pull_request:
+    branches: [master]
+    paths: ["ftp-forwarder/**"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: ftp-forwarder
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ftp-forwarder
+        run: pip install -e ".[dev,linux]"
+
+      - name: Run the test suite
+        run: pytest tests -q
+
+      - name: Confirm the Linux-only watcher module actually imports
+        run: python -c "import ftp_forwarder.watcher, ftp_forwarder.cli; print('watcher/cli import cleanly on real Linux')"

@@ -1,0 +1,109 @@
+import sqlite3
+
+import pytest
+
+from ftp_forwarder.account_sync import SyncError, fetch_accounts, reconcile, sync_once
+
+
+class FakeResponse:
+    def __init__(self, status_code=200, json_body=None, text=""):
+        self.status_code = status_code
+        self._json_body = json_body if json_body is not None else []
+        self.text = text
+
+    def json(self):
+        return self._json_body
+
+
+class FakeSession:
+    def __init__(self, response):
+        self._response = response
+        self.calls = []
+
+    def get(self, url, *, headers, timeout):
+        self.calls.append({"url": url, "headers": headers, "timeout": timeout})
+        return self._response
+
+
+ACCOUNTS = [
+    {"username": "acme", "password_hash": "$2a$hash1", "home_directory": "/srv/ftp/acme", "protocol": "ftp"},
+    {"username": "other", "password_hash": "$2a$hash2", "home_directory": "/srv/ftp/other", "protocol": "sftp"},
+]
+
+
+def test_fetch_accounts_sends_the_sync_key_header():
+    session = FakeSession(FakeResponse(200, ACCOUNTS))
+    result = fetch_accounts(session, "https://loader.data.gov.gr", "the-sync-key")
+    assert result == ACCOUNTS
+    assert session.calls[0]["url"] == "https://loader.data.gov.gr/admin/ftp-accounts-sync"
+    assert session.calls[0]["headers"]["X-Ftp-Sync-Key"] == "the-sync-key"
+
+
+def test_fetch_accounts_raises_on_a_bad_status():
+    session = FakeSession(FakeResponse(401, text="invalid ftp sync key"))
+    with pytest.raises(SyncError, match="401"):
+        fetch_accounts(session, "https://loader.data.gov.gr", "wrong-key")
+
+
+def _read_accounts(db_path):
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute("SELECT username, password_hash, home_directory, protocol FROM ftp_account").fetchall()
+    finally:
+        conn.close()
+    return {row[0]: row[1:] for row in rows}
+
+
+def test_reconcile_creates_the_schema_and_inserts_accounts(tmp_path):
+    db_path = str(tmp_path / "proftpd.db")
+    reconcile(db_path, ACCOUNTS)
+
+    rows = _read_accounts(db_path)
+    assert rows["acme"] == ("$2a$hash1", "/srv/ftp/acme", "ftp")
+    assert rows["other"] == ("$2a$hash2", "/srv/ftp/other", "sftp")
+
+    # The empty groups table must exist too -- ProFTPD's mod_sql
+    # queries it unconditionally during auth.
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("SELECT * FROM groups")
+    finally:
+        conn.close()
+
+
+def test_reconcile_updates_an_existing_account_in_place(tmp_path):
+    db_path = str(tmp_path / "proftpd.db")
+    reconcile(db_path, ACCOUNTS)
+
+    updated = [dict(ACCOUNTS[0], password_hash="$2a$rotated")]
+    reconcile(db_path, updated + [ACCOUNTS[1]])
+
+    rows = _read_accounts(db_path)
+    assert rows["acme"][0] == "$2a$rotated"
+
+
+def test_reconcile_removes_an_account_no_longer_present(tmp_path):
+    db_path = str(tmp_path / "proftpd.db")
+    reconcile(db_path, ACCOUNTS)
+
+    reconcile(db_path, [ACCOUNTS[0]])  # "other" disabled/deleted in loader
+
+    rows = _read_accounts(db_path)
+    assert set(rows) == {"acme"}
+
+
+def test_reconcile_with_no_accounts_empties_the_table(tmp_path):
+    db_path = str(tmp_path / "proftpd.db")
+    reconcile(db_path, ACCOUNTS)
+    reconcile(db_path, [])
+    assert _read_accounts(db_path) == {}
+
+
+def test_sync_once_fetches_then_reconciles(tmp_path):
+    db_path = str(tmp_path / "proftpd.db")
+    session = FakeSession(FakeResponse(200, ACCOUNTS))
+
+    sync_once(session, "https://loader.data.gov.gr", "the-sync-key", db_path)
+
+    rows = _read_accounts(db_path)
+    assert set(rows) == {"acme", "other"}

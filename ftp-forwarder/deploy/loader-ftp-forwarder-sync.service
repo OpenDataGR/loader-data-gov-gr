@@ -1,0 +1,19 @@
+[Unit]
+Description=loader-ftp-forwarder-sync (mirrors loader's FTP accounts into this box's local ProFTPD database)
+After=network.target
+
+[Service]
+User=root
+# Needs root (or a user ProFTPD's own SQLite file is readable/writable
+# by): this writes the same database file ProFTPD's mod_sql_sqlite
+# reads for every login.
+WorkingDirectory=/opt/data-projects/loader-ftp-forwarder/ftp-forwarder
+ExecStart=/opt/data-projects/loader-ftp-forwarder/ftp-forwarder/.venv/bin/ftp-forwarder-sync \
+  --loader-base-url https://loader.data.gov.gr \
+  --sync-key-file /etc/ftp-forwarder/secrets/ftp-sync.key \
+  --db-path /etc/proftpd/ftp-accounts.db \
+  --interval-s 60
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
