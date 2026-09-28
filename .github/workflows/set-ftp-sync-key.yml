@@ -1,0 +1,29 @@
+name: Set LOADER_FTP_SYNC_KEY (one-off)
+
+# One-time: adds LOADER_FTP_SYNC_KEY to the env file if it isn't
+# already there, then restarts the service to pick it up (editing the
+# env file alone does not affect an already-running process). The
+# actual value is a GitHub Actions secret, never committed to this
+# file -- GitHub redacts it in logs, and the secret itself is deleted
+# once confirmed safely on the VM. Deleted after a single run, same as
+# every other one-off workflow.
+on:
+  workflow_dispatch:
+
+jobs:
+  set:
+    runs-on: [self-hosted, loader]
+    env:
+      SYNC_KEY: ${{ secrets.LOADER_FTP_SYNC_KEY }}
+    steps:
+      - name: Add the env var if missing, then restart
+        run: |
+          if sudo grep -q '^LOADER_FTP_SYNC_KEY=' /etc/loader-data-gov-gr.env 2>/dev/null; then
+            echo "already set -- not overwriting"
+          else
+            echo "LOADER_FTP_SYNC_KEY=$SYNC_KEY" | sudo tee -a /etc/loader-data-gov-gr.env > /dev/null
+            echo "added."
+          fi
+          sudo pkill -TERM -u localadmin -f "gunicorn.*providerharvest_service.app:app" || true
+          sleep 3
+          curl -sf http://127.0.0.1:5002/health && echo " -- service back up"
