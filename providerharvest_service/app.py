@@ -23,6 +23,7 @@ from fastapi import Depends, FastAPI, HTTPException, status
 from providerharvest_service import db, harvest_db, scheduler
 from providerharvest_service.admin_auth import require_admin_key
 from providerharvest_service.admin_ftp import router as ftp_accounts_router
+from providerharvest_service.admin_ftp import sync_router as ftp_accounts_sync_router
 from providerharvest_service.auth import require_current_username
 from providerharvest_service.ckan_tokens import get_or_provision_ckan_client
 from providerharvest_service.db import get_session
@@ -51,6 +52,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="providerharvest-service", lifespan=lifespan)
 app.include_router(ftp_accounts_router)
+app.include_router(ftp_accounts_sync_router)
 app.include_router(provider_sources_ui_router)
 app.include_router(admin_sources_ui_router)
 app.include_router(proxy_router)

@@ -214,3 +214,66 @@ def test_deleting_account_cascades_allowed_ips(client):
     # Re-creating the same account name must work -- nothing orphaned.
     resp = _create(client)
     assert resp.status_code == 201
+
+
+# -- the remote-box sync endpoint, gated by its own separate key ----------
+
+
+SYNC_KEY = "test-ftp-sync-key"
+SYNC_HEADERS = {"X-Ftp-Sync-Key": SYNC_KEY}
+
+
+@pytest.fixture(autouse=True)
+def _sync_key(monkeypatch):
+    monkeypatch.setenv("LOADER_FTP_SYNC_KEY", SYNC_KEY)
+
+
+def test_sync_rejects_the_admin_key_instead_of_the_sync_key(client):
+    # Proves these are genuinely two separate credentials, not one
+    # accepted under two header names.
+    resp = client.get("/admin/ftp-accounts-sync", headers=AUTH_HEADERS)
+    assert resp.status_code == 401
+
+
+def test_sync_missing_key_is_unauthorized(client):
+    resp = client.get("/admin/ftp-accounts-sync")
+    assert resp.status_code == 401
+
+
+def test_sync_key_not_configured_is_unavailable(client, monkeypatch):
+    monkeypatch.delenv("LOADER_FTP_SYNC_KEY", raising=False)
+    resp = client.get("/admin/ftp-accounts-sync", headers=SYNC_HEADERS)
+    assert resp.status_code == 503
+
+
+def test_sync_returns_the_password_hash_not_the_plaintext(client):
+    created = _create(client).json()
+    resp = client.get("/admin/ftp-accounts-sync", headers=SYNC_HEADERS)
+    assert resp.status_code == 200
+    entries = resp.json()
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["username"] == created["username"]
+    assert entry["home_directory"] == created["home_directory"]
+    assert entry["protocol"] == created["protocol"]
+    assert "id" not in entry  # not needed by a remote box's own account store
+    assert "password_hash" in entry and entry["password_hash"] != ""
+    assert "password" not in entry  # the plaintext must never appear here either
+
+
+def test_sync_excludes_disabled_accounts(client):
+    account_id = _create(client).json()["id"]
+    client.patch("/admin/ftp-accounts/%s" % account_id, json={"enabled": False}, headers=AUTH_HEADERS)
+    resp = client.get("/admin/ftp-accounts-sync", headers=SYNC_HEADERS)
+    assert resp.json() == []
+
+
+def test_sync_includes_allowed_ips_as_plain_cidr_strings(client):
+    account_id = _create(client).json()["id"]
+    client.post(
+        "/admin/ftp-accounts/%s/allowed-ips" % account_id,
+        json={"cidr": "10.0.0.1/32"},
+        headers=AUTH_HEADERS,
+    )
+    resp = client.get("/admin/ftp-accounts-sync", headers=SYNC_HEADERS)
+    assert resp.json()[0]["allowed_ips"] == ["10.0.0.1/32"]

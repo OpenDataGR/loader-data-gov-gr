@@ -25,7 +25,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from providerharvest_service.admin_auth import require_admin_key
+from providerharvest_service.admin_auth import require_admin_key, require_ftp_sync_key
 from providerharvest_service.db import get_session
 from providerharvest_service.models import FtpAccount, FtpAllowedIp
 
@@ -137,6 +137,30 @@ class PasswordRotated(BaseModel):
     password: str
 
 
+class FtpAccountSyncOut(BaseModel):
+    """For a remote FTP-receiving box's own sync job -- includes the
+    bcrypt ``password_hash`` (never the plaintext, which was never
+    stored anywhere past account creation) so that box's own ProFTPD
+    account store can be kept eventually-consistent with whatever's
+    configured here, without loader ever needing inbound network
+    access from that box beyond this one narrow, separately-keyed
+    endpoint (see ``admin_auth.require_ftp_sync_key``)."""
+
+    username: str
+    password_hash: str
+    home_directory: str
+    protocol: str
+    enabled: bool
+    allowed_ips: list[str]
+
+    model_config = {"from_attributes": True}
+
+    @field_validator("allowed_ips", mode="before")
+    @classmethod
+    def _cidrs_only(cls, value):
+        return [ip.cidr if hasattr(ip, "cidr") else ip for ip in value]
+
+
 def _get_account_or_404(session: Session, account_id: str) -> FtpAccount:
     account = session.get(FtpAccount, account_id)
     if account is None:
@@ -231,3 +255,27 @@ def remove_allowed_ip(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such allowed IP")
     session.delete(allowed)
     session.commit()
+
+
+# A deliberately separate router, not just another route on the one
+# above: that router's accounts CRUD is gated by the full admin key
+# (every admin-only feature this service has); this single read-only
+# endpoint is gated by its own, narrower LOADER_FTP_SYNC_KEY instead
+# (see admin_auth.require_ftp_sync_key's own docstring for why), so a
+# remote FTP-receiving box only ever needs to hold a credential scoped
+# to exactly this. Its own distinct path (not nested under
+# /admin/ftp-accounts/) is deliberate too, not just cosmetic: that
+# router already has a GET /{account_id}, and Starlette matches routes
+# in registration order regardless of specificity -- sharing the
+# prefix would make this endpoint's fate depend on which router
+# happened to be included first in app.py, a fragile thing to rely on.
+sync_router = APIRouter(tags=["ftp-accounts-sync"], dependencies=[Depends(require_ftp_sync_key)])
+
+
+@sync_router.get("/admin/ftp-accounts-sync", response_model=list[FtpAccountSyncOut])
+def sync_ftp_accounts(session: Session = Depends(get_session)) -> list[FtpAccount]:
+    """Only enabled accounts -- a disabled one should be removed from
+    the remote box's own account store by its sync job (see that job's
+    own reconciliation logic), not kept around there with credentials
+    that should no longer work."""
+    return list(session.scalars(select(FtpAccount).where(FtpAccount.enabled.is_(True))).all())
