@@ -49,7 +49,15 @@ def _ftp_upload_root() -> str:
     # posixpath, not pathlib/os.path: this validates a path meant for
     # the Linux deployment target, regardless of what OS runs the code
     # (including this test suite, which may run on Windows).
-    return posixpath.normpath(os.environ.get("LOADER_FTP_UPLOAD_ROOT", "/srv/ftp-uploads"))
+    #
+    # Default is the external FTP/SFTP-receiving box's own upload root
+    # (see ftp-forwarder/README.md), not this VM's own -- that box is
+    # the only one a real provider can actually reach (this VM has no
+    # public IP, which is the entire reason that box exists). This VM's
+    # own /srv/ftp-uploads was the original proof-of-concept location
+    # (see deploy/README.md's FTP-push section); no real account should
+    # be scoped there going forward.
+    return posixpath.normpath(os.environ.get("LOADER_FTP_UPLOAD_ROOT", "/srv/ftp"))
 
 
 def _validate_home_directory(value: str) -> str:

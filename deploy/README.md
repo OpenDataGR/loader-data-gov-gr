@@ -106,7 +106,7 @@ before relying on it.
    ```bash
    sudo tee /etc/loader-data-gov-gr.env > /dev/null <<'EOF'
    LOADER_ADMIN_API_KEY=<generate with: python3 -c "import secrets; print(secrets.token_urlsafe(32))">
-   LOADER_FTP_UPLOAD_ROOT=/srv/ftp-uploads
+   LOADER_FTP_UPLOAD_ROOT=/srv/ftp
    LOADER_PUBLIC_BASE_URL=https://loader.data.gov.gr
    CKAN_PROVIDERHARVEST_MASTER_KEY=<generate with: python3 -c "import base64, os; print(base64.b64encode(os.urandom(32)).decode())">
    LOADER_ADMIN_UI_USERNAME=<the human who logs into /admin/*>
@@ -148,12 +148,17 @@ before relying on it.
    stop overwriting it *and* gunicorn/uvicorn configured to trust it
    from 127.0.0.1 -- an explicit configured value sidesteps both.
 
-6. **FTP-push receiving server.** Plain FTP over `mod_sql`-backed
-   virtual users is confirmed working end-to-end (real login + real
-   upload, tested from this VM). FTPS/TLS, a dedicated sshd for
-   SFTP-push accounts, and nftables rules generated from each
-   account's IP whitelist are still not done -- see the end of this
-   section.
+6. **FTP-push receiving server (proof-of-concept only -- superseded by
+   the external box for anything real).** Plain FTP over
+   `mod_sql`-backed virtual users is confirmed working end-to-end (real
+   login + real upload, tested from this VM). This VM has no public
+   IP, though, so no real internet-based provider can ever actually
+   reach it -- that's the whole reason `ftp-forwarder/` and its own
+   dedicated external box exist (see that package's own README). Every
+   real `FtpAccount` going forward is scoped to that box's own upload
+   root (`/srv/ftp`, `LOADER_FTP_UPLOAD_ROOT`'s current default), not
+   this VM's `/srv/ftp-uploads` below -- kept here only as the historical
+   record of how this slice was first proven out.
 
    Upload root:
    ```bash

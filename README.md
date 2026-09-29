@@ -88,10 +88,13 @@ FTP-push accounts and their per-account IP whitelists, gated by
 header `X-Admin-Key` -- a deliberate placeholder for the real
 per-user Keycloak/CKAN-token authorization design, swapped in once
 the token-provisioning flow below exists). `home_directory` is
-validated to sit under `LOADER_FTP_UPLOAD_ROOT` (default
-`/srv/ftp-uploads`) so the admin API can't be pointed at an arbitrary
-VM path. Generated passwords are bcrypt-hashed and shown exactly once,
-at creation (or rotation) -- never returned again.
+validated to sit under `LOADER_FTP_UPLOAD_ROOT` (default `/srv/ftp`,
+the external FTP-receiving box's own upload root -- see
+`ftp-forwarder/README.md`; this VM's own `/srv/ftp-uploads` was only
+ever a proof-of-concept, see `deploy/README.md`'s FTP-push section) so
+the admin API can't be pointed at an arbitrary path. Generated
+passwords are bcrypt-hashed and shown exactly once, at creation (or
+rotation) -- never returned again.
 
 The admin HTML UI itself (`/admin/sources`, `/admin/ftp`) now sits
 behind a real login (`admin_session.py` -- a signed session cookie,
