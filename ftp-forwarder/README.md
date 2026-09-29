@@ -33,7 +33,15 @@ endpoint any HTTPS-capable provider could call directly.
   key) and mirrors it into this box's own local SQLite database --
   the one ProFTPD's `mod_sql_sqlite` actually authenticates against.
   Loader's admin panel stays the one place accounts get created,
-  edited, or disabled.
+  edited, or disabled. Every cycle, this same process also reports
+  this box's own health (`box_health.py` -- is ProFTPD active, are
+  ports 21/2222 actually listening, is the file-relay service active,
+  did the account pull itself succeed) to loader via
+  `PUT /admin/ftp-box-status`, same sync key. This is the *only* way
+  loader ever learns this box is alive: since this box only ever calls
+  loader (see "pull-based and outbound-only" below), loader can't ask
+  -- it can only remember what it was last told, which is what its own
+  admin panel's "FTP subsystem" page shows.
 
 Deliberately separate processes/systemd units: account provisioning
 and file relaying are different responsibilities that should fail
@@ -121,6 +129,11 @@ See `deploy/config.example.yml`.
 `ftp_forwarder.sync_cli` takes its settings as CLI flags instead (see
 `deploy/loader-ftp-forwarder-sync.service`) -- it has far fewer of
 them and no per-account structure, so a YAML file would be overkill.
+`--proftpd-unit`/`--relay-unit`/`--ftp-port`/`--sftp-port` let the
+health-check step above target different unit/port names if this ever
+runs on a box set up differently than the current one; all four
+default to match this box's own actual setup
+(`proftpd`/`loader-ftp-forwarder`/`21`/`2222`).
 
 ## Running the tests
 

@@ -131,11 +131,17 @@ jobs:
           echo -n "$SYNC_KEY" | sudo tee /etc/ftp-forwarder/secrets/ftp-sync.key > /dev/null
           sudo chmod 600 /etc/ftp-forwarder/secrets/ftp-sync.key
 
-      - name: Install and start the account-sync service
+      - name: Install and (re)start the account-sync service
         run: |
+          # Always restart, not just `enable --now` -- this workflow is
+          # re-run whenever the ftp-forwarder package's own code
+          # changes (see the earlier "pip install -e" step), and an
+          # already-active unit wouldn't otherwise pick up new code
+          # until something restarted it anyway.
           sudo cp /opt/data-projects/loader-ftp-forwarder/ftp-forwarder/deploy/loader-ftp-forwarder-sync.service /etc/systemd/system/
           sudo systemctl daemon-reload
-          sudo systemctl enable --now loader-ftp-forwarder-sync
+          sudo systemctl enable loader-ftp-forwarder-sync
+          sudo systemctl restart loader-ftp-forwarder-sync
           sleep 3
           sudo systemctl is-active --quiet loader-ftp-forwarder-sync && echo "sync service running" || (sudo journalctl -u loader-ftp-forwarder-sync -n 30 --no-pager; exit 1)
 

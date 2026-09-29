@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% import "_macros.html" as macros %}
+{% block title %}FTP subsystem -- loader.data.gov.gr{% endblock %}
+{% block content %}
+  <div class="panel">
+    <h1>FTP/SFTP receiving boxes</h1>
+    <p class="subtitle">
+      Reported by each box's own account-sync job -- loader can never reach these boxes
+      directly (pull-based, outbound-only by design), so this is only ever as fresh as the
+      last successful check-in.
+    </p>
+
+    {% if not boxes %}
+      <div class="empty-state">
+        {{ macros.icon("inbox", 40) }}
+        <p>No box has reported in yet.</p>
+      </div>
+    {% else %}
+      <table>
+        <thead>
+          <tr>
+            <th>Box</th><th>ProFTPD</th><th>FTP :21</th><th>SFTP :2222</th>
+            <th>Relay</th><th>Sync</th><th>Accounts</th><th>Last report</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for box in boxes %}
+          <tr>
+            <td><div class="name-title">{{ box.hostname }}</div>{% if box.is_stale %}<span class="badge badge-error" title="No check-in in over 5 minutes">{{ macros.icon("rejected", 13) }}<span>stale</span></span>{% endif %}</td>
+            <td>{% if box.proftpd_active %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>up</span></span>{% else %}<span class="badge badge-error">{{ macros.icon("rejected", 13) }}<span>down</span></span>{% endif %}</td>
+            <td>{% if box.ftp_port_listening %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>listening</span></span>{% else %}<span class="badge badge-error">{{ macros.icon("rejected", 13) }}<span>closed</span></span>{% endif %}</td>
+            <td>{% if box.sftp_port_listening %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>listening</span></span>{% else %}<span class="badge badge-error">{{ macros.icon("rejected", 13) }}<span>closed</span></span>{% endif %}</td>
+            <td>{% if box.relay_service_active %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>up</span></span>{% else %}<span class="badge badge-error">{{ macros.icon("rejected", 13) }}<span>down</span></span>{% endif %}</td>
+            <td>
+              {% if box.sync_ok %}<span class="badge badge-ok" title="{{ box.sync_message or '' }}">{{ macros.icon("active", 13) }}<span>ok</span></span>
+              {% else %}<span class="badge badge-error" title="{{ box.sync_message or '' }}">{{ macros.icon("rejected", 13) }}<span>failing</span></span>{% endif %}
+            </td>
+            <td>{{ box.account_count }}</td>
+            <td class="muted health-timestamp">{{ box.reported_at.strftime("%Y-%m-%d %H:%M") }} UTC</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
+
+  <div class="panel" style="margin-top:1.5rem;">
+    <h1>FTP-push accounts</h1>
+    <p class="subtitle">
+      A created or rotated password is shown exactly once, right after the action --
+      it is never stored in a recoverable form, so if it's lost the only way back is
+      rotating again.
+    </p>
+
+    {% if not accounts %}
+      <div class="empty-state">
+        {{ macros.icon("inbox", 40) }}
+        <p>No FTP accounts configured yet.</p>
+      </div>
+    {% else %}
+      <table>
+        <thead>
+          <tr><th>Username</th><th>Home directory</th><th>Protocol</th><th>Status</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for a in accounts %}
+          <tr>
+            <td class="name-title">{{ a.username }}</td>
+            <td class="muted">{{ a.home_directory }}</td>
+            <td>{{ macros.transport_badge(a.protocol) }}</td>
+            <td>{% if a.enabled %}<span class="badge badge-active">{{ macros.icon("active", 13) }}<span>enabled</span></span>{% else %}<span class="badge badge-paused">{{ macros.icon("paused", 13) }}<span>disabled</span></span>{% endif %}</td>
+            <td style="white-space:nowrap;">
+              <form class="inline" method="post" action="/admin/ftp/{{ a.id }}/rotate-password">
+                <button type="submit" class="btn-sm btn-secondary">{{ macros.icon("queue", 14) }} Rotate password</button>
+              </form>
+              {% if a.enabled %}
+                <form class="inline" method="post" action="/admin/ftp/{{ a.id }}/disable">
+                  <button type="submit" class="btn-sm btn-secondary">Disable</button>
+                </form>
+              {% else %}
+                <form class="inline" method="post" action="/admin/ftp/{{ a.id }}/enable">
+                  <button type="submit" class="btn-sm btn-secondary">Enable</button>
+                </form>
+              {% endif %}
+              <form class="inline" method="post" action="/admin/ftp/{{ a.id }}/delete" onsubmit="return confirm('Delete FTP account {{ a.username }}? This cannot be undone.');">
+                <button type="submit" class="btn-sm btn-danger">Delete</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+
+    <fieldset>
+      <legend>New FTP account</legend>
+      <form method="post" action="/admin/ftp/accounts">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" class="small" required pattern="[a-zA-Z0-9_-]{3,32}">
+
+        <label for="home_directory">Home directory</label>
+        <input type="text" id="home_directory" name="home_directory" required placeholder="/srv/ftp-uploads/&lt;provider&gt;">
+
+        <label for="protocol">Protocol</label>
+        <select id="protocol" name="protocol">
+          <option value="ftps" selected>ftps</option>
+          <option value="ftp">ftp</option>
+          <option value="sftp">sftp</option>
+        </select>
+
+        <div style="margin-top:1.2rem;">
+          <button type="submit">{{ macros.icon("push", 14) }} Create account</button>
+        </div>
+      </form>
+    </fieldset>
+  </div>
+{% endblock %}

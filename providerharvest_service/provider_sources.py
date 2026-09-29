@@ -348,7 +348,7 @@ def _push_fields(form: dict, errors: dict) -> tuple[dict, dict, str]:
     a one-way hash is strictly safer (a compromised master key or DB
     dump exposes nothing usable). Matches the same "never re-shown,
     never recoverable" choice already made for FTP-push account
-    passwords (``admin_ftp.py``'s own ``_hash_password``), for the same
+    passwords (``admin_ftp.py``'s own ``hash_password``), for the same
     reason. ``credential_fields`` is returned empty only to keep the
     same 2-tuple-plus shape every ``_x_fields`` function has; nothing
     is ever stored via the secrets backend for a push-mode source."""

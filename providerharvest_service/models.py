@@ -173,6 +173,28 @@ class ProviderSource(Base):
     proxy_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=True)
 
 
+class FtpBoxStatus(Base):
+    """One row per remote FTP/SFTP-receiving box (see
+    ftp-forwarder/README.md), upserted by that box's own account-sync
+    job every cycle. Loader can never reach that box directly --
+    deliberately pull-based/outbound-only, so the box calling loader is
+    the only network path that exists -- so this is the only way
+    loader ever learns whether it's alive: the box reports on itself,
+    this just remembers the latest report."""
+
+    __tablename__ = "ftp_box_status"
+
+    hostname: Mapped[str] = mapped_column(String, primary_key=True)
+    reported_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
+    proftpd_active: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    ftp_port_listening: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    sftp_port_listening: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    relay_service_active: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    account_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    sync_ok: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    sync_message: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
 class FtpAllowedIp(Base):
     __tablename__ = "ftp_allowed_ip"
 

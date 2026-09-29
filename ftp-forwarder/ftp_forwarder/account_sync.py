@@ -97,3 +97,49 @@ def reconcile(db_path: str, accounts: list[dict]) -> None:
 def sync_once(session: requests.Session, base_url: str, sync_key: str, db_path: str) -> None:
     accounts = fetch_accounts(session, base_url, sync_key)
     reconcile(db_path, accounts)
+
+
+def local_account_count(db_path: str) -> int:
+    """However the last successful sync left it -- read from this box's
+    own local database rather than trusting whatever this cycle's pull
+    returned, so a *failed* pull still reports a meaningful count (the
+    last known-good one) instead of 0."""
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(_SCHEMA)
+        return conn.execute("SELECT COUNT(*) FROM ftp_account").fetchone()[0]
+    finally:
+        conn.close()
+
+
+def report_status(
+    session: requests.Session,
+    base_url: str,
+    sync_key: str,
+    *,
+    hostname: str,
+    health: dict,
+    account_count: int,
+    sync_ok: bool,
+    sync_message: str | None,
+    timeout_s: float = 30.0,
+) -> None:
+    """Best-effort: a failed heartbeat is logged, never raised -- this
+    is telemetry for loader's own admin panel, not something that
+    should crash the sync loop itself (that loop's actual job, keeping
+    ProFTPD's account database current, must keep running regardless
+    of whether reporting on it succeeds)."""
+    url = "%s/admin/ftp-box-status" % base_url.rstrip("/")
+    payload = {
+        "hostname": hostname,
+        "account_count": account_count,
+        "sync_ok": sync_ok,
+        "sync_message": sync_message,
+        **health,
+    }
+    try:
+        resp = session.put(url, json=payload, headers={"X-Ftp-Sync-Key": sync_key}, timeout=timeout_s)
+        if resp.status_code != 200:
+            logger.error("status report to %s failed: %d %s", url, resp.status_code, resp.text[:200])
+    except requests.RequestException as exc:
+        logger.error("status report to %s failed: %s", url, exc)

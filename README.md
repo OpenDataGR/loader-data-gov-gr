@@ -91,7 +91,15 @@ the token-provisioning flow below exists). `home_directory` is
 validated to sit under `LOADER_FTP_UPLOAD_ROOT` (default
 `/srv/ftp-uploads`) so the admin API can't be pointed at an arbitrary
 VM path. Generated passwords are bcrypt-hashed and shown exactly once,
-at creation (or rotation) -- never returned again.
+at creation (or rotation) -- never returned again. `ui_admin_ftp.py`
+puts an actual HTML page on this (`/admin/ftp`, in the masthead nav)
+-- the account list plus live status for every remote FTP/SFTP-
+receiving box (see `../ftp-forwarder/README.md`): since such a box is
+deliberately pull-based/outbound-only, loader can't ask it "are you
+alive" -- `FtpBoxStatus` just remembers the latest self-reported
+heartbeat (`PUT /admin/ftp-box-status`, same narrow sync key as the
+account-sync pull), and the page flags one as stale past 5 minutes
+without a check-in.
 
 **The FTP/SFTP receiving server itself is live and confirmed working**
 on `MIN01RG96PVM02` -- ProFTPD, `mod_sql`-backed virtual users reading
@@ -102,7 +110,7 @@ account/credential set for either protocol. Real login + real file
 upload confirmed on both. Two real, non-obvious fixes live in code
 because of this: `models.FtpGroup` (an empty table ProFTPD's `mod_sql`
 queries unconditionally during auth, even unused) and
-`admin_ftp._hash_password`'s explicit `$2a$` bcrypt prefix (ProFTPD's
+`admin_ftp.hash_password`'s explicit `$2a$` bcrypt prefix (ProFTPD's
 `mod_sql_passwd` here silently rejects bcrypt's own `$2b$` default).
 See [`deploy/README.md`](deploy/README.md) for the full setup, both
 gotchas explained, and what's still open (FTPS was explicitly dropped

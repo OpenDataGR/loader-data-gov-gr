@@ -66,7 +66,7 @@ def test_stored_password_hash_uses_2a_prefix(client, _isolated_db):
     instance, not a style preference: a $2b$ hash (bcrypt's own
     default) is silently rejected there ("530 Login incorrect", no
     error logged), while the identical password re-hashed as $2a$
-    authenticates and uploads successfully. See admin_ftp._hash_password.
+    authenticates and uploads successfully. See admin_ftp.hash_password.
     """
     from providerharvest_service.models import FtpAccount
 
@@ -277,3 +277,54 @@ def test_sync_includes_allowed_ips_as_plain_cidr_strings(client):
     )
     resp = client.get("/admin/ftp-accounts-sync", headers=SYNC_HEADERS)
     assert resp.json()[0]["allowed_ips"] == ["10.0.0.1/32"]
+
+
+# -- the remote-box heartbeat endpoint, same sync key ----------------------
+
+
+def _status_payload(**overrides):
+    payload = {
+        "hostname": "snf-899358",
+        "proftpd_active": True,
+        "ftp_port_listening": True,
+        "sftp_port_listening": True,
+        "relay_service_active": True,
+        "account_count": 3,
+        "sync_ok": True,
+        "sync_message": None,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_box_status_requires_the_sync_key_not_the_admin_key(client):
+    resp = client.put("/admin/ftp-box-status", json=_status_payload(), headers=AUTH_HEADERS)
+    assert resp.status_code == 401
+
+
+def test_box_status_report_round_trips(client):
+    resp = client.put("/admin/ftp-box-status", json=_status_payload(), headers=SYNC_HEADERS)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["hostname"] == "snf-899358"
+    assert body["account_count"] == 3
+    assert body["sync_ok"] is True
+    assert "reported_at" in body
+
+
+def test_box_status_report_upserts_by_hostname(client):
+    client.put("/admin/ftp-box-status", json=_status_payload(account_count=3), headers=SYNC_HEADERS)
+    resp = client.put(
+        "/admin/ftp-box-status",
+        json=_status_payload(account_count=5, proftpd_active=False, sync_ok=False, sync_message="boom"),
+        headers=SYNC_HEADERS,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["account_count"] == 5
+    assert body["proftpd_active"] is False
+    assert body["sync_message"] == "boom"
+
+    # Still one row per hostname, not a growing history.
+    again = client.put("/admin/ftp-box-status", json=_status_payload(hostname="other-box"), headers=SYNC_HEADERS)
+    assert again.status_code == 200

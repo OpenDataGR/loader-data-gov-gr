@@ -12,6 +12,7 @@ docs rather than guessing, so it's being built as its own slice.
 
 from __future__ import annotations
 
+import datetime
 import ipaddress
 import os
 import posixpath
@@ -27,7 +28,11 @@ from sqlalchemy.orm import Session
 
 from providerharvest_service.admin_auth import require_admin_key, require_ftp_sync_key
 from providerharvest_service.db import get_session
-from providerharvest_service.models import FtpAccount, FtpAllowedIp
+from providerharvest_service.models import FtpAccount, FtpAllowedIp, FtpBoxStatus
+
+
+def _utcnow() -> datetime.datetime:
+    return datetime.datetime.now(datetime.timezone.utc)
 
 router = APIRouter(
     prefix="/admin/ftp-accounts",
@@ -57,7 +62,7 @@ def _validate_home_directory(value: str) -> str:
     return normalized
 
 
-def _hash_password(password: str) -> str:
+def hash_password(password: str) -> str:
     # prefix=b"2a", not bcrypt's own $2b$ default: confirmed for real
     # against a live ProFTPD 1.3.8b + mod_sql_passwd instance that a
     # $2b$ hash is silently rejected (clean "530 Login incorrect", no
@@ -69,7 +74,7 @@ def _hash_password(password: str) -> str:
     ).decode("ascii")
 
 
-def _generate_password() -> str:
+def generate_password() -> str:
     return secrets.token_urlsafe(24)
 
 
@@ -175,10 +180,10 @@ def create_ftp_account(
     if session.scalar(select(FtpAccount).where(FtpAccount.username == payload.username)):
         raise HTTPException(status.HTTP_409_CONFLICT, "username already in use")
 
-    password = _generate_password()
+    password = generate_password()
     account = FtpAccount(
         username=payload.username,
-        password_hash=_hash_password(password),
+        password_hash=hash_password(password),
         home_directory=payload.home_directory,
         protocol=payload.protocol,
     )
@@ -217,8 +222,8 @@ def update_ftp_account(
 @router.post("/{account_id}/rotate-password", response_model=PasswordRotated)
 def rotate_password(account_id: str, session: Session = Depends(get_session)) -> PasswordRotated:
     account = _get_account_or_404(session, account_id)
-    password = _generate_password()
-    account.password_hash = _hash_password(password)
+    password = generate_password()
+    account.password_hash = hash_password(password)
     session.commit()
     return PasswordRotated(password=password)
 
@@ -279,3 +284,45 @@ def sync_ftp_accounts(session: Session = Depends(get_session)) -> list[FtpAccoun
     own reconciliation logic), not kept around there with credentials
     that should no longer work."""
     return list(session.scalars(select(FtpAccount).where(FtpAccount.enabled.is_(True))).all())
+
+
+class FtpBoxStatusIn(BaseModel):
+    hostname: str
+    proftpd_active: bool
+    ftp_port_listening: bool
+    sftp_port_listening: bool
+    relay_service_active: bool
+    account_count: int
+    sync_ok: bool
+    sync_message: str | None = None
+
+
+class FtpBoxStatusOut(FtpBoxStatusIn):
+    reported_at: datetime.datetime
+
+    model_config = {"from_attributes": True}
+
+
+@sync_router.put("/admin/ftp-box-status", response_model=FtpBoxStatusOut)
+def report_ftp_box_status(
+    payload: FtpBoxStatusIn, session: Session = Depends(get_session)
+) -> FtpBoxStatus:
+    # Same narrow LOADER_FTP_SYNC_KEY as the sync pull above, not a new
+    # credential -- this is that same remote box reporting on itself
+    # during the same cycle, not a distinct capability that needs its
+    # own blast radius.
+    row = session.get(FtpBoxStatus, payload.hostname)
+    if row is None:
+        row = FtpBoxStatus(hostname=payload.hostname)
+        session.add(row)
+    row.reported_at = _utcnow()
+    row.proftpd_active = payload.proftpd_active
+    row.ftp_port_listening = payload.ftp_port_listening
+    row.sftp_port_listening = payload.sftp_port_listening
+    row.relay_service_active = payload.relay_service_active
+    row.account_count = payload.account_count
+    row.sync_ok = payload.sync_ok
+    row.sync_message = payload.sync_message
+    session.commit()
+    session.refresh(row)
+    return row

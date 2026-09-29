@@ -221,7 +221,7 @@ before relying on it.
      ProFTPD's `mod_sql_passwd` here silently rejects those (`530
      Login incorrect`, nothing logged as an error) while the identical
      password re-hashed as `$2a$` works. Fixed in `admin_ftp.py`'s
-     `_hash_password()` (`bcrypt.gensalt(prefix=b"2a")`) -- any account
+     `hash_password()` (`bcrypt.gensalt(prefix=b"2a")`) -- any account
      created through the admin API after that fix landed already gets
      a compatible hash; nothing to do by hand for new accounts.
 
