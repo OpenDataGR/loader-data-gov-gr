@@ -1,0 +1,11 @@
+name: Check FTP accounts (one-off)
+on:
+  workflow_dispatch:
+jobs:
+  check:
+    runs-on: [self-hosted, loader]
+    steps:
+      - name: List current FTP accounts (admin key read locally, never logged)
+        run: |
+          admin_key=$(sudo grep '^LOADER_ADMIN_API_KEY=' /etc/loader-data-gov-gr.env | cut -d= -f2-)
+          curl -sS -H "X-Admin-Key: $admin_key" http://127.0.0.1:5002/admin/ftp-accounts
