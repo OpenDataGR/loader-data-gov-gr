@@ -178,7 +178,8 @@
         {% if errors.sftp_connect_timeout_s %}<div class="error">{{ errors.sftp_connect_timeout_s }}</div>{% endif %}
 
         <label for="sftp_max_file_size_bytes">Max file size (bytes)</label>
-        <input type="number" class="small" id="sftp_max_file_size_bytes" name="sftp_max_file_size_bytes" value="{{ data.get('sftp_max_file_size_bytes', 20971520) }}">
+        <input type="number" class="small" id="sftp_max_file_size_bytes" name="sftp_max_file_size_bytes" value="{{ data.get('sftp_max_file_size_bytes', 20971520) }}" oninput="updateHumanSize('sftp_max_file_size_bytes')">
+        <span class="muted" id="sftp_max_file_size_bytes_human"></span>
         {% if errors.sftp_max_file_size_bytes %}<div class="error">{{ errors.sftp_max_file_size_bytes }}</div>{% endif %}
       </fieldset>
 
@@ -214,7 +215,8 @@
         {% if errors.ftp_connect_timeout_s %}<div class="error">{{ errors.ftp_connect_timeout_s }}</div>{% endif %}
 
         <label for="ftp_max_file_size_bytes">Max file size (bytes)</label>
-        <input type="number" class="small" id="ftp_max_file_size_bytes" name="ftp_max_file_size_bytes" value="{{ data.get('ftp_max_file_size_bytes', 20971520) }}">
+        <input type="number" class="small" id="ftp_max_file_size_bytes" name="ftp_max_file_size_bytes" value="{{ data.get('ftp_max_file_size_bytes', 20971520) }}" oninput="updateHumanSize('ftp_max_file_size_bytes')">
+        <span class="muted" id="ftp_max_file_size_bytes_human"></span>
         {% if errors.ftp_max_file_size_bytes %}<div class="error">{{ errors.ftp_max_file_size_bytes }}</div>{% endif %}
       </fieldset>
 
@@ -225,7 +227,8 @@
           API key and an upload URL to push files to instead of us connecting out to fetch them.
         </p>
         <label for="push_max_file_size_bytes">Max file size (bytes)</label>
-        <input type="number" class="small" id="push_max_file_size_bytes" name="push_max_file_size_bytes" value="{{ data.get('push_max_file_size_bytes', 20971520) }}">
+        <input type="number" class="small" id="push_max_file_size_bytes" name="push_max_file_size_bytes" value="{{ data.get('push_max_file_size_bytes', 20971520) }}" oninput="updateHumanSize('push_max_file_size_bytes')">
+        <span class="muted" id="push_max_file_size_bytes_human"></span>
         {% if errors.push_max_file_size_bytes %}<div class="error">{{ errors.push_max_file_size_bytes }}</div>{% endif %}
       </fieldset>
 
@@ -264,6 +267,26 @@
         document.getElementById('auth-' + name).style.display = (name === a) ? '' : 'none';
       });
     }
+    function formatBytesHuman(bytes) {
+      if (!isFinite(bytes) || bytes < 0) return '';
+      if (bytes < 1024) return bytes + ' B';
+      var units = ['KB', 'MB', 'GB', 'TB'];
+      var value = bytes;
+      var unit = 'B';
+      for (var i = 0; i < units.length; i++) {
+        value = value / 1024;
+        unit = units[i];
+        if (value < 1024) break;
+      }
+      var rounded = value >= 10 ? Math.round(value) : Math.round(value * 10) / 10;
+      return '≈ ' + rounded + ' ' + unit;
+    }
+    function updateHumanSize(inputId) {
+      var input = document.getElementById(inputId);
+      var span = document.getElementById(inputId + '_human');
+      if (input && span) span.textContent = formatBytesHuman(parseInt(input.value, 10));
+    }
+    ['sftp_max_file_size_bytes', 'ftp_max_file_size_bytes', 'push_max_file_size_bytes'].forEach(updateHumanSize);
     showTransportFields();
     showAuthFields();
   </script>
