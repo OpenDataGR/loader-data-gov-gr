@@ -60,7 +60,7 @@
     {% else %}
       <table>
         <thead>
-          <tr><th>Username</th><th>Home directory</th><th>Protocol</th><th>Status</th><th></th></tr>
+          <tr><th>Username</th><th>Home directory</th><th>Protocol</th><th>Status</th><th>Forwards to</th><th></th></tr>
         </thead>
         <tbody>
           {% for a in accounts %}
@@ -69,6 +69,16 @@
             <td class="muted">{{ a.home_directory }}</td>
             <td>{{ macros.transport_badge(a.protocol) }}</td>
             <td>{% if a.enabled %}<span class="badge badge-active">{{ macros.icon("active", 13) }}<span>enabled</span></span>{% else %}<span class="badge badge-paused">{{ macros.icon("paused", 13) }}<span>disabled</span></span>{% endif %}</td>
+            <td>
+              <form class="inline" method="post" action="/admin/ftp/{{ a.id }}/forward-target">
+                <select name="push_target_source_name" class="small" onchange="this.form.requestSubmit()">
+                  <option value=""{{ " selected" if not a.push_target_source_name else "" }}>(none)</option>
+                  {% for s in push_sources %}
+                    <option value="{{ s.name }}"{{ " selected" if a.push_target_source_name == s.name else "" }}>{{ s.title }} ({{ s.status }})</option>
+                  {% endfor %}
+                </select>
+              </form>
+            </td>
             <td style="white-space:nowrap;">
               <form class="inline" method="post" action="/admin/ftp/{{ a.id }}/rotate-password">
                 <button type="submit" class="btn-sm btn-secondary">{{ macros.icon("queue", 14) }} Rotate password</button>
@@ -106,6 +116,14 @@
           <option value="ftps" selected>ftps</option>
           <option value="ftp">ftp</option>
           <option value="sftp">sftp</option>
+        </select>
+
+        <label for="push_target_source_name">Forwards to (push-mode source)</label>
+        <select id="push_target_source_name" name="push_target_source_name">
+          <option value="">(set later)</option>
+          {% for s in push_sources %}
+            <option value="{{ s.name }}">{{ s.title }} ({{ s.status }})</option>
+          {% endfor %}
         </select>
 
         <div style="margin-top:1.2rem;">

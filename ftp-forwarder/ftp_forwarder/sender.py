@@ -1,11 +1,13 @@
-"""Sends one already-completed file to loader's push-ingest endpoint
-(``POST /push/{source_name}/upload``), with retry-with-backoff on a
-transient failure -- and archives it locally only after a *confirmed*
-success. A failed send must leave the file exactly where it was found,
-never silently lose it: the next catch-up sweep (``sweep.py``) will
-find it again and retry, same "a failed attempt is exactly as valid a
-result as a successful one, and must never disappear" discipline the
-loader app itself already applies to its own harvest runs.
+"""Sends one already-completed file to loader's trusted-relay ingest
+endpoint (``POST /admin/ftp-relay/{username}/upload`` -- see
+``providerharvest_service/ftp_relay_ingest.py`` on loader's side),
+with retry-with-backoff on a transient failure -- and archives it
+locally only after a *confirmed* success. A failed send must leave the
+file exactly where it was found, never silently lose it: the next
+catch-up sweep (``sweep.py``) will find it again and retry, same "a
+failed attempt is exactly as valid a result as a successful one, and
+must never disappear" discipline the loader app itself already applies
+to its own harvest runs.
 """
 
 from __future__ import annotations
@@ -17,7 +19,8 @@ import time
 
 import requests
 
-from ftp_forwarder.config import AccountConfig, ForwarderConfig
+from ftp_forwarder.accounts import RelayAccount
+from ftp_forwarder.config import ForwarderConfig
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +32,8 @@ class SendError(RuntimeError):
 def send_file(
     session: requests.Session,
     base_url: str,
-    account: AccountConfig,
+    sync_key: str,
+    account: RelayAccount,
     file_path: pathlib.Path,
     *,
     max_retries: int = 5,
@@ -39,14 +43,14 @@ def send_file(
 ) -> None:
     """Raises ``SendError`` once every retry is exhausted -- never
     swallowed here, the caller decides what happens next. A 4xx
-    response (wrong key, unknown/inactive source, file too large)
-    stops immediately rather than retrying: that request will never
-    succeed no matter how many times it's repeated, so retrying it
-    would only waste time and mask the real problem. A 5xx or a
-    network-level failure is treated as transient and retried with
-    exponential backoff.
+    response (unknown account, no forwarding target configured, target
+    source not active, file too large) stops immediately rather than
+    retrying: that request will never succeed no matter how many times
+    it's repeated, so retrying it would only waste time and mask the
+    real problem. A 5xx or a network-level failure is treated as
+    transient and retried with exponential backoff.
     """
-    url = "%s/push/%s/upload" % (base_url.rstrip("/"), account.source_name)
+    url = "%s/admin/ftp-relay/%s/upload" % (base_url.rstrip("/"), account.username)
     last_error: SendError | None = None
     for attempt in range(1, max_retries + 1):
         try:
@@ -54,7 +58,7 @@ def send_file(
                 resp = session.post(
                     url,
                     files={"file": (file_path.name, fh)},
-                    headers={"X-Api-Key": account.api_key()},
+                    headers={"X-Ftp-Sync-Key": sync_key},
                     timeout=timeout_s,
                 )
         except requests.RequestException as exc:
@@ -91,7 +95,7 @@ def archive_file(file_path: pathlib.Path, archive_subdir: str, *, now=None) -> p
 def process_one(
     session: requests.Session,
     config: ForwarderConfig,
-    account: AccountConfig,
+    account: RelayAccount,
     file_path: pathlib.Path,
 ) -> bool:
     """Returns True if the file was actually sent and archived, False
@@ -102,7 +106,7 @@ def process_one(
     if not file_path.is_file():
         return False
     send_file(
-        session, config.loader_base_url, account, file_path,
+        session, config.loader_base_url, config.sync_key, account, file_path,
         max_retries=config.max_retries, backoff_s=config.retry_backoff_s,
     )
     archive_file(file_path, config.archive_subdir)

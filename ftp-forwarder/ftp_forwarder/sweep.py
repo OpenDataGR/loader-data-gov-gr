@@ -17,20 +17,27 @@ from __future__ import annotations
 import logging
 import pathlib
 
-from ftp_forwarder.config import ForwarderConfig
+from ftp_forwarder.accounts import RelayAccount
 from ftp_forwarder.pool import ForwarderPool
 
 logger = logging.getLogger(__name__)
 
 
-def catch_up_sweep(pool: ForwarderPool, config: ForwarderConfig) -> int:
+def catch_up_sweep(pool: ForwarderPool, accounts: tuple[RelayAccount, ...]) -> int:
     """Returns how many files were newly submitted (already-in-flight
-    files, see ``ForwarderPool.submit``, don't count twice)."""
+    files, see ``ForwarderPool.submit``, don't count twice). Takes the
+    current account list as a parameter rather than reading it from a
+    static config -- the caller (``watcher.py``) re-derives it from
+    this box's local account database on every cycle, since the
+    account list itself can change over time, unlike everything else
+    in ``ForwarderConfig``."""
     submitted = 0
-    for account in config.accounts:
+    for account in accounts:
         watch_dir = pathlib.Path(account.watch_dir)
         if not watch_dir.is_dir():
-            logger.warning("account %s: watch_dir %s does not exist, skipping this sweep", account.name, watch_dir)
+            logger.warning(
+                "account %s: watch_dir %s does not exist, skipping this sweep", account.username, watch_dir
+            )
             continue
         for path in watch_dir.iterdir():
             if not path.is_file():

@@ -3,9 +3,20 @@ Description=loader-ftp-forwarder (file relay: watches FTP/SFTP uploads, forwards
 After=network.target
 
 [Service]
+# Not root: this process handles arbitrary content uploaded by
+# external providers (higher exposure than the account-sync service,
+# which only ever handles data loader's own admin API already trusted)
+# -- localadmin is a member of the virtualftp group instead, which is
+# enough to read the shared sync key and the local accounts database,
+# and to read/write inside every provider's /srv/ftp/<provider>
+# directory (see provision-ftp-box.yml's own group/permission setup).
 User=localadmin
 WorkingDirectory=/opt/data-projects/loader-ftp-forwarder/ftp-forwarder
-ExecStart=/opt/data-projects/loader-ftp-forwarder/ftp-forwarder/.venv/bin/ftp-forwarder /etc/ftp-forwarder/config.yml
+ExecStart=/opt/data-projects/loader-ftp-forwarder/ftp-forwarder/.venv/bin/ftp-forwarder \
+  --loader-base-url https://loader.data.gov.gr \
+  --sync-key-file /etc/ftp-forwarder/secrets/ftp-sync.key \
+  --accounts-db-path /etc/proftpd/ftp-accounts.db \
+  --catch-up-interval-s 60
 Restart=always
 
 [Install]

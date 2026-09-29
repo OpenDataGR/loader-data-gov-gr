@@ -4,7 +4,8 @@ import pathlib
 import pytest
 import requests
 
-from ftp_forwarder.config import AccountConfig, ForwarderConfig
+from ftp_forwarder.accounts import RelayAccount
+from ftp_forwarder.config import ForwarderConfig
 from ftp_forwarder.sender import SendError, archive_file, process_one, send_file
 
 
@@ -27,18 +28,12 @@ class FakeSession:
         return item
 
 
-def _account(tmp_path, **overrides) -> AccountConfig:
-    key_file = tmp_path / "acme.key"
-    key_file.write_text("the-api-key", encoding="utf-8")
-    defaults = dict(
-        name="acme", watch_dir=tmp_path / "watch", source_name="acme-push", api_key_file=key_file,
-    )
-    defaults.update(overrides)
-    return AccountConfig(**defaults)
+def _account(tmp_path, name="acme") -> RelayAccount:
+    return RelayAccount(username=name, watch_dir=tmp_path / "watch")
 
 
 def _config(**overrides) -> ForwarderConfig:
-    defaults = dict(loader_base_url="https://loader.data.gov.gr", accounts=())
+    defaults = dict(loader_base_url="https://loader.data.gov.gr", sync_key="the-sync-key")
     defaults.update(overrides)
     return ForwarderConfig(**defaults)
 
@@ -54,12 +49,12 @@ def test_send_file_succeeds_on_the_first_try(tmp_path):
     file_path = _file(tmp_path)
     session = FakeSession([FakeResponse(200)])
 
-    send_file(session, "https://loader.data.gov.gr", account, file_path, sleep=lambda s: None)
+    send_file(session, "https://loader.data.gov.gr", "the-sync-key", account, file_path, sleep=lambda s: None)
 
     assert len(session.calls) == 1
     call = session.calls[0]
-    assert call["url"] == "https://loader.data.gov.gr/push/acme-push/upload"
-    assert call["headers"]["X-Api-Key"] == "the-api-key"
+    assert call["url"] == "https://loader.data.gov.gr/admin/ftp-relay/acme/upload"
+    assert call["headers"]["X-Ftp-Sync-Key"] == "the-sync-key"
 
 
 def test_send_file_strips_a_trailing_slash_from_base_url(tmp_path):
@@ -67,9 +62,9 @@ def test_send_file_strips_a_trailing_slash_from_base_url(tmp_path):
     file_path = _file(tmp_path)
     session = FakeSession([FakeResponse(200)])
 
-    send_file(session, "https://loader.data.gov.gr/", account, file_path, sleep=lambda s: None)
+    send_file(session, "https://loader.data.gov.gr/", "the-sync-key", account, file_path, sleep=lambda s: None)
 
-    assert session.calls[0]["url"] == "https://loader.data.gov.gr/push/acme-push/upload"
+    assert session.calls[0]["url"] == "https://loader.data.gov.gr/admin/ftp-relay/acme/upload"
 
 
 def test_send_file_retries_a_5xx_then_succeeds(tmp_path):
@@ -78,7 +73,7 @@ def test_send_file_retries_a_5xx_then_succeeds(tmp_path):
     session = FakeSession([FakeResponse(503), FakeResponse(200)])
     sleeps = []
 
-    send_file(session, "https://loader.data.gov.gr", account, file_path, sleep=sleeps.append)
+    send_file(session, "https://loader.data.gov.gr", "the-sync-key", account, file_path, sleep=sleeps.append)
 
     assert len(session.calls) == 2
     assert len(sleeps) == 1
@@ -89,7 +84,7 @@ def test_send_file_retries_a_network_error_then_succeeds(tmp_path):
     file_path = _file(tmp_path)
     session = FakeSession([requests.ConnectionError("boom"), FakeResponse(200)])
 
-    send_file(session, "https://loader.data.gov.gr", account, file_path, sleep=lambda s: None)
+    send_file(session, "https://loader.data.gov.gr", "the-sync-key", account, file_path, sleep=lambda s: None)
 
     assert len(session.calls) == 2
 
@@ -100,7 +95,10 @@ def test_send_file_gives_up_after_max_retries(tmp_path):
     session = FakeSession([FakeResponse(503)] * 3)
 
     with pytest.raises(SendError):
-        send_file(session, "https://loader.data.gov.gr", account, file_path, max_retries=3, sleep=lambda s: None)
+        send_file(
+            session, "https://loader.data.gov.gr", "the-sync-key", account, file_path,
+            max_retries=3, sleep=lambda s: None,
+        )
 
     assert len(session.calls) == 3
 
@@ -108,10 +106,13 @@ def test_send_file_gives_up_after_max_retries(tmp_path):
 def test_send_file_does_not_retry_a_4xx(tmp_path):
     account = _account(tmp_path)
     file_path = _file(tmp_path)
-    session = FakeSession([FakeResponse(401, "invalid API key")])
+    session = FakeSession([FakeResponse(401, "invalid sync key")])
 
     with pytest.raises(SendError, match="401"):
-        send_file(session, "https://loader.data.gov.gr", account, file_path, max_retries=5, sleep=lambda s: None)
+        send_file(
+            session, "https://loader.data.gov.gr", "the-sync-key", account, file_path,
+            max_retries=5, sleep=lambda s: None,
+        )
 
     # Only one call -- a 4xx will never succeed on retry, so it must not
     # be retried at all.
@@ -133,7 +134,7 @@ def test_process_one_sends_and_archives_on_success(tmp_path):
     account = _account(tmp_path)
     file_path = _file(tmp_path)
     session = FakeSession([FakeResponse(200)])
-    config = _config(accounts=(account,))
+    config = _config()
 
     sent = process_one(session, config, account, file_path)
 
@@ -147,7 +148,7 @@ def test_process_one_skips_a_path_that_is_not_a_real_file(tmp_path):
     account = _account(tmp_path)
     missing = tmp_path / "does-not-exist.csv"
     session = FakeSession([])
-    config = _config(accounts=(account,))
+    config = _config()
 
     sent = process_one(session, config, account, missing)
 
@@ -159,7 +160,7 @@ def test_process_one_leaves_the_file_in_place_on_failure(tmp_path):
     account = _account(tmp_path)
     file_path = _file(tmp_path)
     session = FakeSession([FakeResponse(500)] * 5)
-    config = _config(accounts=(account,), retry_backoff_s=0.001)  # keep the test fast
+    config = _config(retry_backoff_s=0.001)  # keep the test fast
 
     with pytest.raises(SendError):
         process_one(session, config, account, file_path)

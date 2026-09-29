@@ -20,7 +20,8 @@ import threading
 import requests
 
 from ftp_forwarder import sender
-from ftp_forwarder.config import AccountConfig, ForwarderConfig
+from ftp_forwarder.accounts import RelayAccount
+from ftp_forwarder.config import ForwarderConfig
 
 logger = logging.getLogger(__name__)
 
@@ -39,20 +40,20 @@ class ForwarderPool:
         self._in_flight: set[pathlib.Path] = set()
         self._in_flight_lock = threading.Lock()
 
-    def submit(self, account: AccountConfig, file_path: pathlib.Path) -> concurrent.futures.Future | None:
+    def submit(self, account: RelayAccount, file_path: pathlib.Path) -> concurrent.futures.Future | None:
         with self._in_flight_lock:
             if file_path in self._in_flight:
                 return None
             self._in_flight.add(file_path)
         return self._executor.submit(self._handle, account, file_path)
 
-    def _handle(self, account: AccountConfig, file_path: pathlib.Path) -> None:
+    def _handle(self, account: RelayAccount, file_path: pathlib.Path) -> None:
         try:
             sent = sender.process_one(self._session, self._config, account, file_path)
             if sent:
-                logger.info("sent %s (account=%s)", file_path, account.name)
+                logger.info("sent %s (account=%s)", file_path, account.username)
         except sender.SendError as exc:
-            logger.error("failed to send %s (account=%s): %s", file_path, account.name, exc)
+            logger.error("failed to send %s (account=%s): %s", file_path, account.username, exc)
         finally:
             with self._in_flight_lock:
                 self._in_flight.discard(file_path)

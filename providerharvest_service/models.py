@@ -42,6 +42,16 @@ class FtpAccount(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
 
+    # Which push-mode ProviderSource.name this account's uploaded files
+    # get forwarded to by the remote relay box (see
+    # ftp_relay_ingest.py) -- nullable, since an account can exist
+    # before its forwarding target is decided. Set via the admin panel
+    # only; the relay box itself never needs to know or hold a
+    # per-source credential for this, it authenticates as itself (the
+    # same LOADER_FTP_SYNC_KEY it already has) and this mapping is
+    # looked up server-side.
+    push_target_source_name: Mapped[str | None] = mapped_column(String, nullable=True)
+
     allowed_ips: Mapped[list["FtpAllowedIp"]] = relationship(
         back_populates="account", cascade="all, delete-orphan"
     )

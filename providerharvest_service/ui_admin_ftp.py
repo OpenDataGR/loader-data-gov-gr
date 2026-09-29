@@ -28,7 +28,7 @@ from __future__ import annotations
 import datetime
 from urllib.parse import urlencode, urlparse
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
@@ -40,9 +40,10 @@ from providerharvest_service.admin_ftp import (
     FtpAccountCreate,
     generate_password,
     hash_password,
+    validate_push_target,
 )
 from providerharvest_service.db import get_session
-from providerharvest_service.models import FtpAccount, FtpBoxStatus
+from providerharvest_service.models import FtpAccount, FtpBoxStatus, ProviderSource
 
 router = APIRouter(prefix="/admin/ftp", tags=["ftp-ui"])
 templates = Jinja2Templates(directory="providerharvest_service/templates")
@@ -73,6 +74,9 @@ def _utcnow() -> datetime.datetime:
 def ftp_overview(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
     accounts = list(session.scalars(select(FtpAccount)).all())
     boxes = list(session.scalars(select(FtpBoxStatus)).all())
+    push_sources = list(
+        session.scalars(select(ProviderSource).where(ProviderSource.transport_type == "push")).all()
+    )
     now = _utcnow()
     for box in boxes:
         reported_at = box.reported_at
@@ -85,6 +89,7 @@ def ftp_overview(request: Request, session: Session = Depends(get_session)) -> H
         {
             "accounts": accounts,
             "boxes": boxes,
+            "push_sources": push_sources,
             "flash": request.query_params.get("flash"),
             "flash_kind": request.query_params.get("flash_kind", "success"),
         },
@@ -94,11 +99,13 @@ def ftp_overview(request: Request, session: Session = Depends(get_session)) -> H
 @router.post("/accounts", response_class=HTMLResponse)
 async def create_account(request: Request, session: Session = Depends(get_session)):
     form = await request.form()
+    push_target = form.get("push_target_source_name") or None
     try:
         payload = FtpAccountCreate(
             username=form.get("username", ""),
             home_directory=form.get("home_directory", ""),
             protocol=form.get("protocol", "ftps"),
+            push_target_source_name=push_target,
         )
     except ValidationError as exc:
         message = "; ".join(err["msg"] for err in exc.errors())
@@ -109,6 +116,10 @@ async def create_account(request: Request, session: Session = Depends(get_sessio
             _came_from(request, "Username %r already in use." % payload.username, kind="error"),
             status_code=303,
         )
+    try:
+        validate_push_target(session, payload.push_target_source_name)
+    except HTTPException as exc:
+        return RedirectResponse(_came_from(request, exc.detail, kind="error"), status_code=303)
 
     password = generate_password()
     account = FtpAccount(
@@ -116,6 +127,7 @@ async def create_account(request: Request, session: Session = Depends(get_sessio
         password_hash=hash_password(password),
         home_directory=payload.home_directory,
         protocol=payload.protocol,
+        push_target_source_name=payload.push_target_source_name,
     )
     session.add(account)
     session.commit()
@@ -126,6 +138,29 @@ async def create_account(request: Request, session: Session = Depends(get_sessio
         "admin/ftp_password_reveal.html",
         {"username": account.username, "password": password, "action": "created"},
     )
+
+
+@router.post("/{account_id}/forward-target")
+async def set_forward_target(request: Request, account_id: str, session: Session = Depends(get_session)):
+    account = session.get(FtpAccount, account_id)
+    if account is None:
+        return RedirectResponse(_came_from(request, "No such account.", kind="error"), status_code=303)
+
+    form = await request.form()
+    push_target = form.get("push_target_source_name") or None
+    try:
+        validate_push_target(session, push_target)
+    except HTTPException as exc:
+        return RedirectResponse(_came_from(request, exc.detail, kind="error"), status_code=303)
+
+    account.push_target_source_name = push_target
+    session.commit()
+    message = (
+        "Account %r now forwards to %r." % (account.username, push_target)
+        if push_target
+        else "Account %r's forwarding target cleared." % account.username
+    )
+    return RedirectResponse(_came_from(request, message), status_code=303)
 
 
 @router.post("/{account_id}/rotate-password", response_class=HTMLResponse)

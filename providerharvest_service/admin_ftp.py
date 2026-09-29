@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from providerharvest_service.admin_auth import require_admin_key, require_ftp_sync_key
 from providerharvest_service.db import get_session
-from providerharvest_service.models import FtpAccount, FtpAllowedIp, FtpBoxStatus
+from providerharvest_service.models import FtpAccount, FtpAllowedIp, FtpBoxStatus, ProviderSource
 
 
 def _utcnow() -> datetime.datetime:
@@ -82,6 +82,10 @@ class FtpAccountCreate(BaseModel):
     username: str
     home_directory: str
     protocol: Protocol = "ftps"
+    # Which push-mode ProviderSource this account's uploads should be
+    # forwarded to, if already known -- optional, can also be set (or
+    # changed) later via the dedicated forward-target endpoint below.
+    push_target_source_name: str | None = None
 
     @field_validator("username")
     @classmethod
@@ -101,6 +105,14 @@ class FtpAccountCreate(BaseModel):
 class FtpAccountUpdate(BaseModel):
     enabled: bool | None = None
     protocol: Protocol | None = None
+
+
+class ForwardTargetUpdate(BaseModel):
+    # Required, not optional-with-None-meaning-unchanged like the
+    # fields on FtpAccountUpdate above: None here is a real, distinct
+    # value (explicitly clear the mapping), so it can't share that
+    # "absent means leave alone" convention.
+    push_target_source_name: str | None
 
 
 class AllowedIpCreate(BaseModel):
@@ -129,6 +141,7 @@ class FtpAccountOut(BaseModel):
     home_directory: str
     protocol: str
     enabled: bool
+    push_target_source_name: str | None
     allowed_ips: list[AllowedIpOut]
 
     model_config = {"from_attributes": True}
@@ -173,12 +186,31 @@ def _get_account_or_404(session: Session, account_id: str) -> FtpAccount:
     return account
 
 
+def validate_push_target(session: Session, source_name: str | None) -> None:
+    """Light, config-time check only -- existence and transport_type,
+    not ``status``: an admin may reasonably wire up the mapping before
+    the push-mode source is actually activated. The real, load-bearing
+    check (source exists AND is active) happens at relay-upload time in
+    ftp_relay_ingest.py, where a rejection just means the box's next
+    retry-with-backoff eventually succeeds once the source goes active,
+    not a hard failure here."""
+    if source_name is None:
+        return
+    source = session.scalar(select(ProviderSource).where(ProviderSource.name == source_name))
+    if source is None or source.transport_type != "push":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "no push-mode source named %r" % source_name,
+        )
+
+
 @router.post("", response_model=FtpAccountCreated, status_code=status.HTTP_201_CREATED)
 def create_ftp_account(
     payload: FtpAccountCreate, session: Session = Depends(get_session)
 ) -> FtpAccountCreated:
     if session.scalar(select(FtpAccount).where(FtpAccount.username == payload.username)):
         raise HTTPException(status.HTTP_409_CONFLICT, "username already in use")
+    validate_push_target(session, payload.push_target_source_name)
 
     password = generate_password()
     account = FtpAccount(
@@ -186,6 +218,7 @@ def create_ftp_account(
         password_hash=hash_password(password),
         home_directory=payload.home_directory,
         protocol=payload.protocol,
+        push_target_source_name=payload.push_target_source_name,
     )
     session.add(account)
     session.commit()
@@ -214,6 +247,18 @@ def update_ftp_account(
         account.enabled = payload.enabled
     if payload.protocol is not None:
         account.protocol = payload.protocol
+    session.commit()
+    session.refresh(account)
+    return account
+
+
+@router.patch("/{account_id}/forward-target", response_model=FtpAccountOut)
+def set_forward_target(
+    account_id: str, payload: ForwardTargetUpdate, session: Session = Depends(get_session)
+) -> FtpAccount:
+    account = _get_account_or_404(session, account_id)
+    validate_push_target(session, payload.push_target_source_name)
+    account.push_target_source_name = payload.push_target_source_name
     session.commit()
     session.refresh(account)
     return account

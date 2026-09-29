@@ -1,7 +1,10 @@
+import base64
+import os
+
 import pytest
 from fastapi.testclient import TestClient
 
-from providerharvest_service import admin_auth, db
+from providerharvest_service import admin_auth, db, provider_sources
 from providerharvest_service.app import app
 
 ADMIN_KEY = "test-admin-key"
@@ -11,6 +14,16 @@ AUTH_HEADERS = {"X-Admin-Key": ADMIN_KEY}
 @pytest.fixture(autouse=True)
 def _admin_key(monkeypatch):
     monkeypatch.setenv("LOADER_ADMIN_API_KEY", ADMIN_KEY)
+
+
+@pytest.fixture(autouse=True)
+def _master_key(monkeypatch):
+    # Only needed by the tests below that register a real push-mode
+    # ProviderSource to use as a forwarding target -- envelope
+    # encryption still touches every source's (even a push source's
+    # empty) credential bundle.
+    key = base64.b64encode(os.urandom(32)).decode()
+    monkeypatch.setenv("CKAN_PROVIDERHARVEST_MASTER_KEY", key)
 
 
 @pytest.fixture(autouse=True)
@@ -214,6 +227,89 @@ def test_deleting_account_cascades_allowed_ips(client):
     # Re-creating the same account name must work -- nothing orphaned.
     resp = _create(client)
     assert resp.status_code == 201
+
+
+# -- forwarding an account's uploads to a push-mode source -----------------
+
+
+def _register_push_source(session_factory, name="acme-push"):
+    with session_factory() as session:
+        source = provider_sources.register(
+            session, {"name": name, "title": name, "transport_type": "push", "frequency": "MANUAL"}
+        )
+        return source.id
+
+
+def test_create_rejects_an_unknown_forward_target(client):
+    resp = _create(client, push_target_source_name="no-such-source")
+    assert resp.status_code == 400
+
+
+def test_create_rejects_a_non_push_source_as_forward_target(client, _isolated_db):
+    with _isolated_db() as session:
+        provider_sources.register(session, {
+            "name": "acme-http", "title": "t", "endpoint_url": "https://example.gr/api",
+            "transport_type": "http", "auth_type": "api_key", "api_key": "k",
+        })
+    resp = _create(client, push_target_source_name="acme-http")
+    assert resp.status_code == 400
+
+
+def test_create_accepts_a_valid_push_source_as_forward_target(client, _isolated_db):
+    _register_push_source(_isolated_db)
+    resp = _create(client, push_target_source_name="acme-push")
+    assert resp.status_code == 201
+    assert resp.json()["push_target_source_name"] == "acme-push"
+
+
+def test_forward_target_defaults_to_none(client):
+    resp = _create(client)
+    assert resp.json()["push_target_source_name"] is None
+
+
+def test_set_forward_target_updates_an_existing_account(client, _isolated_db):
+    _register_push_source(_isolated_db)
+    account_id = _create(client).json()["id"]
+
+    resp = client.patch(
+        "/admin/ftp-accounts/%s/forward-target" % account_id,
+        json={"push_target_source_name": "acme-push"},
+        headers=AUTH_HEADERS,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["push_target_source_name"] == "acme-push"
+
+
+def test_set_forward_target_can_clear_it(client, _isolated_db):
+    _register_push_source(_isolated_db)
+    account_id = _create(client, push_target_source_name="acme-push").json()["id"]
+
+    resp = client.patch(
+        "/admin/ftp-accounts/%s/forward-target" % account_id,
+        json={"push_target_source_name": None},
+        headers=AUTH_HEADERS,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["push_target_source_name"] is None
+
+
+def test_set_forward_target_rejects_an_unknown_source(client):
+    account_id = _create(client).json()["id"]
+    resp = client.patch(
+        "/admin/ftp-accounts/%s/forward-target" % account_id,
+        json={"push_target_source_name": "no-such-source"},
+        headers=AUTH_HEADERS,
+    )
+    assert resp.status_code == 400
+
+
+def test_set_forward_target_404s_for_an_unknown_account(client):
+    resp = client.patch(
+        "/admin/ftp-accounts/does-not-exist/forward-target",
+        json={"push_target_source_name": None},
+        headers=AUTH_HEADERS,
+    )
+    assert resp.status_code == 404
 
 
 # -- the remote-box sync endpoint, gated by its own separate key ----------

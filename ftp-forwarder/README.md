@@ -1,9 +1,11 @@
 # ftp-forwarder
 
 Relays files pushed via FTP/SFTP into
-[`loader-data-gov-gr`](../README.md)'s own HTTPS push-ingest endpoint
-(`POST /push/{source_name}/upload`), and keeps a local ProFTPD
-instance's account database in sync with loader's own admin panel.
+[`loader-data-gov-gr`](../README.md)'s own trusted-relay ingest
+endpoint (`POST /admin/ftp-relay/{username}/upload` -- see
+`providerharvest_service/ftp_relay_ingest.py` on loader's side), and
+keeps a local ProFTPD instance's account database in sync with
+loader's own admin panel.
 
 ## Why this exists
 
@@ -19,14 +21,19 @@ endpoint any HTTPS-capable provider could call directly.
 
 ## Two independent pieces, two independent processes
 
-- **File relay** (`ftp_forwarder.cli`) -- watches each configured
-  account's directory for a completed upload (`IN_CLOSE_WRITE`, not
-  `IN_CREATE` -- see `watcher.py`'s own docstring for why that
-  distinction matters) and forwards it, with retry-with-backoff and
-  local archiving on success (see `sender.py`). A periodic catch-up
-  sweep (`sweep.py`) independently re-scans every watched directory,
-  so nothing pushed while this process wasn't running -- or that
-  failed every retry last time -- gets silently missed.
+- **File relay** (`ftp_forwarder.cli`) -- watches each account's
+  directory (discovered from this box's own local accounts database,
+  see `accounts.py` -- not a hand-maintained list, that database is
+  the exact same one account-sync below keeps current) for a completed
+  upload (`IN_CLOSE_WRITE`, not `IN_CREATE` -- see `watcher.py`'s own
+  docstring for why that distinction matters) and forwards it, with
+  retry-with-backoff and local archiving on success (see `sender.py`).
+  A periodic re-scan (`sweep.py`, same interval as the watch-set
+  refresh) independently re-checks every watched directory, so nothing
+  pushed while this process wasn't running -- or that failed every
+  retry last time -- gets silently missed, and a newly admin-created
+  account starts being watched (or a deleted one stops) within one
+  cycle, no restart needed.
 - **Account sync** (`ftp_forwarder.sync_cli`) -- periodically pulls
   loader's current FTP-account list (`GET /admin/ftp-accounts-sync`,
   gated by its own narrow `LOADER_FTP_SYNC_KEY`, never the full admin
@@ -98,42 +105,48 @@ does the rest, and stays safe to re-run any time after.
 
 ## Config
 
-`ftp_forwarder.cli` takes one YAML file:
+No YAML file, no per-provider file to hand-edit on the box at all --
+both entrypoints take their settings as CLI flags (see each one's own
+systemd unit under `deploy/` for the real, deployed invocation):
 
-```yaml
-loader_base_url: https://loader.data.gov.gr
-accounts:
-  - name: acme-provider              # a label, used only in this file/logs
-    watch_dir: /srv/ftp/acme-provider
-    source_name: acme-provider-push  # the loader push-mode source name
-    api_key_file: /etc/ftp-forwarder/secrets/acme-provider.key
-  - name: other-provider
-    watch_dir: /srv/ftp/other-provider
-    source_name: other-provider-push
-    api_key_file: /etc/ftp-forwarder/secrets/other-provider.key
+`ftp_forwarder.cli` (the file relay):
 
-# All optional -- shown here at their defaults.
-archive_subdir: .forwarded
-max_retries: 5
-retry_backoff_s: 1.0
-worker_count: 8
-catch_up_interval_s: 60
+```
+--loader-base-url https://loader.data.gov.gr
+--sync-key-file /etc/ftp-forwarder/secrets/ftp-sync.key
+--accounts-db-path /etc/proftpd/ftp-accounts.db   # same DB account-sync keeps current
+--archive-subdir .forwarded        # optional, shown at its default
+--max-retries 5                    # optional
+--retry-backoff-s 1.0               # optional
+--worker-count 8                   # optional
+--catch-up-interval-s 60           # optional -- also how often the account list itself is re-read
 ```
 
-Each account's API key lives in its own, separately
-permission-restricted (`chmod 600`) file, referenced by path -- never
-inline in this config, same "secrets live in their own restricted
-file" rule loader's own `/etc/loader-data-gov-gr.env` already follows.
-See `deploy/config.example.yml`.
+`ftp_forwarder.sync_cli` (account sync + box-health heartbeat):
 
-`ftp_forwarder.sync_cli` takes its settings as CLI flags instead (see
-`deploy/loader-ftp-forwarder-sync.service`) -- it has far fewer of
-them and no per-account structure, so a YAML file would be overkill.
-`--proftpd-unit`/`--relay-unit`/`--ftp-port`/`--sftp-port` let the
-health-check step above target different unit/port names if this ever
-runs on a box set up differently than the current one; all four
-default to match this box's own actual setup
-(`proftpd`/`loader-ftp-forwarder`/`21`/`2222`).
+```
+--loader-base-url https://loader.data.gov.gr
+--sync-key-file /etc/ftp-forwarder/secrets/ftp-sync.key
+--db-path /etc/proftpd/ftp-accounts.db
+--interval-s 60                    # optional
+--proftpd-unit proftpd             # optional
+--relay-unit loader-ftp-forwarder  # optional
+--ftp-port 21                      # optional
+--sftp-port 2222                   # optional
+```
+
+The one secret either process needs -- `LOADER_FTP_SYNC_KEY` -- lives
+in its own restricted file (`chmod 640`, owned `root:virtualftp` so
+both services can read it without either running as root; see
+`provision-ftp-box.yml`), referenced by path, same "secrets live in
+their own restricted file" rule loader's own
+`/etc/loader-data-gov-gr.env` already follows. There is deliberately no
+longer a *second*, per-provider secret on this box at all: which
+push-mode source an account's uploads go to
+(`FtpAccount.push_target_source_name`) is set once, in loader's own
+admin panel (`/admin/ftp`), and looked up server-side by
+`ftp_relay_ingest.py` when this box's shared sync key authenticates an
+upload -- see that module's own docstring for the full reasoning.
 
 ## Running the tests
 
@@ -143,10 +156,11 @@ python -m venv .venv
 ./.venv/Scripts/python.exe -m pytest tests
 ```
 
-No real inotify needed: `config.py`/`sender.py`/`pool.py`/`sweep.py`/
-`account_sync.py` are all plain, cross-platform-testable Python.
-`watcher.py` (the only genuinely Linux-specific module, needing the
-`inotify_simple` package -- install the `linux` extra to get it) is a
-thin wrapper around a well-tested OS primitive, verified for real on
-Linux by this repo's own CI (`.github/workflows/ftp-forwarder-tests.yml`,
-which runs on `ubuntu-latest`), not unit-tested directly here.
+No real inotify needed: `config.py`/`accounts.py`/`sender.py`/`pool.py`/
+`sweep.py`/`account_sync.py`/`box_health.py` are all plain,
+cross-platform-testable Python. `watcher.py` (the only genuinely
+Linux-specific module, needing the `inotify_simple` package -- install
+the `linux` extra to get it) is a thin wrapper around a well-tested OS
+primitive, verified for real on Linux by this repo's own CI
+(`.github/workflows/ftp-forwarder-tests.yml`, which runs on
+`ubuntu-latest`), not unit-tested directly here.

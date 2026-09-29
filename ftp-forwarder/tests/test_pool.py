@@ -1,7 +1,8 @@
 import threading
 import time
 
-from ftp_forwarder.config import AccountConfig, ForwarderConfig
+from ftp_forwarder.accounts import RelayAccount
+from ftp_forwarder.config import ForwarderConfig
 from ftp_forwarder.pool import ForwarderPool
 
 
@@ -24,14 +25,12 @@ class FakeSession:
         return FakeResponse(200)
 
 
-def _account(tmp_path, name="acme") -> AccountConfig:
-    key_file = tmp_path / ("%s.key" % name)
-    key_file.write_text("k", encoding="utf-8")
-    return AccountConfig(name=name, watch_dir=tmp_path, source_name=name, api_key_file=key_file)
+def _account(tmp_path, name="acme") -> RelayAccount:
+    return RelayAccount(username=name, watch_dir=tmp_path)
 
 
 def _config(**overrides) -> ForwarderConfig:
-    defaults = dict(loader_base_url="https://loader.data.gov.gr", accounts=(), retry_backoff_s=0.001)
+    defaults = dict(loader_base_url="https://loader.data.gov.gr", sync_key="the-sync-key", retry_backoff_s=0.001)
     defaults.update(overrides)
     return ForwarderConfig(**defaults)
 
@@ -39,7 +38,7 @@ def _config(**overrides) -> ForwarderConfig:
 def test_pool_processes_multiple_files_concurrently(tmp_path):
     account = _account(tmp_path)
     session = FakeSession(delay_s=0.2)
-    config = _config(accounts=(account,), worker_count=4)
+    config = _config(worker_count=4)
     pool = ForwarderPool(config, session=session)
 
     files = []
@@ -73,7 +72,7 @@ def test_pool_does_not_submit_the_same_path_twice_while_in_flight(tmp_path):
             release.wait(timeout=5)
             return FakeResponse(200)
 
-    config = _config(accounts=(account,), worker_count=4)
+    config = _config(worker_count=4)
     pool = ForwarderPool(config, session=BlockingSession())
 
     file_path = tmp_path / "f.txt"
@@ -99,7 +98,7 @@ def test_pool_one_failing_file_does_not_block_another(tmp_path):
                 return FakeResponse(500)
             return FakeResponse(200)
 
-    config = _config(accounts=(account,), worker_count=2, max_retries=1)
+    config = _config(worker_count=2, max_retries=1)
     pool = ForwarderPool(config, session=FlakySession())
 
     good = tmp_path / "good.txt"

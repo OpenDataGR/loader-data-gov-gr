@@ -5,7 +5,6 @@ description = "Relays files pushed via FTP/SFTP into loader-data-gov-gr's push-i
 requires-python = ">=3.10"
 dependencies = [
     "requests>=2.31",
-    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
