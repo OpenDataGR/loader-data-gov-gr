@@ -1,0 +1,38 @@
+name: Delete leftover test FTP account
+
+# One-off: removes the `test-provider` FtpAccount, the manual
+# proof-of-concept account created on this VM when the FTP-push
+# feature was first built and proven. It was never a real provider,
+# and it's been showing up as noise synced onto the new external
+# FTP/SFTP box too (see ftp-forwarder/README.md) since account-sync
+# pulls every enabled account indiscriminately. Deletes this workflow
+# file once confirmed removed -- same pattern as
+# check-ftp-accounts.yml.
+on:
+  workflow_dispatch:
+
+jobs:
+  delete:
+    runs-on: [self-hosted, loader]
+    steps:
+      - name: Delete test-provider (key read locally, never logged)
+        run: |
+          admin_key=$(sudo grep '^LOADER_ADMIN_API_KEY=' /etc/loader-data-gov-gr.env | cut -d= -f2-)
+          account_id="ddcab6d4-12cb-41c7-bb43-4976297f88d8"
+
+          echo "--- confirming account before delete ---"
+          curl -sS -o /tmp/before.json -w "http_code=%{http_code}\n" \
+            -H "X-Admin-Key: $admin_key" "http://127.0.0.1:5002/admin/ftp-accounts/$account_id"
+          cat /tmp/before.json; echo
+
+          echo "--- deleting ---"
+          curl -sS -o /tmp/delete.json -w "http_code=%{http_code}\n" -X DELETE \
+            -H "X-Admin-Key: $admin_key" "http://127.0.0.1:5002/admin/ftp-accounts/$account_id"
+          cat /tmp/delete.json; echo
+
+          echo "--- confirming gone (expect 404) ---"
+          curl -sS -o /tmp/after.json -w "http_code=%{http_code}\n" \
+            -H "X-Admin-Key: $admin_key" "http://127.0.0.1:5002/admin/ftp-accounts/$account_id"
+          cat /tmp/after.json; echo
+
+          rm -f /tmp/before.json /tmp/delete.json /tmp/after.json
