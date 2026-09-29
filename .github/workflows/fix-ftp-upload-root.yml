@@ -1,0 +1,24 @@
+name: Fix LOADER_FTP_UPLOAD_ROOT (one-off)
+
+# One-off: production's env file explicitly set LOADER_FTP_UPLOAD_ROOT
+# to this VM's own /srv/ftp-uploads (the original proof-of-concept
+# location, never reachable by a real provider -- this VM has no
+# public IP). Every real FtpAccount belongs to the external
+# FTP-receiving box's own /srv/ftp instead (see ftp-forwarder/README.md
+# and admin_ftp.py's own updated docstring). Not a secret -- just
+# corrects the value already in /etc/loader-data-gov-gr.env, then
+# restarts the service to pick it up.
+on:
+  workflow_dispatch:
+
+jobs:
+  fix:
+    runs-on: [self-hosted, loader]
+    steps:
+      - name: Replace the value and restart
+        run: |
+          sudo sed -i 's|^LOADER_FTP_UPLOAD_ROOT=.*|LOADER_FTP_UPLOAD_ROOT=/srv/ftp|' /etc/loader-data-gov-gr.env
+          sudo grep '^LOADER_FTP_UPLOAD_ROOT=' /etc/loader-data-gov-gr.env
+          sudo pkill -TERM -u localadmin -f "gunicorn.*providerharvest_service.app:app" || true
+          sleep 3
+          curl -sf http://127.0.0.1:5002/health && echo " -- service back up"
