@@ -109,6 +109,9 @@ before relying on it.
    LOADER_FTP_UPLOAD_ROOT=/srv/ftp-uploads
    LOADER_PUBLIC_BASE_URL=https://loader.data.gov.gr
    CKAN_PROVIDERHARVEST_MASTER_KEY=<generate with: python3 -c "import base64, os; print(base64.b64encode(os.urandom(32)).decode())">
+   LOADER_ADMIN_UI_USERNAME=<the human who logs into /admin/*>
+   LOADER_ADMIN_UI_PASSWORD_HASH=<bcrypt hash -- see admin_session.py's own docstring; never the plaintext>
+   LOADER_ADMIN_SESSION_SECRET=<generate with: python3 -c "import secrets; print(secrets.token_hex(32))">
    EOF
    sudo chown localadmin:localadmin /etc/loader-data-gov-gr.env
    sudo chmod 600 /etc/loader-data-gov-gr.env

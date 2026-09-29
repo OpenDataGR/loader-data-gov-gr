@@ -337,6 +337,11 @@
       <a href="/admin/sources/pending" class="{{ 'active' if request.url.path == '/admin/sources/pending' else '' }}">{{ macros.icon("queue", 16) }} Pending approval</a>
       <a href="/admin/sources" class="{{ 'active' if request.url.path == '/admin/sources' else '' }}">{{ macros.icon("admin", 16) }} Admin dashboard</a>
       <a href="/admin/ftp" class="{{ 'active' if request.url.path == '/admin/ftp' else '' }}">{{ macros.icon("push", 16) }} FTP subsystem</a>
+      {% if request.url.path.startswith('/admin/sources') or request.url.path.startswith('/admin/ftp') %}
+        <form method="post" action="/admin/logout" style="margin-left:auto; display:flex;">
+          <button type="submit" class="btn-secondary btn-sm" style="align-self:center;">{{ macros.icon("x", 14) }} Log out</button>
+        </form>
+      {% endif %}
     </nav>
   </div>
 

@@ -30,6 +30,11 @@ things are, and what to check before assuming something is broken.
 - `providerharvest_service/admin_ftp.py` + `admin_auth.py` -- the FTP-push
   account admin API (shared-key gated, a deliberate placeholder for real
   per-user auth).
+- `providerharvest_service/admin_session.py` -- the human-facing admin
+  HTML UI's own login gate (signed session cookie, single admin
+  username/password), separate from `admin_auth.py`'s shared API keys
+  above. Also a deliberate placeholder for the real per-user Keycloak
+  login once `auth.py`'s client is registered.
 - `providerharvest_service/db.py` + `models.py` -- SQLite, this
   service's own persistence (not CKAN's DB).
 - `deploy/` -- the real, confirmed-working VM setup (systemd, nginx,

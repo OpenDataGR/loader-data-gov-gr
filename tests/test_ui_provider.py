@@ -3,6 +3,7 @@ import io
 import os
 import re
 
+import bcrypt
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -13,11 +14,29 @@ from providerharvest_service.app import app
 from providerharvest_service.engine.transport.base import Entry, Page, Transport
 from providerharvest_service.harvest_models import HarvestBase
 
+ADMIN_USERNAME = "test-admin"
+ADMIN_PASSWORD = "test-password"
+
 
 @pytest.fixture(autouse=True)
 def _master_key(monkeypatch):
     key = base64.b64encode(os.urandom(32)).decode()
     monkeypatch.setenv("CKAN_PROVIDERHARVEST_MASTER_KEY", key)
+
+
+@pytest.fixture(autouse=True)
+def _admin_session_env(monkeypatch):
+    # Several tests here activate a source via the admin route
+    # (/admin/sources/{id}/activate) as setup, not because they're
+    # testing the admin UI itself -- now that route sits behind the
+    # session gate too, so it needs a real logged-in session the same
+    # as any other admin route.
+    monkeypatch.setenv("LOADER_ADMIN_UI_USERNAME", ADMIN_USERNAME)
+    monkeypatch.setenv(
+        "LOADER_ADMIN_UI_PASSWORD_HASH",
+        bcrypt.hashpw(ADMIN_PASSWORD.encode(), bcrypt.gensalt()).decode(),
+    )
+    monkeypatch.setenv("LOADER_ADMIN_SESSION_SECRET", "test-session-secret")
 
 
 @pytest.fixture(autouse=True)
@@ -56,8 +75,10 @@ def _isolated_harvest_db(tmp_path):
 
 
 @pytest.fixture
-def client():
-    return TestClient(app)
+def client(_admin_session_env):
+    c = TestClient(app, base_url="https://testserver")
+    c.post("/admin/login", data={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD, "next": "/admin/sources"})
+    return c
 
 
 def _valid_form(**overrides):

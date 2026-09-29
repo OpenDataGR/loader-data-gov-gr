@@ -91,7 +91,20 @@ the token-provisioning flow below exists). `home_directory` is
 validated to sit under `LOADER_FTP_UPLOAD_ROOT` (default
 `/srv/ftp-uploads`) so the admin API can't be pointed at an arbitrary
 VM path. Generated passwords are bcrypt-hashed and shown exactly once,
-at creation (or rotation) -- never returned again. `ui_admin_ftp.py`
+at creation (or rotation) -- never returned again.
+
+The admin HTML UI itself (`/admin/sources`, `/admin/ftp`) now sits
+behind a real login (`admin_session.py` -- a signed session cookie,
+single admin username/password, enforced by one ASGI middleware rather
+than a dependency repeated per route so a newly added HTML route can't
+be accidentally left ungated). A deliberate placeholder for the same
+reason the shared admin API key is: the real design is per-user
+Keycloak login, not built yet. `/provider/*` (the self-service
+registration portal) and the JSON APIs
+(`/admin/ftp-accounts*`, `/admin/ftp-box-status`, both already
+key-gated) are untouched by this -- only the two HTML UI prefixes are.
+
+`ui_admin_ftp.py`
 puts an actual HTML page on this (`/admin/ftp`, in the masthead nav)
 -- the account list plus live status for every remote FTP/SFTP-
 receiving box (see `../ftp-forwarder/README.md`): since such a box is

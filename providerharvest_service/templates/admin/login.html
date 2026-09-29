@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% import "_macros.html" as macros %}
+{% block title %}Admin login -- loader.data.gov.gr{% endblock %}
+{% block content %}
+  <div class="panel" style="max-width:360px; margin:2rem auto;">
+    <h1>Admin login</h1>
+    {% if flash %}
+      <div class="flash flash-error">{{ macros.icon("x", 16) }}{{ flash }}</div>
+    {% endif %}
+    <form method="post" action="/admin/login">
+      <input type="hidden" name="next" value="{{ next }}">
+      <label for="username">Username</label>
+      <input type="text" id="username" name="username" required autofocus autocomplete="username">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" required autocomplete="current-password">
+      <div style="margin-top:1.2rem;">
+        <button type="submit">{{ macros.icon("check", 14) }} Log in</button>
+      </div>
+    </form>
+  </div>
+{% endblock %}

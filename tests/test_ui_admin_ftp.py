@@ -1,5 +1,6 @@
 import datetime
 
+import bcrypt
 import pytest
 from fastapi.testclient import TestClient
 
@@ -7,10 +8,23 @@ from providerharvest_service import db
 from providerharvest_service.app import app
 from providerharvest_service.models import FtpBoxStatus
 
+ADMIN_USERNAME = "test-admin"
+ADMIN_PASSWORD = "test-password"
+
 
 @pytest.fixture(autouse=True)
 def _upload_root(monkeypatch):
     monkeypatch.setenv("LOADER_FTP_UPLOAD_ROOT", "/srv/ftp-uploads")
+
+
+@pytest.fixture(autouse=True)
+def _admin_session_env(monkeypatch):
+    monkeypatch.setenv("LOADER_ADMIN_UI_USERNAME", ADMIN_USERNAME)
+    monkeypatch.setenv(
+        "LOADER_ADMIN_UI_PASSWORD_HASH",
+        bcrypt.hashpw(ADMIN_PASSWORD.encode(), bcrypt.gensalt()).decode(),
+    )
+    monkeypatch.setenv("LOADER_ADMIN_SESSION_SECRET", "test-session-secret")
 
 
 @pytest.fixture(autouse=True)
@@ -31,8 +45,10 @@ def _isolated_db(tmp_path):
 
 
 @pytest.fixture
-def client():
-    return TestClient(app)
+def client(_admin_session_env):
+    c = TestClient(app, base_url="https://testserver")
+    c.post("/admin/login", data={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD, "next": "/admin/ftp"})
+    return c
 
 
 def _create_form(**overrides):

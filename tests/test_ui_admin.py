@@ -1,6 +1,7 @@
 import base64
 import os
 
+import bcrypt
 import pytest
 from fastapi.testclient import TestClient
 
@@ -8,11 +9,24 @@ from providerharvest_service import connection_check, db, provider_sources
 from providerharvest_service.app import app
 from providerharvest_service.engine.transport.base import Entry, Page, Transport
 
+ADMIN_USERNAME = "test-admin"
+ADMIN_PASSWORD = "test-password"
+
 
 @pytest.fixture(autouse=True)
 def _master_key(monkeypatch):
     key = base64.b64encode(os.urandom(32)).decode()
     monkeypatch.setenv("CKAN_PROVIDERHARVEST_MASTER_KEY", key)
+
+
+@pytest.fixture(autouse=True)
+def _admin_session_env(monkeypatch):
+    monkeypatch.setenv("LOADER_ADMIN_UI_USERNAME", ADMIN_USERNAME)
+    monkeypatch.setenv(
+        "LOADER_ADMIN_UI_PASSWORD_HASH",
+        bcrypt.hashpw(ADMIN_PASSWORD.encode(), bcrypt.gensalt()).decode(),
+    )
+    monkeypatch.setenv("LOADER_ADMIN_SESSION_SECRET", "test-session-secret")
 
 
 @pytest.fixture(autouse=True)
@@ -33,8 +47,10 @@ def _isolated_db(tmp_path):
 
 
 @pytest.fixture
-def client():
-    return TestClient(app)
+def client(_admin_session_env):
+    c = TestClient(app, base_url="https://testserver")
+    c.post("/admin/login", data={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD, "next": "/admin/sources"})
+    return c
 
 
 def _register(session_factory, **overrides):
