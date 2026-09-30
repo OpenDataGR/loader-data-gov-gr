@@ -80,6 +80,33 @@ here (the same proven, already-debugged setup loader's own
 `mod_sql`-backed virtual users, `mod_sftp` for SFTP, one account
 system, both protocols).
 
+## Protection against password guessing
+
+The FTP (21) and SFTP (2222) ports are open to the internet with no
+firewall in front (the okeanos network here is "unprotected mode"), and
+they are scanned constantly: the first day alone saw ~1,450 refused logins
+-- 88% from one address -- cycling through `root`, `admin`, `ubuntu`,
+`postgres` and the rest of the usual dictionary. None of those are real
+accounts and generated passwords are long and random, so nothing got in;
+but there was nothing stopping it either.
+
+`provision-ftp-box.yml` therefore installs **fail2ban** with a jail
+(`loader-ftp`) on the login log ProFTPD writes for both servers
+(`/var/log/proftpd/loader-auth.log`; a refused login is a `PASS 530`
+line): five refusals within ten minutes ban that address from both ports
+for an hour, doubling for each repeat offence up to a week. The workflow
+proves the filter matches a refused login (and not a successful one) on a
+made-up log before enabling it, and prints the jail's status each run.
+
+A legitimate provider who mistypes a password too often is banned like
+anyone else and waits out the hour -- or an admin can let them back in
+right away: run `provision-ftp-box.yml` with the address in its
+`unban_ip` input (it validates the value before use).
+
+Not covered, deliberately left for later: enforcing each account's
+per-account allowed-IP list on the box (stored in loader, not yet
+applied), and whether plain FTP (unencrypted) should stay open at all.
+
 ## One-time setup on the box itself
 
 `.github/workflows/provision-ftp-box.yml` (idempotent, safe to re-run)

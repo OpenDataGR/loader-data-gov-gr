@@ -18,12 +18,18 @@ name: Provision FTP box
 # the relay with zero accounts configured yet: it just idles.
 on:
   workflow_dispatch:
+    inputs:
+      unban_ip:
+        description: "Optional: an address fail2ban has banned that should be let back in (a provider who locked themselves out)"
+        required: false
+        default: ""
 
 jobs:
   provision:
     runs-on: [self-hosted, loader-ftp]
     env:
       SYNC_KEY: ${{ secrets.LOADER_FTP_SYNC_KEY }}
+      UNBAN_IP: ${{ github.event.inputs.unban_ip }}
     steps:
       - name: Pull the ftp-forwarder checkout up to date
         run: |
@@ -44,7 +50,7 @@ jobs:
       - name: Install ProFTPD (core, SQLite backend, crypto/sftp module) and Python venv support
         run: |
           sudo apt update
-          sudo apt install -y proftpd-core proftpd-mod-sqlite proftpd-mod-crypto sqlite3 python3-venv
+          sudo apt install -y proftpd-core proftpd-mod-sqlite proftpd-mod-crypto sqlite3 python3-venv fail2ban iptables
 
       - name: Enable the SQL and SFTP modules (idempotent -- no-op if already uncommented)
         run: |
@@ -185,6 +191,55 @@ jobs:
       - name: Confirm both listeners are actually up
         run: sudo ss -tlnp | grep -E ':21 |:2222 '
 
+      - name: Ban addresses that keep failing to log in (fail2ban)
+        run: |
+          # The FTP/SFTP ports are open to the whole internet with no
+          # firewall in front, and are scanned constantly (1,000+ refused
+          # root/admin logins from a single address in a day). fail2ban
+          # watches the login log ProFTPD writes for both servers
+          # (`ExtendedLog ... loader_auth`, see above): "PASS 530" is a
+          # refused login. Five within ten minutes bans that address from
+          # both ports for an hour, doubling for each repeat up to a week --
+          # short enough that a provider who mistyped a password waits out
+          # the hour, long enough to make scanning this box pointless.
+          test -f /var/log/proftpd/loader-auth.log || { echo "::error::loader-auth.log doesn't exist -- ProFTPD isn't logging logins"; exit 1; }
+
+          sudo tee /etc/fail2ban/filter.d/loader-ftp.conf > /dev/null <<'EOF'
+          [Definition]
+          failregex = ^\d+ <HOST> \S+ PASS 530\s*$
+          ignoreregex =
+          datepattern = ^{EPOCH}
+          EOF
+
+          sudo tee /etc/fail2ban/jail.d/loader-ftp.local > /dev/null <<'EOF'
+          [loader-ftp]
+          enabled = true
+          filter = loader-ftp
+          logpath = /var/log/proftpd/loader-auth.log
+          port = 21,2222
+          maxretry = 5
+          findtime = 10m
+          bantime = 1h
+          bantime.increment = true
+          bantime.factor = 2
+          bantime.maxtime = 1w
+          ignoreip = 127.0.0.1/8 ::1
+          EOF
+
+          # Prove the filter matches what ProFTPD really writes, on a made-up log:
+          # a refused login must count, a successful one and a bare USER must not.
+          now=$(date +%s)
+          printf '%s 203.0.113.9 - PASS 530\n%s 203.0.113.9 - USER 331\n%s 203.0.113.9 alice PASS 230\n' "$now" "$now" "$now" > /tmp/f2b-selftest.log
+          sudo fail2ban-regex /tmp/f2b-selftest.log loader-ftp | tee /tmp/f2b-selftest.out
+          grep -q "Failregex: 1 total" /tmp/f2b-selftest.out || { echo "::error::the fail2ban filter did not match exactly one refused login"; exit 1; }
+          rm -f /tmp/f2b-selftest.log /tmp/f2b-selftest.out
+
+          sudo systemctl enable fail2ban
+          sudo systemctl restart fail2ban
+          sleep 3
+          sudo systemctl is-active --quiet fail2ban && echo "fail2ban running" || (sudo journalctl -u fail2ban -n 30 --no-pager; exit 1)
+          sudo fail2ban-client status loader-ftp
+
       - name: Install and (re)start the file-relay service
         run: |
           # User=localadmin in the checked-in unit file is a
@@ -201,3 +256,15 @@ jobs:
           sudo systemctl restart loader-ftp-forwarder
           sleep 3
           sudo systemctl is-active --quiet loader-ftp-forwarder && echo "file-relay service running" || (sudo journalctl -u loader-ftp-forwarder -n 30 --no-pager; exit 1)
+
+      - name: Let an address back in, if one was asked for
+        run: |
+          if [ -n "$UNBAN_IP" ]; then
+            # The input is free text -- only ever pass something that looks like an address.
+            if ! printf '%s' "$UNBAN_IP" | grep -Eq '^[0-9a-fA-F:.]{2,45}$'; then
+              echo "::error::'$UNBAN_IP' does not look like an IP address"
+              exit 1
+            fi
+            sudo fail2ban-client set loader-ftp unbanip "$UNBAN_IP"
+          fi
+          sudo fail2ban-client status loader-ftp
