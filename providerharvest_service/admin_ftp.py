@@ -302,7 +302,7 @@ def sync_ftp_accounts(session: Session = Depends(get_session)) -> list[FtpAccoun
     return list(session.scalars(select(FtpAccount).where(FtpAccount.enabled.is_(True))).all())
 
 
-class FtpBoxStatusIn(BaseModel):
+class _BoxStatusFields(BaseModel):
     hostname: str
     proftpd_active: bool
     ftp_port_listening: bool
@@ -313,7 +313,19 @@ class FtpBoxStatusIn(BaseModel):
     sync_message: str | None = None
 
 
-class FtpBoxStatusOut(FtpBoxStatusIn):
+class ClientSeen(BaseModel):
+    """A provider's successful login on the box since its last report --
+    the address they connected from (see ftp-forwarder's auth_log.py)."""
+
+    username: str
+    ip: str
+
+
+class FtpBoxStatusIn(_BoxStatusFields):
+    clients: list[ClientSeen] = []
+
+
+class FtpBoxStatusOut(_BoxStatusFields):
     reported_at: datetime.datetime
 
     model_config = {"from_attributes": True}
@@ -339,6 +351,30 @@ def report_ftp_box_status(
     row.account_count = payload.account_count
     row.sync_ok = payload.sync_ok
     row.sync_message = payload.sync_message
+    for client in payload.clients:
+        _record_sender(session, client.username, client.ip)
     session.commit()
     session.refresh(row)
     return row
+
+
+def _record_sender(session: Session, username: str, ip: str) -> None:
+    """Remember where a provider last connected from, on the push source
+    their account forwards to. Best effort and silent: an address that
+    isn't one, an unknown account, or one that forwards nowhere is just
+    skipped -- a bad entry must never fail the whole heartbeat."""
+    try:
+        address = str(ipaddress.ip_address(ip))
+    except ValueError:
+        return
+    account = session.scalar(select(FtpAccount).where(FtpAccount.username == username))
+    if account is None or not account.push_target_source_name:
+        return
+    source = session.scalar(
+        select(ProviderSource).where(
+            ProviderSource.name == account.push_target_source_name,
+            ProviderSource.transport_type == "push",
+        )
+    )
+    if source is not None:
+        source.last_sender = address

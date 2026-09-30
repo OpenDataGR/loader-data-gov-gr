@@ -188,3 +188,58 @@ def test_upload_413s_for_a_file_over_the_system_wide_max_size(client, _isolated_
 
     runs_page = client.get("/provider/sources/%s/runs" % source_id)
     assert "No harvest runs yet" in runs_page.text  # rejected before any run was even created
+
+
+def _source(_isolated_db):
+    with _isolated_db() as session:
+        return provider_sources.list_all(session)[0]
+
+
+def test_an_upload_records_when_it_arrived_and_who_sent_it(client, _isolated_db):
+    _, api_key = _register_and_activate_push_source(client, _isolated_db)
+    before = _source(_isolated_db)
+    assert before.last_received_at is None and before.last_sender is None
+
+    resp = client.post(
+        "/push/acme-push/upload",
+        files={"file": ("data.csv", b"a,b\n", "text/csv")},
+        headers={"X-Api-Key": api_key, "X-Forwarded-For": "203.0.113.9:51234, 10.0.0.4"},
+    )
+    assert resp.status_code == 200
+
+    after = _source(_isolated_db)
+    assert after.last_sender == "203.0.113.9"
+    assert after.last_received_at is not None
+
+
+def test_a_forged_forwarded_for_cannot_pick_the_recorded_sender(client, _isolated_db):
+    _, api_key = _register_and_activate_push_source(client, _isolated_db)
+    client.post(
+        "/push/acme-push/upload",
+        files={"file": ("data.csv", b"a,b\n", "text/csv")},
+        headers={"X-Api-Key": api_key, "X-Forwarded-For": "1.1.1.1, 203.0.113.9:51234, 10.0.0.4"},
+    )
+    assert _source(_isolated_db).last_sender == "203.0.113.9"
+
+
+def test_an_upload_from_an_unknown_address_still_records_arrival(client, _isolated_db):
+    _, api_key = _register_and_activate_push_source(client, _isolated_db)
+    client.post(
+        "/push/acme-push/upload",
+        files={"file": ("data.csv", b"a,b\n", "text/csv")},
+        headers={"X-Api-Key": api_key},  # no proxy header, and the test client peer is not an IP
+    )
+    source = _source(_isolated_db)
+    assert source.last_received_at is not None
+    assert source.last_sender is None
+
+
+def test_a_rejected_upload_records_nothing(client, _isolated_db):
+    _register_and_activate_push_source(client, _isolated_db)
+    client.post(
+        "/push/acme-push/upload",
+        files={"file": ("data.csv", b"x", "text/csv")},
+        headers={"X-Api-Key": "wrong", "X-Forwarded-For": "203.0.113.9:1, 10.0.0.4"},
+    )
+    source = _source(_isolated_db)
+    assert source.last_received_at is None and source.last_sender is None

@@ -21,7 +21,7 @@
     {% else %}
       <table>
         <thead>
-          <tr><th>Source</th><th>Type</th><th>Endpoint</th><th>Status</th><th>Health</th><th></th></tr>
+          <tr><th>Source</th><th>Type</th><th>Endpoint / sender</th><th>Status</th><th>Health</th><th></th></tr>
         </thead>
         <tbody>
           {% for s in sources %}
@@ -29,7 +29,7 @@
             <td><div class="name-title">{{ s.title }}</div><div class="name-slug">{{ s.name }}</div></td>
             <td>{{ macros.type_badges(s) }}</td>
             <td class="muted">
-              {{ s.endpoint_url }}
+              {% if s.kind == "push" %}{{ macros.push_origin(s) }}{% else %}{{ s.endpoint_url }}{% endif %}
               {% if s.transport_type == "http" and s.status == "active" and s.proxy_enabled != False %}
                 <div class="proxy-url"><a href="/proxy/{{ s.name }}">/proxy/{{ s.name }}</a></div>
               {% endif %}

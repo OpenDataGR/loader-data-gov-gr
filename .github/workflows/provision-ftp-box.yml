@@ -127,9 +127,10 @@ jobs:
             RequireValidShell off
             DefaultRoot ~
             ExtendedLog /var/log/proftpd/loader-auth.log AUTH loader_auth
-            ExtendedLog /var/log/proftpd/loader-discovery.log ALL loader_auth
           </VirtualHost>
           EOF
+          # The all-commands log used once to see what mod_sftp records; no longer configured.
+          sudo rm -f /var/log/proftpd/loader-discovery.log
           sudo proftpd -t
 
       - name: Install the ftp-forwarder Python package

@@ -118,7 +118,13 @@ tied to the source (`FtpAccount.managed_source_id`), so approving the
 source enables the login and pausing/rejecting/deleting it disables or
 removes it. The credentials page shows the server
 (`LOADER_FTP_PUBLIC_HOST`) and ports once; the password is never stored
-in recoverable form.
+in recoverable form. A push source's row then shows where its data comes
+from and when the last file arrived (`ProviderSource.last_sender`,
+`last_received_at`): for an HTTPS push, the sender's address taken from
+the `X-Forwarded-For` chain (`client_addr.py` -- the gateway's view of the
+client, not anything the client claims); for FTP/SFTP, the address the FTP
+box last saw that provider log in from, carried in its heartbeat (loader
+never talks to the provider directly on that path).
 
 `ui_admin_ftp.py`
 puts an actual HTML page on this (`/admin/ftp`, in the masthead nav)

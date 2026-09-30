@@ -190,6 +190,14 @@ class ProviderSource(Base):
     # ``is False`` / ``!= False``, never truthiness alone.
     proxy_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=True)
 
+    # Push sources only: when the last file was stored, and where the
+    # data last came from. For an HTTPS push, the sender's address
+    # (client_addr.sender_address); for an FTP/SFTP push, the provider's
+    # address as last reported by the FTP box (it, not loader, is what
+    # the provider connects to). Both NULL until something arrives.
+    last_received_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    last_sender: Mapped[str | None] = mapped_column(String, nullable=True)
+
     @property
     def kind(self) -> str:
         """"push" (the provider sends data to us as it arrives) or "pull"

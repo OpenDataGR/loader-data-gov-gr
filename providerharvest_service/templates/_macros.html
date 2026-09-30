@@ -80,6 +80,18 @@
   </span>
 {%- endmacro %}
 
+{% macro push_origin(s) -%}
+  {# A push source has no endpoint of its own to show -- what's useful is where its data comes from. #}
+  {% if s.last_sender %}
+    <div title="The address the data was last sent from"><span style="color:var(--color-gray-700);">from</span> <code>{{ s.last_sender }}</code></div>
+  {% endif %}
+  {% if s.last_received_at %}
+    <div class="muted health-timestamp">last file {{ s.last_received_at.strftime("%Y-%m-%d %H:%M") }} UTC</div>
+  {% else %}
+    <div class="muted health-timestamp">{{ "no file yet" if s.last_sender else "nothing received yet" }}</div>
+  {% endif %}
+{%- endmacro %}
+
 {% macro health_badge(source) -%}
   {% if source.last_check_status == "ok" %}
     <span class="badge badge-ok" title="{{ source.last_check_message }}">{{ icon("active", 13) }}<span>reachable</span></span>

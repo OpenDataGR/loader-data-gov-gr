@@ -16,6 +16,7 @@ import time
 import requests
 
 from ftp_forwarder import account_sync, box_health
+from ftp_forwarder.auth_log import AuthLogTail
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -36,6 +37,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--upload-owner", default="virtualftp",
         help="User and group that own the created home directories (only used with --upload-root)",
+    )
+    parser.add_argument(
+        "--auth-log", default="/var/log/proftpd/loader-auth.log",
+        help="ProFTPD's login log (see auth_log.py); each provider's last login address is reported to loader",
     )
     parser.add_argument("--proftpd-unit", default="proftpd")
     parser.add_argument("--relay-unit", default="loader-ftp-forwarder")
@@ -62,7 +67,13 @@ def main(argv: list[str] | None = None) -> int:
         uid = pwd.getpwnam(args.upload_owner).pw_uid
         gid = grp.getgrnam(args.upload_owner).gr_gid
 
+    auth_tail = AuthLogTail(args.auth_log)
+    # Logins seen but not yet accepted by loader -- kept across cycles so a
+    # failed report doesn't lose them (only the latest per user matters).
+    pending_logins: dict = {}
+
     while True:
+        pending_logins.update(auth_tail.poll())
         sync_ok = True
         sync_message = "ok"
         try:
@@ -81,14 +92,17 @@ def main(argv: list[str] | None = None) -> int:
             ftp_port=args.ftp_port,
             sftp_port=args.sftp_port,
         )
-        account_sync.report_status(
+        delivered = account_sync.report_status(
             session, args.loader_base_url, sync_key,
             hostname=hostname,
             health=health,
             account_count=account_sync.local_account_count(args.db_path),
             sync_ok=sync_ok,
             sync_message=sync_message,
+            clients=[{"username": login.username, "ip": login.ip} for login in pending_logins.values()],
         )
+        if delivered:
+            pending_logins.clear()
         time.sleep(args.interval_s)
 
 

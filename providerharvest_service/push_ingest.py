@@ -28,13 +28,14 @@ from __future__ import annotations
 import json
 
 import bcrypt
-from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from providerharvest_service import harvest_db, harvest_runner
+from providerharvest_service.client_addr import sender_address
 from providerharvest_service.db import get_session
-from providerharvest_service.models import ProviderSource
+from providerharvest_service.models import ProviderSource, _utcnow
 
 router = APIRouter(prefix="/push", tags=["push-ingest"])
 
@@ -86,6 +87,7 @@ async def _read_capped(upload: UploadFile, max_bytes: int) -> bytes:
 @router.post("/{source_name}/upload")
 async def push_upload(
     source_name: str,
+    request: Request,
     file: UploadFile = File(...),
     x_api_key: str = Header(...),
     session: Session = Depends(get_session),
@@ -100,4 +102,9 @@ async def push_upload(
         raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, str(exc)) from exc
 
     run = harvest_runner.record_pushed_file(hsession, source, file.filename or "upload.bin", content)
+    source.last_received_at = _utcnow()
+    sender = sender_address(request)
+    if sender:
+        source.last_sender = sender
+    session.commit()
     return {"status": run.status, "run_id": run.id, "size": len(content)}

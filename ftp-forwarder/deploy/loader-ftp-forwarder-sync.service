@@ -14,6 +14,7 @@ ExecStart=/opt/data-projects/loader-ftp-forwarder/ftp-forwarder/.venv/bin/ftp-fo
   --db-path /etc/proftpd/ftp-accounts.db \
   --upload-root /srv/ftp \
   --upload-owner virtualftp \
+  --auth-log /var/log/proftpd/loader-auth.log \
   --interval-s 60
 Restart=always
 

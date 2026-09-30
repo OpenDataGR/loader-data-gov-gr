@@ -567,3 +567,21 @@ def test_the_source_list_badges_each_source_as_pull_or_push_with_its_specific_ty
     for chip in ("<span>http</span>", "<span>sftp</span>", "<span>https</span>", "<span>ftp / sftp</span>"):
         assert chip in text, chip
     assert "<th>Type</th>" in text
+
+
+def test_a_push_source_endpoint_cell_shows_where_its_data_comes_from(client, _isolated_db):
+    client.post("/provider/sources/new", data={"name": "push-https", "title": "P", "transport_type": "push"})
+    assert "nothing received yet" in client.get("/provider/sources").text
+
+    with _isolated_db() as session:
+        from providerharvest_service import provider_sources
+        from providerharvest_service.models import _utcnow
+        source = provider_sources.list_all(session)[0]
+        source.last_sender = "203.0.113.9"
+        source.last_received_at = _utcnow()
+        session.commit()
+
+    text = client.get("/provider/sources").text
+    assert "<code>203.0.113.9</code>" in text
+    assert "last file " in text
+    assert "nothing received yet" not in text

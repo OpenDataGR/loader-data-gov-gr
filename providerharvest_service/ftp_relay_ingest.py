@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 from providerharvest_service import harvest_db, harvest_runner
 from providerharvest_service.admin_auth import require_ftp_sync_key
 from providerharvest_service.db import get_session
-from providerharvest_service.models import FtpAccount, ProviderSource
+from providerharvest_service.models import FtpAccount, ProviderSource, _utcnow
 
 router = APIRouter(
     prefix="/admin/ftp-relay", tags=["ftp-relay-ingest"], dependencies=[Depends(require_ftp_sync_key)]
@@ -88,4 +88,9 @@ async def relay_upload(
         raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, str(exc)) from exc
 
     run = harvest_runner.record_pushed_file(hsession, source, file.filename or "upload.bin", content)
+    # Only when it arrived -- not who from: the request here comes from
+    # the relay box, and the provider's own address is reported
+    # separately by that box (see admin_ftp.report_ftp_box_status).
+    source.last_received_at = _utcnow()
+    session.commit()
     return {"status": run.status, "run_id": run.id, "size": len(content)}

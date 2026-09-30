@@ -50,7 +50,10 @@ endpoint any HTTPS-capable provider could call directly.
   this box's own health (`box_health.py` -- is ProFTPD active, are
   ports 21/2222 actually listening, is the file-relay service active,
   did the account pull itself succeed) to loader via
-  `PUT /admin/ftp-box-status`, same sync key. This is the *only* way
+  `PUT /admin/ftp-box-status`, same sync key -- together with the address
+  each provider last logged in from, read from ProFTPD's login log
+  (`auth_log.py`; ProFTPD's own logs record neither a successful login nor
+  any SFTP transfer, so provisioning adds a small `ExtendedLog` for it). This is the *only* way
   loader ever learns this box is alive: since this box only ever calls
   loader (see "pull-based and outbound-only" below), loader can't ask
   -- it can only remember what it was last told, which is what its own
@@ -137,6 +140,7 @@ systemd unit under `deploy/` for the real, deployed invocation):
 --interval-s 60                    # optional
 --upload-root /srv/ftp             # optional -- create missing account home directories under here
 --upload-owner virtualftp          # optional -- owner of those directories
+--auth-log /var/log/proftpd/loader-auth.log   # optional -- ProFTPD's login log, tailed for provider addresses
 --proftpd-unit proftpd             # optional
 --relay-unit loader-ftp-forwarder  # optional
 --ftp-port 21                      # optional

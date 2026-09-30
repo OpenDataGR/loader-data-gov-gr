@@ -180,24 +180,34 @@ def report_status(
     account_count: int,
     sync_ok: bool,
     sync_message: str | None,
+    clients: list[dict] | None = None,
     timeout_s: float = 30.0,
-) -> None:
+) -> bool:
     """Best-effort: a failed heartbeat is logged, never raised -- this
     is telemetry for loader's own admin panel, not something that
     should crash the sync loop itself (that loop's actual job, keeping
     ProFTPD's account database current, must keep running regardless
-    of whether reporting on it succeeds)."""
+    of whether reporting on it succeeds). Returns whether loader
+    accepted the report, so the caller can hold on to anything (the
+    ``clients`` logins) that must be re-sent after a failure.
+
+    ``clients``: ``{"username", "ip"}`` for each provider that logged in
+    since the last delivered report (see ``auth_log.py``)."""
     url = "%s/admin/ftp-box-status" % base_url.rstrip("/")
     payload = {
         "hostname": hostname,
         "account_count": account_count,
         "sync_ok": sync_ok,
         "sync_message": sync_message,
+        "clients": clients or [],
         **health,
     }
     try:
         resp = session.put(url, json=payload, headers={"X-Ftp-Sync-Key": sync_key}, timeout=timeout_s)
         if resp.status_code != 200:
             logger.error("status report to %s failed: %d %s", url, resp.status_code, resp.text[:200])
+            return False
     except requests.RequestException as exc:
         logger.error("status report to %s failed: %s", url, exc)
+        return False
+    return True

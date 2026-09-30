@@ -424,3 +424,62 @@ def test_box_status_report_upserts_by_hostname(client):
     # Still one row per hostname, not a growing history.
     again = client.put("/admin/ftp-box-status", json=_status_payload(hostname="other-box"), headers=SYNC_HEADERS)
     assert again.status_code == 200
+
+
+# -- provider addresses reported by the box -----------------------------------
+
+
+def _forwarding_account(client, session_factory, username="acme-provider"):
+    _register_push_source(session_factory)
+    _create(client, username=username, home_directory="/srv/ftp-uploads/%s" % username,
+            push_target_source_name="acme-push")
+
+
+def _last_sender(session_factory):
+    with session_factory() as session:
+        return provider_sources.list_all(session)[0].last_sender
+
+
+def test_the_heartbeat_records_where_a_provider_connected_from(client, _isolated_db):
+    _forwarding_account(client, _isolated_db)
+
+    resp = client.put(
+        "/admin/ftp-box-status",
+        json=dict(_status_payload(), clients=[{"username": "acme-provider", "ip": "203.0.113.9"}]),
+        headers=SYNC_HEADERS,
+    )
+    assert resp.status_code == 200
+    assert _last_sender(_isolated_db) == "203.0.113.9"
+    assert "clients" not in resp.json()  # a report field, not part of the stored status
+
+
+def test_the_heartbeat_ignores_bad_or_unknown_clients_without_failing(client, _isolated_db):
+    _forwarding_account(client, _isolated_db)
+
+    resp = client.put(
+        "/admin/ftp-box-status",
+        json=dict(_status_payload(), clients=[
+            {"username": "acme-provider", "ip": "not-an-address"},
+            {"username": "nobody", "ip": "203.0.113.9"},
+        ]),
+        headers=SYNC_HEADERS,
+    )
+    assert resp.status_code == 200
+    assert _last_sender(_isolated_db) is None
+
+
+def test_the_heartbeat_ignores_an_account_that_forwards_nowhere(client, _isolated_db):
+    _register_push_source(_isolated_db)
+    _create(client, username="loose-account", home_directory="/srv/ftp-uploads/loose-account")
+
+    resp = client.put(
+        "/admin/ftp-box-status",
+        json=dict(_status_payload(), clients=[{"username": "loose-account", "ip": "203.0.113.9"}]),
+        headers=SYNC_HEADERS,
+    )
+    assert resp.status_code == 200
+    assert _last_sender(_isolated_db) is None
+
+
+def test_a_heartbeat_without_clients_still_works(client):
+    assert client.put("/admin/ftp-box-status", json=_status_payload(), headers=SYNC_HEADERS).status_code == 200

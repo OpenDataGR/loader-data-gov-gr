@@ -252,3 +252,42 @@ def test_sync_once_creates_directories_only_when_an_upload_root_is_given(tmp_pat
 
     sync_once(session, "https://loader.data.gov.gr", "k", str(tmp_path / "a.db"), upload_root=root)
     assert (tmp_path / "srv-ftp" / "acme").is_dir()
+
+
+# -- reporting provider logins ------------------------------------------------
+
+_HEALTH = {"proftpd_active": True, "ftp_port_listening": True, "sftp_port_listening": True, "relay_service_active": True}
+
+
+def _report(session, **overrides):
+    kwargs = dict(hostname="snf-899358", health=_HEALTH, account_count=1, sync_ok=True, sync_message="ok")
+    kwargs.update(overrides)
+    return report_status(session, "https://loader.data.gov.gr", "the-sync-key", **kwargs)
+
+
+def test_report_status_sends_the_logins_it_was_given():
+    session = FakeSession(FakeResponse(200), put_response=FakeResponse(200))
+    clients = [{"username": "acme", "ip": "203.0.113.9"}]
+
+    _report(session, clients=clients)
+
+    assert session.put_calls[0]["json"]["clients"] == clients
+
+
+def test_report_status_sends_an_empty_list_when_there_are_no_logins():
+    session = FakeSession(FakeResponse(200), put_response=FakeResponse(200))
+    _report(session)
+    assert session.put_calls[0]["json"]["clients"] == []
+
+
+def test_report_status_says_whether_loader_accepted_the_report():
+    # The caller keeps unsent logins until this is True.
+    assert _report(FakeSession(FakeResponse(200), put_response=FakeResponse(200))) is True
+    assert _report(FakeSession(FakeResponse(200), put_response=FakeResponse(401, text="no"))) is False
+
+    class Unreachable(FakeSession):
+        def put(self, *args, **kwargs):
+            import requests
+            raise requests.ConnectionError("down")
+
+    assert _report(Unreachable(FakeResponse(200))) is False

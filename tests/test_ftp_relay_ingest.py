@@ -207,3 +207,20 @@ def test_relay_upload_413s_for_a_file_over_the_system_wide_max_size(client, _iso
 
     runs_page = client.get("/provider/sources/%s/runs" % source_id)
     assert "No harvest runs yet" in runs_page.text
+
+
+def test_a_relayed_file_records_arrival_but_not_the_relay_address_as_sender(client, _isolated_db):
+    source_id = _register_and_activate_push_source(_isolated_db)
+    _create_ftp_account(_isolated_db, push_target_source_name="acme-push")
+
+    resp = client.post(
+        "/admin/ftp-relay/acme-box-account/upload",
+        files={"file": ("data.csv", b"a,b\n", "text/csv")},
+        headers={**SYNC_HEADERS, "X-Forwarded-For": "203.0.113.50:1, 10.0.0.4"},  # the relay box
+    )
+    assert resp.status_code == 200
+
+    with _isolated_db() as session:
+        source = provider_sources.get_or_404(session, source_id)
+        assert source.last_received_at is not None
+        assert source.last_sender is None  # the provider address comes from the box report instead
