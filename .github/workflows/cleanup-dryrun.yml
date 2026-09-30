@@ -1,0 +1,28 @@
+name: Clean up FTP test folders (one-off)
+
+# One-off: removes the home folders left on the FTP box by the end-to-end
+# test runs of self-service FTP push and sender attribution (the test
+# sources and their accounts were already deleted through the normal
+# portal flow; only the folders and their archived test files remain).
+# Deleted after one run.
+on:
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: [self-hosted, loader-ftp]
+    timeout-minutes: 5
+    steps:
+      - name: Remove the test folders
+        run: |
+          for name in zz-dryrun zz-live-ftp; do
+            # The account must already be gone from the box's own database
+            # (account-sync removes it within a minute of the source being
+            # deleted) -- never delete a folder a live login points at.
+            if sudo -n sqlite3 /etc/proftpd/ftp-accounts.db "SELECT 1 FROM ftp_account WHERE username = '$name';" | grep -q 1; then
+              echo "::error::$name still exists in the box's account database -- not removing its folder"
+              exit 1
+            fi
+            sudo -n rm -rf -- "/srv/ftp/$name"
+          done
+          sudo -n ls -la /srv/ftp
