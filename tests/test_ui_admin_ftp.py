@@ -103,7 +103,11 @@ def test_overview_lists_no_accounts_or_boxes_initially(client):
 
 
 def test_there_is_no_manual_create_account_form(client):
-    assert "New FTP account" not in client.get("/admin/ftp").text
+    # Markup, not prose: the footer's changelog renders git commit messages,
+    # which can legitimately mention "New FTP account".
+    text = client.get("/admin/ftp").text
+    assert "<legend>New FTP account</legend>" not in text
+    assert 'action="/admin/ftp/accounts"' not in text
     resp = client.post(
         "/admin/ftp/accounts",
         data={"username": "acme", "home_directory": "/srv/ftp/acme", "protocol": "ftp"},
@@ -118,7 +122,7 @@ def test_a_providers_account_shows_its_source_and_is_disabled_until_approval(cli
     text = client.get("/admin/ftp").text
     assert "acme-push" in text
     assert "<span>disabled</span>" in text
-    assert "created by an admin" not in text  # it came from the provider's own registration
+    assert '<div class="muted">created by an admin' not in text  # it came from the provider's own registration
 
     with _isolated_db() as session:
         provider_sources.activate(session, source_id)
@@ -129,13 +133,13 @@ def test_an_account_made_by_an_admin_is_labelled_as_such(client, _isolated_db):
     _add_admin_made_account(_isolated_db)
     text = client.get("/admin/ftp").text
     assert "legacy-account" in text
-    assert "created by an admin" in text
+    assert '<div class="muted">created by an admin' in text
 
 
 def test_the_forwarding_target_is_shown_read_only(client, _isolated_db):
     _register_ftp_push_source(_isolated_db)
     text = client.get("/admin/ftp").text
-    assert "forward-target" not in text  # no dropdown that could break the source link
+    assert '/forward-target"' not in text  # no dropdown that could break the source link
     resp = client.post("/admin/ftp/anything/forward-target", follow_redirects=False)
     assert resp.status_code in (404, 405)
 
@@ -199,7 +203,8 @@ def test_overview_shows_box_status(client, _isolated_db):
 
     resp = client.get("/admin/ftp")
     assert "snf-899358" in resp.text
-    assert "down" in resp.text  # relay_service_active False
+    assert "<span>down</span>" in resp.text  # relay_service_active False
+    assert "<span>stale</span>" not in resp.text  # reported just now
 
 
 def test_overview_flags_a_stale_box(client, _isolated_db):
@@ -220,4 +225,4 @@ def test_overview_flags_a_stale_box(client, _isolated_db):
         session.commit()
 
     resp = client.get("/admin/ftp")
-    assert "stale" in resp.text
+    assert "<span>stale</span>" in resp.text
