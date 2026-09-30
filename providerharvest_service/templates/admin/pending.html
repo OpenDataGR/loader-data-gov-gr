@@ -21,13 +21,13 @@
     {% else %}
       <table>
         <thead>
-          <tr><th>Source</th><th>Connector</th><th>Endpoint</th><th>Notification e-mail</th><th>Registered</th><th></th></tr>
+          <tr><th>Source</th><th>Type</th><th>Endpoint</th><th>Notification e-mail</th><th>Registered</th><th></th></tr>
         </thead>
         <tbody>
           {% for s in sources %}
           <tr>
             <td><div class="name-title">{{ s.title }}</div><div class="name-slug">{{ s.name }}</div></td>
-            <td>{{ macros.transport_badge(s.transport_type) }}</td>
+            <td>{{ macros.type_badges(s) }}</td>
             <td class="muted">{{ s.endpoint_url }}</td>
             <td class="muted">{{ s.notification_email or "--" }}</td>
             <td class="muted">{{ s.created_at.strftime("%Y-%m-%d %H:%M") }}</td>

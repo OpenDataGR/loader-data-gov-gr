@@ -64,8 +64,20 @@
   <span class="badge badge-{{ status }}">{{ icon(status, 14) }}<span>{{ status }}</span></span>
 {%- endmacro %}
 
-{% macro transport_badge(transport_type) -%}
-  <span class="chip">{{ icon(transport_type, 15) }}<span>{{ transport_type }}</span></span>
+{% macro type_badges(s) -%}
+  <span class="type-badges">
+    {% if s.kind == "push" %}
+      <span class="badge badge-push" title="The provider sends data to us as it arrives">{{ icon("push", 13) }}<span>push</span></span>
+      {% if s.push_method == "ftp" %}
+        <span class="chip" title="Sent by logging into our FTP/SFTP server">{{ icon("ftp", 15) }}<span>ftp / sftp</span></span>
+      {% else %}
+        <span class="chip" title="Sent by calling our HTTPS upload endpoint with an API key">{{ icon("http", 15) }}<span>https</span></span>
+      {% endif %}
+    {% else %}
+      <span class="badge badge-pull" title="We fetch the data on a schedule">{{ icon("download", 13) }}<span>pull</span></span>
+      <span class="chip">{{ icon(s.transport_type, 15) }}<span>{{ s.transport_type }}</span></span>
+    {% endif %}
+  </span>
 {%- endmacro %}
 
 {% macro health_badge(source) -%}

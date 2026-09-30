@@ -12,6 +12,7 @@ roadmap.
 from __future__ import annotations
 
 import datetime
+import json
 import uuid
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, LargeBinary, String
@@ -188,6 +189,22 @@ class ProviderSource(Base):
     # this column existed) -- always compare with
     # ``is False`` / ``!= False``, never truthiness alone.
     proxy_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=True)
+
+    @property
+    def kind(self) -> str:
+        """"push" (the provider sends data to us as it arrives) or "pull"
+        (we fetch it, on a schedule) -- derived from transport_type, not
+        stored: the two can't drift apart."""
+        return "push" if self.transport_type == "push" else "pull"
+
+    @property
+    def push_method(self) -> str | None:
+        """For a push source, how it delivers: "https" (API key) or "ftp"
+        (FTP/SFTP login). None for a pull source. Sources registered
+        before this choice existed were all HTTPS."""
+        if self.transport_type != "push":
+            return None
+        return json.loads(self.config or "{}").get("push_method", "https")
 
 
 class FtpBoxStatus(Base):

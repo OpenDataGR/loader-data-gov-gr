@@ -657,3 +657,19 @@ def test_editing_drops_a_per_source_size_left_over_from_before_the_cap_was_syste
 
     assert "max_file_size_bytes" not in json.loads(updated.config)
     assert "push_api_key_hash" in json.loads(updated.config)  # the key is untouched
+
+
+def test_kind_and_push_method_are_derived_from_the_source(session):
+    pull = provider_sources.register(session, _http_form())
+    https_push = provider_sources.register(session, _push_form(name="https-push"))
+    ftp_push = provider_sources.register(session, _ftp_push_form(name="ftp-push"))
+
+    assert (pull.kind, pull.push_method) == ("pull", None)
+    assert (https_push.kind, https_push.push_method) == ("push", "https")
+    assert (ftp_push.kind, ftp_push.push_method) == ("push", "ftp")
+
+
+def test_a_push_source_from_before_the_method_choice_counts_as_https(session):
+    source = provider_sources.register(session, _push_form())
+    source.config = json.dumps({"push_api_key_hash": "x"})  # what an older registration stored
+    assert source.push_method == "https"

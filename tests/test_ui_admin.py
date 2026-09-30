@@ -190,3 +190,15 @@ def test_admin_edit_link_points_to_shared_edit_route(client, _isolated_db):
     resp = client.get("/admin/sources")
     assert "/provider/sources/" in resp.text
     assert "/edit" in resp.text
+
+
+def test_admin_lists_badge_pull_and_push_sources(client, _isolated_db):
+    _register(_isolated_db)  # http, pull
+    with _isolated_db() as session:
+        provider_sources.register(session, {"name": "acme-push", "title": "Push", "transport_type": "push"})
+
+    for path in ("/admin/sources", "/admin/sources/pending"):
+        text = client.get(path).text
+        assert '<span class="badge badge-pull"' in text, path
+        assert '<span class="badge badge-push"' in text, path
+        assert "<span>https</span>" in text, path

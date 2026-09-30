@@ -552,3 +552,18 @@ def test_human_size_formats_the_limit_the_way_it_is_quoted():
     assert _human_size(20 * 1000 * 1000) == "20 MB"
     assert _human_size(1500) == "1.5 KB"
     assert _human_size(999) == "999 B"
+
+
+def test_the_source_list_badges_each_source_as_pull_or_push_with_its_specific_type(client):
+    client.post("/provider/sources/new", data=_valid_form())  # http pull
+    client.post("/provider/sources/new", data=_valid_sftp_form(name="acme-sftp"))  # sftp pull
+    client.post("/provider/sources/new", data={"name": "push-https", "title": "P1", "transport_type": "push"})
+    client.post("/provider/sources/new", data=_ftp_push_form(name="push-ftp", title="P2"))
+
+    text = client.get("/provider/sources").text
+    assert text.count('<span class="badge badge-pull"') == 2
+    assert text.count('<span class="badge badge-push"') == 2
+    # the specific type sits next to the kind: http/sftp for pull, https vs ftp/sftp for push
+    for chip in ("<span>http</span>", "<span>sftp</span>", "<span>https</span>", "<span>ftp / sftp</span>"):
+        assert chip in text, chip
+    assert "<th>Type</th>" in text

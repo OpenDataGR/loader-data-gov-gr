@@ -27,6 +27,8 @@
       --status-active: #28a745;
       --status-paused: #6c757d;
       --status-rejected: #dc3545;
+      --kind-pull: #0f4a94;
+      --kind-push: #0f766e;
       --radius: 8px;
       --shadow: 0 1px 3px rgba(0, 51, 117, 0.08), 0 1px 2px rgba(0, 51, 117, 0.06);
     }
@@ -185,6 +187,9 @@
     .badge-active { background: var(--status-active); }
     .badge-paused { background: var(--status-paused); }
     .badge-rejected { background: var(--status-rejected); }
+    .badge-pull { background: var(--kind-pull); }
+    .badge-push { background: var(--kind-push); }
+    .type-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; }
     .badge-ok { background: var(--status-active); }
     .badge-error { background: var(--status-rejected); cursor: help; }
     .badge-unchecked { background: var(--color-border); color: var(--color-gray-700); }
