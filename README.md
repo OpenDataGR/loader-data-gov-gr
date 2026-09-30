@@ -417,8 +417,9 @@ under 30s), so there's no real infra benefit yet to a separate storage
 layer, matching every other storage choice this service has made so
 far (own DB, prove the smallest slice first). Revisit if a source ever
 actually needs large files. `open_entry`'s stream is read in capped
-chunks (`max_file_size_bytes`, a new per-source config field alongside
-`connect_timeout_s`, default 20MB) rather than a single `.read()` --
+chunks (capped at `harvest_runner.MAX_FILE_SIZE_BYTES`, one system-wide
+100 MB limit that matches nginx and the WAF -- not a per-source setting)
+rather than a single `.read()` --
 the file transports deliberately hand back unbuffered handles so a
 huge/misconfigured file errors the run before it's fully buffered into
 memory, not after. A file is downloaded via `GET /provider/sources/
@@ -489,7 +490,7 @@ over the exact same HTTPS path everything else already uses:
   choice already made for FTP-push account passwords (`admin_ftp.py`).
 - `POST /push/{source_name}/upload` (multipart, `X-Api-Key` header)
   checks that key, reads the file in capped chunks (same
-  `max_file_size_bytes` config knob and reasoning as the pull-mode
+  system-wide `MAX_FILE_SIZE_BYTES` and reasoning as the pull-mode
   file transports), and stores it via `harvest_runner.
   record_pushed_file` -- a normal `HarvestRun`+`HarvestedFile` pair,
   so run history/download UI works identically to a pulled file. Same

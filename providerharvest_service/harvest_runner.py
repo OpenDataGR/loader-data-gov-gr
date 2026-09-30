@@ -42,9 +42,16 @@ SUPPORTED_TRANSPORT_TYPES = ("http",) + FILE_TRANSPORT_TYPES
 #: fetch well under 30s) -- 20MB is generous headroom for that, while
 #: still catching a misconfigured/unexpected source before it reads an
 #: arbitrarily large file into memory and into a single Postgres row.
-#: Configurable per source (``max_file_size_bytes`` in its own config
-#: blob) for the rare source that genuinely needs more.
-DEFAULT_MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024
+#: The one system-wide cap, not a per-source setting: it has to match
+#: the real ceiling of the upload path in front of this app (nginx's
+#: ``client_max_body_size`` and the Application Gateway WAF's file-upload
+#: limit, both 100 MB -- see deploy/nginx-loader.data.gov.gr), because
+#: anything a source was allowed beyond that would be rejected before it
+#: ever arrived, and a per-source knob would only invite setting a value
+#: that can't actually work. Decimal (100 * 1000 * 1000), so it stays
+#: at-or-under both limits however they count a "MB". Also keeps a single
+#: file bounded in memory and in one Postgres row.
+MAX_FILE_SIZE_BYTES = 100 * 1000 * 1000
 
 _READ_CHUNK_BYTES = 65536
 
@@ -94,7 +101,7 @@ def _read_capped(stream, max_bytes: int) -> bytes:
         total += len(chunk)
         if total > max_bytes:
             raise FileTooLargeError(
-                "file exceeds max_file_size_bytes=%d (stopped after %d bytes read)" % (max_bytes, total)
+                "file exceeds the %d-byte size limit (stopped after %d bytes read)" % (max_bytes, total)
             )
         chunks.append(chunk)
     return b"".join(chunks)
@@ -154,12 +161,10 @@ def run_harvest(config_session: Session, harvest_session: Session, source_id: st
                     harvest_session.add(HarvestedRecord(run_id=run.id, ref=entry.ref, payload=payload))
                     count += 1
             else:
-                config = json.loads(source.config or "{}")
-                max_file_size = config.get("max_file_size_bytes", DEFAULT_MAX_FILE_SIZE_BYTES)
                 for entry in page.entries:
                     handle = transport.open_entry(entry)
                     try:
-                        content = _read_capped(handle, max_file_size)
+                        content = _read_capped(handle, MAX_FILE_SIZE_BYTES)
                     finally:
                         handle.close()
                     filename = entry.ref.rsplit("/", 1)[-1]

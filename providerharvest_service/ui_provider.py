@@ -306,6 +306,15 @@ def _redirect_with_flash(flash: str, kind: str = "success") -> str:
     return "/provider/sources?%s" % urlencode({"flash": flash, "flash_kind": kind})
 
 
+def _human_size(n: int) -> str:
+    """Decimal units, matching how the limit is quoted (100 MB) and how
+    nginx/the WAF count it."""
+    for unit, size in (("GB", 10**9), ("MB", 10**6), ("KB", 10**3)):
+        if n >= size:
+            return "%g %s" % (round(n / size, 1), unit)
+    return "%d B" % n
+
+
 def _form_template_vars(data, errors=None, editing=False, source_id=None) -> dict:
     if not data:
         # A genuinely fresh form (GET /sources/new): seed the checkbox
@@ -319,10 +328,13 @@ def _form_template_vars(data, errors=None, editing=False, source_id=None) -> dic
         "data": data,
         "errors": errors or {},
         "transport_types": FIELD_TYPES,
-        # Pull sources are fetched by us (a connector per protocol, on a
-        # schedule); push sources have a single "push" transport whose
-        # sub-choice (HTTPS key vs FTP/SFTP login) is `push_method`.
-        "pull_transport_types": tuple(t for t in FIELD_TYPES if t != "push"),
+        # Pull sources are fetched by us, on a schedule: HTTP, SFTP/SCP
+        # (one card -- identical settings; the SFTP-vs-SCP switch inside
+        # it picks the stored transport_type) or FTP. Push sources have
+        # a single "push" transport whose sub-choice (HTTPS key vs
+        # FTP/SFTP login) is `push_method`.
+        "pull_connectors": (("http", "HTTP", "http"), ("ssh", "SFTP / SCP", "sftp"), ("ftp", "FTP", "ftp")),
+        "max_file_size_human": _human_size(harvest_runner.MAX_FILE_SIZE_BYTES),
         "frequencies": FREQUENCIES,
         "http_auth_types": HTTP_AUTH_TYPES,
         "editing": editing,

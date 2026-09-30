@@ -430,21 +430,19 @@ def test_register_push_source_never_persists_the_plaintext_key(session):
     assert provider_sources.credentials(session, source.id).fields == {}
 
 
-def test_register_push_source_default_max_file_size(session):
-    source = provider_sources.register(session, _push_form())
-    assert json.loads(source.config)["max_file_size_bytes"] == 20 * 1024 * 1024
-
-
-def test_register_push_source_custom_max_file_size(session):
-    source = provider_sources.register(session, _push_form(push_max_file_size_bytes="1000"))
-    assert json.loads(source.config)["max_file_size_bytes"] == 1000
+def test_the_max_file_size_is_system_wide_not_stored_per_source(session):
+    # A per-source value would only be a promise the upload path in front
+    # of the app (nginx, the WAF) can't keep -- so it isn't accepted or stored.
+    for form in (_push_form(push_max_file_size_bytes="1000"), _sftp_form(sftp_max_file_size_bytes="1000")):
+        source = provider_sources.register(session, form)
+        assert "max_file_size_bytes" not in json.loads(source.config)
 
 
 def test_config_to_form_fields_never_leaks_the_key_hash(session):
     source = provider_sources.register(session, _push_form())
     data = provider_sources.config_to_form_fields(source)
     assert "push_api_key_hash" not in data
-    assert data["push_max_file_size_bytes"] == str(20 * 1024 * 1024)
+    assert "push_max_file_size_bytes" not in data
 
 
 def test_a_non_push_source_never_gets_a_generated_api_key(session):
@@ -625,11 +623,37 @@ def test_editing_an_ftp_push_source_keeps_its_method_and_only_changes_what_was_e
     edit_form = provider_sources.config_to_form_fields(source)
     assert edit_form["push_method"] == "ftp"
     edit_form["title"] = "Renamed"
-    edit_form["push_max_file_size_bytes"] = "1234"
     updated = provider_sources.update(session, source.id, edit_form)
 
     config = json.loads(updated.config)
     assert updated.title == "Renamed"
     assert config["push_method"] == "ftp"
-    assert config["max_file_size_bytes"] == 1234
     assert _ftp_account(session, "acme-push") is not None  # the account was not touched by the edit
+
+
+def test_switching_between_sftp_and_scp_on_edit_keeps_the_stored_credentials(session):
+    # Same credentials, same settings -- only the transport differs, so
+    # flipping the protocol must not force the provider to retype a secret.
+    source = provider_sources.register(session, _sftp_form())
+    edit_form = provider_sources.config_to_form_fields(source)
+    edit_form["transport_type"] = "scp"
+
+    updated = provider_sources.update(session, source.id, edit_form)
+
+    assert updated.transport_type == "scp"
+    fields = provider_sources.credentials(session, source.id).fields
+    assert fields["username"] == "acme"
+    assert fields["password"] == "hunter2"
+
+
+def test_editing_drops_a_per_source_size_left_over_from_before_the_cap_was_system_wide(session):
+    source = provider_sources.register(session, _push_form())
+    legacy = json.loads(source.config)
+    legacy["max_file_size_bytes"] = 1234  # what an older registration stored
+    source.config = json.dumps(legacy)
+    session.commit()
+
+    updated = provider_sources.update(session, source.id, provider_sources.config_to_form_fields(source))
+
+    assert "max_file_size_bytes" not in json.loads(updated.config)
+    assert "push_api_key_hash" in json.loads(updated.config)  # the key is untouched

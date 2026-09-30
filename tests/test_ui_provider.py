@@ -505,3 +505,50 @@ def test_editing_a_push_source_locks_its_kind_and_method(client, _isolated_db):
     assert "This can't be changed once registered" in text
     assert "can't be changed here -- ask an admin to issue a new password" in text
     assert 'name="push_ftp_password"' not in text  # no password field to edit
+
+
+def test_sftp_and_scp_share_one_connector_card_with_a_protocol_switch(client):
+    text = client.get("/provider/sources/new").text
+    assert text.count('name="connector" value=') == 3  # HTTP, SFTP / SCP, FTP
+    assert 'name="connector" value="ssh"' in text
+    assert 'name="connector" value="scp"' not in text
+    assert 'id="ssh-protocol-sftp"' in text and 'id="ssh-protocol-scp"' in text
+
+
+def test_a_rejected_scp_registration_reshows_the_form_with_scp_still_selected(client):
+    resp = client.post("/provider/sources/new", data={
+        "name": "acme-scp", "title": "Acme SCP", "endpoint_url": "scp.example.gr",
+        "transport_type": "scp", "sftp_username": "",  # missing -> validation error
+    })
+    assert resp.status_code == 400
+    import re
+    assert re.search(r'id="transport-type-pull"[^>]*value="scp"', resp.text)
+    assert re.search(r'id="ssh-protocol-scp"[^>]*checked', resp.text, re.S)
+    assert re.search(r'name="connector" value="ssh"[^>]*checked', resp.text, re.S)
+
+
+def test_registering_scp_through_the_form_stores_scp(client, _isolated_db):
+    resp = client.post("/provider/sources/new", data={
+        "name": "acme-scp", "title": "Acme SCP", "endpoint_url": "scp.example.gr",
+        "transport_type": "scp", "sftp_username": "acme", "sftp_password": "hunter2",
+        "host_key_fingerprint": "SHA256:abcdef",
+    }, follow_redirects=False)
+    assert resp.status_code == 303
+    with _isolated_db() as session:
+        from providerharvest_service import provider_sources
+        assert provider_sources.list_all(session)[0].transport_type == "scp"
+
+
+def test_forms_show_the_system_wide_size_limit_as_information_not_an_input(client):
+    text = client.get("/provider/sources/new").text
+    assert text.count("Maximum file size: <strong>100 MB</strong>") == 3  # sftp/scp, ftp and push
+    assert "max_file_size_bytes" not in text  # nothing editable is submitted
+
+
+def test_human_size_formats_the_limit_the_way_it_is_quoted():
+    from providerharvest_service.ui_provider import _human_size
+
+    assert _human_size(100 * 1000 * 1000) == "100 MB"
+    assert _human_size(20 * 1000 * 1000) == "20 MB"
+    assert _human_size(1500) == "1.5 KB"
+    assert _human_size(999) == "999 B"

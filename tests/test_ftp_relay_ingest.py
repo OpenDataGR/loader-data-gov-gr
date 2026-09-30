@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from providerharvest_service import db, harvest_db, provider_sources
+from providerharvest_service import db, harvest_db, harvest_runner, provider_sources
 from providerharvest_service.app import app
 from providerharvest_service.harvest_models import HarvestBase
 from providerharvest_service.models import FtpAccount
@@ -193,8 +193,9 @@ def test_relay_upload_404s_when_the_target_is_not_a_push_source(client, _isolate
     assert resp.status_code == 404
 
 
-def test_relay_upload_413s_for_a_file_over_the_configured_max_size(client, _isolated_db):
-    source_id = _register_and_activate_push_source(_isolated_db, push_max_file_size_bytes="5")
+def test_relay_upload_413s_for_a_file_over_the_system_wide_max_size(client, _isolated_db, monkeypatch):
+    monkeypatch.setattr(harvest_runner, "MAX_FILE_SIZE_BYTES", 5)
+    source_id = _register_and_activate_push_source(_isolated_db)
     _create_ftp_account(_isolated_db, push_target_source_name="acme-push")
 
     resp = client.post(

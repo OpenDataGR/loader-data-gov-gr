@@ -17,8 +17,6 @@ box already has, plus a mapping loader already owns."
 
 from __future__ import annotations
 
-import json
-
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -69,7 +67,7 @@ async def _read_capped(upload: UploadFile, max_bytes: int) -> bytes:
         total += len(chunk)
         if total > max_bytes:
             raise harvest_runner.FileTooLargeError(
-                "file exceeds max_file_size_bytes=%d (stopped after %d bytes read)" % (max_bytes, total)
+                "file exceeds the %d-byte size limit (stopped after %d bytes read)" % (max_bytes, total)
             )
         chunks.append(chunk)
     return b"".join(chunks)
@@ -84,10 +82,8 @@ async def relay_upload(
 ) -> dict:
     source = _get_forwarding_target_or_404(session, username)
 
-    config = json.loads(source.config or "{}")
-    max_file_size = config.get("max_file_size_bytes", harvest_runner.DEFAULT_MAX_FILE_SIZE_BYTES)
     try:
-        content = await _read_capped(file, max_file_size)
+        content = await _read_capped(file, harvest_runner.MAX_FILE_SIZE_BYTES)
     except harvest_runner.FileTooLargeError as exc:
         raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, str(exc)) from exc
 

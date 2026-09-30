@@ -249,8 +249,9 @@ def test_run_harvest_supports_scp_and_ftp_too(config_session, harvest_session, m
         assert stored[0].content == b"hello"
 
 
-def test_run_harvest_errors_a_file_over_the_configured_max_size(config_session, harvest_session, monkeypatch):
-    source = _register_active_sftp(config_session, sftp_max_file_size_bytes="10")
+def test_run_harvest_errors_a_file_over_the_system_wide_max_size(config_session, harvest_session, monkeypatch):
+    monkeypatch.setattr(harvest_runner, "MAX_FILE_SIZE_BYTES", 10)
+    source = _register_active_sftp(config_session)
     monkeypatch.setattr(
         connection_check, "_build_transport",
         lambda src, secret: FakeTransport(
@@ -261,7 +262,7 @@ def test_run_harvest_errors_a_file_over_the_configured_max_size(config_session, 
     run = harvest_runner.run_harvest(config_session, harvest_session, source.id)
 
     assert run.status == "error"
-    assert "max_file_size_bytes" in run.error_message
+    assert "size limit" in run.error_message
     assert harvest_runner.list_files(harvest_session, run.id) == []
 
 

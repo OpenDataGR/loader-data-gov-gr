@@ -69,14 +69,18 @@
         </select>
         {% if errors.frequency %}<div class="error">{{ errors.frequency }}</div>{% endif %}
 
+        {% set tt = data.get('transport_type', 'http') %}
+        {% set connector = 'ssh' if tt in ('sftp', 'scp') else ('http' if tt == 'push' else tt) %}
         <label>Connector</label>
+        {# The cards and the SFTP/SCP switch are UI-only; this hidden field is what's submitted, kept in sync by syncPullTransportType(). #}
+        <input type="hidden" id="transport-type-pull" name="transport_type" value="{{ 'http' if tt == 'push' else tt }}">
         <div class="connector-grid">
-          {% for t in pull_transport_types %}
+          {% for c, label, icon in pull_connectors %}
             <label class="connector-card">
-              <input type="radio" name="transport_type" value="{{ t }}" onchange="showTransportFields()"
-                     {% if data.get('transport_type', 'http') == t or (kind == 'push' and t == 'http') %}checked{% endif %}>
-              <span class="connector-icon">{{ macros.icon(t, 26) }}</span>
-              <span class="connector-name">{{ t }}</span>
+              <input type="radio" name="connector" value="{{ c }}" onchange="showTransportFields()"
+                     {% if connector == c %}checked{% endif %}>
+              <span class="connector-icon">{{ macros.icon(icon, 26) }}</span>
+              <span class="connector-name">{{ label }}</span>
             </label>
           {% endfor %}
         </div>
@@ -164,6 +168,21 @@
 
       <fieldset id="fieldset-ssh">
         <legend>{{ macros.icon("sftp", 15) }} SFTP/SCP settings</legend>
+
+        <label>Protocol</label>
+        <div class="segmented">
+          <span>
+            <input type="radio" id="ssh-protocol-sftp" name="ssh_protocol" value="sftp" onchange="showTransportFields()"
+                   {% if tt != 'scp' %}checked{% endif %}>
+            <label for="ssh-protocol-sftp">SFTP</label>
+          </span>
+          <span>
+            <input type="radio" id="ssh-protocol-scp" name="ssh_protocol" value="scp" onchange="showTransportFields()"
+                   {% if tt == 'scp' %}checked{% endif %}>
+            <label for="ssh-protocol-scp">SCP (only if the server has no SFTP)</label>
+          </span>
+        </div>
+
         <label for="sftp_username">Username</label>
         <input type="text" id="sftp_username" name="sftp_username" value="{{ data.get('sftp_username', '') }}">
         {% if errors.sftp_username %}<div class="error">{{ errors.sftp_username }}</div>{% endif %}
@@ -194,10 +213,7 @@
         <input type="number" class="small" id="sftp_connect_timeout_s" name="sftp_connect_timeout_s" value="{{ data.get('sftp_connect_timeout_s', '30') }}">
         {% if errors.sftp_connect_timeout_s %}<div class="error">{{ errors.sftp_connect_timeout_s }}</div>{% endif %}
 
-        <label for="sftp_max_file_size_bytes">Max file size (bytes)</label>
-        <input type="number" class="small" id="sftp_max_file_size_bytes" name="sftp_max_file_size_bytes" value="{{ data.get('sftp_max_file_size_bytes', 20971520) }}" oninput="updateHumanSize('sftp_max_file_size_bytes')">
-        <span class="muted" id="sftp_max_file_size_bytes_human"></span>
-        {% if errors.sftp_max_file_size_bytes %}<div class="error">{{ errors.sftp_max_file_size_bytes }}</div>{% endif %}
+        <p class="muted" style="margin-top:1rem;">Maximum file size: <strong>{{ max_file_size_human }}</strong> -- a system-wide limit (upload gateway and server), not set per source.</p>
       </fieldset>
 
       <fieldset id="fieldset-ftp">
@@ -231,10 +247,7 @@
         <input type="number" class="small" id="ftp_connect_timeout_s" name="ftp_connect_timeout_s" value="{{ data.get('ftp_connect_timeout_s', '30') }}">
         {% if errors.ftp_connect_timeout_s %}<div class="error">{{ errors.ftp_connect_timeout_s }}</div>{% endif %}
 
-        <label for="ftp_max_file_size_bytes">Max file size (bytes)</label>
-        <input type="number" class="small" id="ftp_max_file_size_bytes" name="ftp_max_file_size_bytes" value="{{ data.get('ftp_max_file_size_bytes', 20971520) }}" oninput="updateHumanSize('ftp_max_file_size_bytes')">
-        <span class="muted" id="ftp_max_file_size_bytes_human"></span>
-        {% if errors.ftp_max_file_size_bytes %}<div class="error">{{ errors.ftp_max_file_size_bytes }}</div>{% endif %}
+        <p class="muted" style="margin-top:1rem;">Maximum file size: <strong>{{ max_file_size_human }}</strong> -- a system-wide limit (upload gateway and server), not set per source.</p>
       </fieldset>
 
       </div>
@@ -288,10 +301,7 @@
             {% endif %}
           </div>
 
-          <label for="push_max_file_size_bytes">Max file size (bytes)</label>
-          <input type="number" class="small" id="push_max_file_size_bytes" name="push_max_file_size_bytes" value="{{ data.get('push_max_file_size_bytes', 20971520) }}" oninput="updateHumanSize('push_max_file_size_bytes')">
-          <span class="muted" id="push_max_file_size_bytes_human"></span>
-          {% if errors.push_max_file_size_bytes %}<div class="error">{{ errors.push_max_file_size_bytes }}</div>{% endif %}
+          <p class="muted" style="margin-top:1rem;">Maximum file size: <strong>{{ max_file_size_human }}</strong> -- a system-wide limit (upload gateway and server), not set per source.</p>
         </fieldset>
       </div>
 
@@ -305,20 +315,26 @@
       var kind = checked ? checked.value : 'pull';
       document.getElementById('section-pull').style.display = (kind === 'pull') ? '' : 'none';
       document.getElementById('section-push').style.display = (kind === 'push') ? '' : 'none';
-      // Exactly one transport_type may be submitted: a pull connector's
-      // radio, or the push section's hidden input. Disabled inputs aren't
+      // Exactly one transport_type may be submitted: the pull section's
+      // hidden input, or the push section's. Disabled inputs aren't
       // sent, so switching kind swaps which one counts.
-      document.querySelectorAll('#section-pull input[name="transport_type"]').forEach(function (i) {
-        i.disabled = (kind !== 'pull');
-      });
+      document.getElementById('transport-type-pull').disabled = (kind !== 'pull');
       document.getElementById('transport-type-push').disabled = (kind !== 'push');
     }
     function showTransportFields() {
-      var checked = document.querySelector('#section-pull input[name="transport_type"]:checked');
-      var t = checked ? checked.value : 'http';
-      document.getElementById('fieldset-http').style.display = (t === 'http') ? '' : 'none';
-      document.getElementById('fieldset-ssh').style.display = (t === 'sftp' || t === 'scp') ? '' : 'none';
-      document.getElementById('fieldset-ftp').style.display = (t === 'ftp') ? '' : 'none';
+      var checked = document.querySelector('#section-pull input[name="connector"]:checked');
+      var connector = checked ? checked.value : 'http';
+      document.getElementById('fieldset-http').style.display = (connector === 'http') ? '' : 'none';
+      document.getElementById('fieldset-ssh').style.display = (connector === 'ssh') ? '' : 'none';
+      document.getElementById('fieldset-ftp').style.display = (connector === 'ftp') ? '' : 'none';
+      // The submitted transport_type: http/ftp as-is; the SFTP / SCP card
+      // submits whichever of the two its protocol switch is on.
+      var value = connector;
+      if (connector === 'ssh') {
+        var protocol = document.querySelector('input[name="ssh_protocol"]:checked');
+        value = protocol ? protocol.value : 'sftp';
+      }
+      document.getElementById('transport-type-pull').value = value;
       // Fallback for browsers without CSS :has() support -- the base
       // stylesheet's :has(input:checked) rule already covers this, this
       // just makes the card highlight work everywhere.
@@ -340,26 +356,6 @@
         document.getElementById('auth-' + name).style.display = (name === a) ? '' : 'none';
       });
     }
-    function formatBytesHuman(bytes) {
-      if (!isFinite(bytes) || bytes < 0) return '';
-      if (bytes < 1024) return bytes + ' B';
-      var units = ['KB', 'MB', 'GB', 'TB'];
-      var value = bytes;
-      var unit = 'B';
-      for (var i = 0; i < units.length; i++) {
-        value = value / 1024;
-        unit = units[i];
-        if (value < 1024) break;
-      }
-      var rounded = value >= 10 ? Math.round(value) : Math.round(value * 10) / 10;
-      return '≈ ' + rounded + ' ' + unit;
-    }
-    function updateHumanSize(inputId) {
-      var input = document.getElementById(inputId);
-      var span = document.getElementById(inputId + '_human');
-      if (input && span) span.textContent = formatBytesHuman(parseInt(input.value, 10));
-    }
-    ['sftp_max_file_size_bytes', 'ftp_max_file_size_bytes', 'push_max_file_size_bytes'].forEach(updateHumanSize);
     showKind();
     showTransportFields();
     showPushMethodFields();

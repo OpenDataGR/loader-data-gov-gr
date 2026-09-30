@@ -78,7 +78,7 @@ class HarvestedFile(HarvestBase):
     storage layer -- same "own DB, prove the smallest slice" choice
     every other piece of this service's storage has made. Revisit if a
     source ever actually needs large files -- ``harvest_runner``'s own
-    ``max_file_size_bytes`` cap exists specifically so an unexpectedly
+    ``MAX_FILE_SIZE_BYTES`` cap exists specifically so an unexpectedly
     huge file errors the run instead of silently blowing up this
     table."""
 

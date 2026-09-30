@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from providerharvest_service import db, harvest_db, provider_sources
+from providerharvest_service import db, harvest_db, harvest_runner, provider_sources
 from providerharvest_service.app import app
 from providerharvest_service.harvest_models import HarvestBase
 
@@ -175,10 +175,9 @@ def test_upload_404s_for_an_http_source_even_with_a_valid_looking_name(client, _
     assert resp.status_code == 404
 
 
-def test_upload_413s_for_a_file_over_the_configured_max_size(client, _isolated_db):
-    source_id, api_key = _register_and_activate_push_source(
-        client, _isolated_db, push_max_file_size_bytes="5"
-    )
+def test_upload_413s_for_a_file_over_the_system_wide_max_size(client, _isolated_db, monkeypatch):
+    monkeypatch.setattr(harvest_runner, "MAX_FILE_SIZE_BYTES", 5)
+    source_id, api_key = _register_and_activate_push_source(client, _isolated_db)
 
     resp = client.post(
         "/push/acme-push/upload",

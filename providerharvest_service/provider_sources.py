@@ -288,13 +288,6 @@ def _ssh_fields(form: dict, endpoint_url: str, errors: dict) -> tuple[dict, dict
         "connect_timeout_s": _parse_positive_int(
             form.get("sftp_connect_timeout_s"), 30, "sftp_connect_timeout_s", errors
         ),
-        # Same default as harvest_runner.DEFAULT_MAX_FILE_SIZE_BYTES --
-        # not imported from there to keep this module framework/engine-
-        # agnostic (see its own docstring); harvest_runner falls back to
-        # its own constant if a source's config predates this field.
-        "max_file_size_bytes": _parse_positive_int(
-            form.get("sftp_max_file_size_bytes"), 20 * 1024 * 1024, "sftp_max_file_size_bytes", errors
-        ),
     }
     return credential_fields, config_extra
 
@@ -337,9 +330,6 @@ def _ftp_fields(form: dict, endpoint_url: str, errors: dict) -> tuple[dict, dict
         "connect_timeout_s": _parse_positive_int(
             form.get("ftp_connect_timeout_s"), 30, "ftp_connect_timeout_s", errors
         ),
-        "max_file_size_bytes": _parse_positive_int(
-            form.get("ftp_max_file_size_bytes"), 20 * 1024 * 1024, "ftp_max_file_size_bytes", errors
-        ),
     }
     return credential_fields, config_extra
 
@@ -371,11 +361,7 @@ def _push_fields(session: Session, form: dict, source_name: str, errors: dict) -
     ``credential_fields`` is returned empty only to keep the same
     shape every ``_x_fields`` function has; nothing is ever stored via
     the secrets backend for a push-mode source."""
-    config_extra = {
-        "max_file_size_bytes": _parse_positive_int(
-            form.get("push_max_file_size_bytes"), 20 * 1024 * 1024, "push_max_file_size_bytes", errors
-        ),
-    }
+    config_extra: dict = {}
     method = form.get("push_method") or "https"
     if method not in PUSH_METHODS:
         errors["push_method"] = "must be one of %s" % (PUSH_METHODS,)
@@ -583,16 +569,13 @@ def config_to_form_fields(source: ProviderSource) -> dict:
         data["sftp_glob_pattern"] = config.get("glob_pattern", "*")
         data["host_key_fingerprint"] = config.get("host_key_fingerprint", "")
         data["sftp_connect_timeout_s"] = str(config.get("connect_timeout_s", 30))
-        data["sftp_max_file_size_bytes"] = str(config.get("max_file_size_bytes", 20 * 1024 * 1024))
     elif source.transport_type == "ftp":
         data["ftp_port"] = str(config.get("port", 21))
         data["ftp_remote_path"] = config.get("remote_path", "/")
         data["ftp_glob_pattern"] = config.get("glob_pattern", "*")
         data["ftp_use_tls"] = "on" if config.get("use_tls", True) else ""
         data["ftp_connect_timeout_s"] = str(config.get("connect_timeout_s", 30))
-        data["ftp_max_file_size_bytes"] = str(config.get("max_file_size_bytes", 20 * 1024 * 1024))
     elif source.transport_type == "push":
-        data["push_max_file_size_bytes"] = str(config.get("max_file_size_bytes", 20 * 1024 * 1024))
         data["push_method"] = config.get("push_method", "https")
     return data
 
@@ -649,7 +632,8 @@ def update(session: Session, source_id: str, form: dict) -> ProviderSource:
     when the submitted transport_type (and, for HTTP, auth_type) match
     what the source already had -- switching either means the old
     secret's shape no longer applies, so the new one must be fully
-    re-entered, same validation as a fresh registration. Does not touch
+    re-entered, same validation as a fresh registration (sftp <-> scp
+    doesn't count: same credentials). Does not touch
     ``status`` -- editing an active source doesn't force it back
     through re-approval (this whole service still runs as a single
     stand-in user; revisit once real per-user auth exists)."""
@@ -680,7 +664,10 @@ def update(session: Session, source_id: str, form: dict) -> ProviderSource:
     proxy_enabled = _parse_bool(form.get("proxy_enabled"), default=False)
 
     submitted_auth_type = form.get("auth_type") or source.auth_type
-    keep_existing_shape = transport_type == source.transport_type and (
+    # sftp and scp take identical credentials (username + password or
+    # key), so switching between them keeps the stored secret usable.
+    same_ssh_family = transport_type in SSH_TRANSPORT_TYPES and source.transport_type in SSH_TRANSPORT_TYPES
+    keep_existing_shape = (transport_type == source.transport_type or same_ssh_family) and (
         transport_type != "http" or submitted_auth_type == source.auth_type
     )
     working_form = form
@@ -700,15 +687,12 @@ def update(session: Session, source_id: str, form: dict) -> ProviderSource:
         # submit, and regenerating credentials on every unrelated edit
         # (e.g. just renaming the title) would silently break whatever
         # the provider already configured with the old ones. Only the
-        # max file size is editable; everything else in the existing
+        # nothing about the credentials is editable here; the existing
         # config (push_method, push_api_key_hash) is carried over as-is.
         # Only supported when the source was already push-mode:
         # switching an existing source *into* push mode via edit isn't
         # supported -- there's no one-time-reveal page in this flow to
         # show freshly generated credentials on, unlike `register`.
-        max_file_size_bytes = _parse_positive_int(
-            form.get("push_max_file_size_bytes"), 20 * 1024 * 1024, "push_max_file_size_bytes", errors
-        )
         if source.transport_type != "push":
             errors["transport_type"] = (
                 "switching to push mode isn't supported via edit yet -- "
@@ -717,7 +701,9 @@ def update(session: Session, source_id: str, form: dict) -> ProviderSource:
             existing_config: dict = {}
         else:
             existing_config = json.loads(source.config or "{}")
-        credential_fields, config = {}, {**existing_config, "max_file_size_bytes": max_file_size_bytes}
+        # A per-source size from before the cap became system-wide is dropped.
+        credential_fields = {}
+        config = {k: v for k, v in existing_config.items() if k != "max_file_size_bytes"}
         auth_type = source.auth_type if source.transport_type == "push" else "push_api_key"
     else:
         auth_type, credential_fields, config = _http_fields(working_form, errors)

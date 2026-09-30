@@ -16,8 +16,8 @@ Deliberately narrow, matching the agreed first slice:
     generated at registration (``provider_sources._push_fields``) and
     checked here via bcrypt -- never decrypted/reversible, the key is
     only ever verified, never read back.
-  * Read in capped chunks (same ``max_file_size_bytes`` config knob
-    the pull-mode file transports use), so an oversized upload is
+  * Read in capped chunks (the same system-wide
+    ``harvest_runner.MAX_FILE_SIZE_BYTES`` the pull-mode file transports use), so an oversized upload is
     rejected before being fully buffered into memory -- same reasoning
     as ``harvest_runner._read_capped``, just against an async
     ``UploadFile`` instead of a sync stream.
@@ -77,7 +77,7 @@ async def _read_capped(upload: UploadFile, max_bytes: int) -> bytes:
         total += len(chunk)
         if total > max_bytes:
             raise harvest_runner.FileTooLargeError(
-                "file exceeds max_file_size_bytes=%d (stopped after %d bytes read)" % (max_bytes, total)
+                "file exceeds the %d-byte size limit (stopped after %d bytes read)" % (max_bytes, total)
             )
         chunks.append(chunk)
     return b"".join(chunks)
@@ -94,10 +94,8 @@ async def push_upload(
     source = _get_active_push_source_or_404(session, source_name)
     _check_api_key(source, x_api_key)
 
-    config = json.loads(source.config or "{}")
-    max_file_size = config.get("max_file_size_bytes", harvest_runner.DEFAULT_MAX_FILE_SIZE_BYTES)
     try:
-        content = await _read_capped(file, max_file_size)
+        content = await _read_capped(file, harvest_runner.MAX_FILE_SIZE_BYTES)
     except harvest_runner.FileTooLargeError as exc:
         raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, str(exc)) from exc
 
