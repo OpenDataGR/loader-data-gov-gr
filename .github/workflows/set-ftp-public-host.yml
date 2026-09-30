@@ -1,0 +1,25 @@
+name: Set LOADER_FTP_PUBLIC_HOST (one-off)
+
+# One-off: the server address shown to a provider on the credentials
+# page after they register a push source via FTP/SFTP. Not a secret --
+# just adds (or corrects) the line in the env file and restarts the
+# service to pick it up. Deleted after a single run.
+on:
+  workflow_dispatch:
+
+jobs:
+  set:
+    runs-on: [self-hosted, loader]
+    timeout-minutes: 5
+    steps:
+      - name: Set the value and restart
+        run: |
+          if sudo -n grep -q '^LOADER_FTP_PUBLIC_HOST=' /etc/loader-data-gov-gr.env; then
+            sudo -n sed -i 's|^LOADER_FTP_PUBLIC_HOST=.*|LOADER_FTP_PUBLIC_HOST=ftp.loader.data.gov.gr|' /etc/loader-data-gov-gr.env
+          else
+            echo "LOADER_FTP_PUBLIC_HOST=ftp.loader.data.gov.gr" | sudo -n tee -a /etc/loader-data-gov-gr.env > /dev/null
+          fi
+          sudo -n grep '^LOADER_FTP_PUBLIC_HOST=' /etc/loader-data-gov-gr.env
+          sudo -n pkill -TERM -u localadmin -f "gunicorn.*providerharvest_service.app:app" || true
+          sleep 3
+          curl -sf http://127.0.0.1:5002/health && echo " -- service back up"
