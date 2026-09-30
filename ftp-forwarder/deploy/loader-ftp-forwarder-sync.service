@@ -12,6 +12,8 @@ ExecStart=/opt/data-projects/loader-ftp-forwarder/ftp-forwarder/.venv/bin/ftp-fo
   --loader-base-url https://loader.data.gov.gr \
   --sync-key-file /etc/ftp-forwarder/secrets/ftp-sync.key \
   --db-path /etc/proftpd/ftp-accounts.db \
+  --upload-root /srv/ftp \
+  --upload-owner virtualftp \
   --interval-s 60
 Restart=always
 

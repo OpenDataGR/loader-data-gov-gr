@@ -107,6 +107,19 @@ registration portal) and the JSON APIs
 (`/admin/ftp-accounts*`, `/admin/ftp-box-status`, both already
 key-gated) are untouched by this -- only the two HTML UI prefixes are.
 
+A source is either **pull** (we fetch it -- HTTP/SFTP/SCP/FTP, on a
+harvest frequency) or **push** (the provider sends it as it arrives, no
+schedule -- `transport_type="push"`, with `config.push_method`
+`https` for an API key or `ftp` for a login on the FTP/SFTP box). A
+provider registering an `ftp` push source picks (or has generated) a
+username and password on the registration form itself
+(`provider_sources.register`); the account is created disabled and
+tied to the source (`FtpAccount.managed_source_id`), so approving the
+source enables the login and pausing/rejecting/deleting it disables or
+removes it. The credentials page shows the server
+(`LOADER_FTP_PUBLIC_HOST`) and ports once; the password is never stored
+in recoverable form.
+
 `ui_admin_ftp.py`
 puts an actual HTML page on this (`/admin/ftp`, in the masthead nav)
 -- the account list plus live status for every remote FTP/SFTP-

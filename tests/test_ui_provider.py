@@ -403,3 +403,105 @@ def test_file_download_404s_for_an_unknown_file_id(client):
     source_id = _register_activate_sftp_and_get_id(client)
     resp = client.get("/provider/sources/%s/runs/some-run/files/no-such-file" % source_id)
     assert resp.status_code == 404
+
+
+# -- pull vs push, and push via FTP/SFTP credentials -----------------------
+
+
+def _ftp_push_form(**overrides):
+    form = {"name": "acme-push", "title": "Acme push", "transport_type": "push", "push_method": "ftp"}
+    form.update(overrides)
+    return form
+
+
+def _ftp_account(session_factory, username):
+    from sqlalchemy import select
+
+    from providerharvest_service.models import FtpAccount
+
+    with session_factory() as session:
+        return session.scalar(select(FtpAccount).where(FtpAccount.username == username))
+
+
+def test_new_source_form_offers_pull_and_push_and_both_push_methods(client):
+    text = client.get("/provider/sources/new").text
+    assert 'id="kind-pull"' in text and 'id="kind-push"' in text
+    assert 'id="push-method-https"' in text and 'id="push-method-ftp"' in text
+    # Push is a kind, not one more connector card next to http/sftp/scp/ftp.
+    assert 'name="transport_type" value="push" onchange' not in text
+
+
+def test_registering_an_ftp_push_source_shows_the_login_and_server_once(client, _isolated_db, monkeypatch):
+    monkeypatch.setenv("LOADER_FTP_PUBLIC_HOST", "ftp.example.gr")
+    resp = client.post("/provider/sources/new", data=_ftp_push_form())
+    assert resp.status_code == 200
+    assert "ftp.example.gr" in resp.text
+    assert 'value="acme-push"' in resp.text  # the username
+    assert "sftp -P 2222 acme-push@ftp.example.gr" in resp.text
+
+    # The generated password is on this page and nowhere else.
+    import re
+    password = re.search(r'<label>Password</label>\s*<input[^>]*value="([^"]+)"', resp.text).group(1)
+    assert len(password) >= 20
+    assert password not in client.get("/provider/sources").text
+    assert password not in client.get("/admin/ftp").text
+
+    account = _ftp_account(_isolated_db, "acme-push")
+    assert account.enabled is False
+    assert password not in account.password_hash
+
+
+def test_ftp_push_credentials_page_says_so_when_the_server_address_is_not_configured(client, monkeypatch):
+    monkeypatch.delenv("LOADER_FTP_PUBLIC_HOST", raising=False)
+    resp = client.post("/provider/sources/new", data=_ftp_push_form())
+    assert resp.status_code == 200
+    assert "isn't configured yet" in resp.text
+    assert "sftp -P" not in resp.text  # no example built around a missing host
+
+
+def test_a_password_the_provider_chose_is_never_echoed_back(client):
+    resp = client.post(
+        "/provider/sources/new", data=_ftp_push_form(push_ftp_password="a-long-enough-secret")
+    )
+    assert resp.status_code == 200
+    assert "a-long-enough-secret" not in resp.text
+    assert "You chose your own password" in resp.text
+
+
+def test_a_rejected_ftp_push_registration_never_echoes_the_typed_password(client):
+    resp = client.post("/provider/sources/new", data=_ftp_push_form(push_ftp_password="short"))
+    assert resp.status_code == 400
+    assert "at least 12 characters" in resp.text
+    assert 'value="short"' not in resp.text
+    assert "acme-push" in resp.text  # everything else that was typed is kept
+
+
+def test_approving_the_source_enables_the_ftp_login(client, _isolated_db):
+    client.post("/provider/sources/new", data=_ftp_push_form())
+    assert _ftp_account(_isolated_db, "acme-push").enabled is False
+
+    with _isolated_db() as session:
+        from providerharvest_service import provider_sources
+        source_id = provider_sources.list_all(session)[0].id
+
+    client.post("/admin/sources/%s/activate" % source_id)
+    assert _ftp_account(_isolated_db, "acme-push").enabled is True
+
+
+def test_push_source_ignores_a_submitted_frequency(client, _isolated_db):
+    client.post("/provider/sources/new", data=_ftp_push_form(frequency="DAILY"))
+    with _isolated_db() as session:
+        from providerharvest_service import provider_sources
+        assert provider_sources.list_all(session)[0].frequency == "MANUAL"
+
+
+def test_editing_a_push_source_locks_its_kind_and_method(client, _isolated_db):
+    client.post("/provider/sources/new", data=_ftp_push_form())
+    with _isolated_db() as session:
+        from providerharvest_service import provider_sources
+        source_id = provider_sources.list_all(session)[0].id
+
+    text = client.get("/provider/sources/%s/edit" % source_id).text
+    assert "This can't be changed once registered" in text
+    assert "can't be changed here -- ask an admin to issue a new password" in text
+    assert 'name="push_ftp_password"' not in text  # no password field to edit

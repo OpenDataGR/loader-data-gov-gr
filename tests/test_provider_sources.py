@@ -471,3 +471,165 @@ def test_switching_an_existing_source_to_push_via_edit_is_rejected(session):
     with pytest.raises(provider_sources.ValidationError) as exc_info:
         provider_sources.update(session, source.id, edit_form)
     assert "transport_type" in exc_info.value.errors
+
+
+# -- push via FTP/SFTP credentials (push_method="ftp") ---------------------
+
+
+def _ftp_push_form(**overrides):
+    return _push_form(push_method="ftp", **overrides)
+
+
+def _ftp_account(session, username):
+    from sqlalchemy import select
+
+    from providerharvest_service.models import FtpAccount
+
+    return session.scalar(select(FtpAccount).where(FtpAccount.username == username))
+
+
+@pytest.fixture(autouse=True)
+def _upload_root(monkeypatch):
+    monkeypatch.setenv("LOADER_FTP_UPLOAD_ROOT", "/srv/ftp")
+
+
+def test_register_ftp_push_source_creates_a_disabled_managed_account(session):
+    source = provider_sources.register(session, _ftp_push_form())
+
+    account = _ftp_account(session, "acme-push")
+    assert account is not None
+    assert account.enabled is False  # nothing may log in before an admin approves the source
+    assert account.managed_source_id == source.id
+    assert account.push_target_source_name == "acme-push"
+    assert account.home_directory == "/srv/ftp/acme-push"
+
+
+def test_register_ftp_push_source_has_no_frequency_and_no_api_key(session):
+    source = provider_sources.register(session, _ftp_push_form(frequency="DAILY"))
+    assert source.frequency == "MANUAL"  # a push source has no schedule
+    assert getattr(source, "generated_api_key", None) is None
+    assert json.loads(source.config)["push_method"] == "ftp"
+    assert "push_api_key_hash" not in json.loads(source.config)
+
+
+def test_register_ftp_push_source_generates_a_password_and_shows_it_once(session):
+    import bcrypt
+
+    source = provider_sources.register(session, _ftp_push_form())
+    revealed = source.generated_ftp
+    assert revealed["username"] == "acme-push"
+    assert len(revealed["password"]) >= 20
+
+    account = _ftp_account(session, "acme-push")
+    assert account.password_hash != revealed["password"]
+    assert bcrypt.checkpw(revealed["password"].encode("utf-8"), account.password_hash.encode("ascii"))
+    # ProFTPD's mod_sql_passwd only accepts $2a$ (see ftp_credentials.hash_password).
+    assert account.password_hash.startswith("$2a$")
+
+
+def test_register_ftp_push_source_accepts_a_chosen_username_and_password(session):
+    import bcrypt
+
+    source = provider_sources.register(
+        session, _ftp_push_form(push_ftp_username="acme_ingest", push_ftp_password="a-long-enough-secret")
+    )
+    account = _ftp_account(session, "acme_ingest")
+    assert account.home_directory == "/srv/ftp/acme_ingest"
+    assert bcrypt.checkpw(b"a-long-enough-secret", account.password_hash.encode("ascii"))
+    # A password the provider chose is never echoed back.
+    assert source.generated_ftp["password"] is None
+    assert source.generated_ftp["username"] == "acme_ingest"
+
+
+def test_register_ftp_push_source_rejects_a_short_chosen_password(session):
+    with pytest.raises(provider_sources.ValidationError) as exc_info:
+        provider_sources.register(session, _ftp_push_form(push_ftp_password="short"))
+    assert "push_ftp_password" in exc_info.value.errors
+    assert _ftp_account(session, "acme-push") is None  # nothing was created
+
+
+def test_register_ftp_push_source_rejects_a_username_already_in_use(session):
+    provider_sources.register(session, _ftp_push_form())
+    with pytest.raises(provider_sources.ValidationError) as exc_info:
+        provider_sources.register(session, _ftp_push_form(name="another-source", push_ftp_username="acme-push"))
+    assert "push_ftp_username" in exc_info.value.errors
+
+
+def test_register_ftp_push_source_rejects_an_invalid_username(session):
+    with pytest.raises(provider_sources.ValidationError) as exc_info:
+        provider_sources.register(session, _ftp_push_form(push_ftp_username="bad name!"))
+    assert "push_ftp_username" in exc_info.value.errors
+
+
+def test_register_ftp_push_source_asks_for_a_username_when_the_name_is_too_long(session):
+    with pytest.raises(provider_sources.ValidationError) as exc_info:
+        provider_sources.register(session, _ftp_push_form(name="a-source-name-that-is-far-too-long-for-a-username"))
+    assert "push_ftp_username" in exc_info.value.errors
+
+
+def test_register_ftp_push_source_rejects_an_unknown_push_method(session):
+    with pytest.raises(provider_sources.ValidationError) as exc_info:
+        provider_sources.register(session, _push_form(push_method="carrier-pigeon"))
+    assert "push_method" in exc_info.value.errors
+
+
+def test_activating_the_source_enables_its_account(session):
+    source = provider_sources.register(session, _ftp_push_form())
+    provider_sources.activate(session, source.id)
+    assert _ftp_account(session, "acme-push").enabled is True
+
+
+def test_pausing_and_resuming_the_source_disables_and_enables_its_account(session):
+    source = provider_sources.register(session, _ftp_push_form())
+    provider_sources.activate(session, source.id)
+
+    provider_sources.pause(session, source.id)
+    assert _ftp_account(session, "acme-push").enabled is False
+
+    provider_sources.resume(session, source.id)
+    assert _ftp_account(session, "acme-push").enabled is True
+
+
+def test_rejecting_the_source_leaves_its_account_disabled(session):
+    source = provider_sources.register(session, _ftp_push_form())
+    provider_sources.reject(session, source.id, "not a real provider")
+    assert _ftp_account(session, "acme-push").enabled is False
+
+
+def test_deleting_the_source_deletes_its_account(session):
+    source = provider_sources.register(session, _ftp_push_form())
+    provider_sources.delete(session, source.id)
+    assert _ftp_account(session, "acme-push") is None
+
+
+def test_an_admin_created_account_is_not_touched_by_source_lifecycle(session):
+    from providerharvest_service.models import FtpAccount
+
+    source = provider_sources.register(session, _push_form())  # https push, no managed account
+    session.add(FtpAccount(
+        username="admin-made", password_hash="$2a$x", home_directory="/srv/ftp/admin-made",
+        protocol="ftp", enabled=False, push_target_source_name=source.name,
+    ))
+    session.commit()
+
+    provider_sources.activate(session, source.id)
+    assert _ftp_account(session, "admin-made").enabled is False  # managed_source_id is NULL
+
+    provider_sources.delete(session, source.id)
+    assert _ftp_account(session, "admin-made") is not None
+
+
+def test_editing_an_ftp_push_source_keeps_its_method_and_only_changes_what_was_edited(session):
+    source = provider_sources.register(session, _ftp_push_form())
+
+    edit_form = provider_sources.config_to_form_fields(source)
+    assert edit_form["push_method"] == "ftp"
+    edit_form["title"] = "Renamed"
+    edit_form["push_max_file_size_bytes"] = "1234"
+    updated = provider_sources.update(session, source.id, edit_form)
+
+    config = json.loads(updated.config)
+    assert updated.title == "Renamed"
+    assert config["push_method"] == "ftp"
+    assert config["max_file_size_bytes"] == 1234
+    assert _ftp_account(session, "acme-push") is not None  # the account was not touched by the edit

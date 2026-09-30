@@ -52,6 +52,13 @@ class FtpAccount(Base):
     # looked up server-side.
     push_target_source_name: Mapped[str | None] = mapped_column(String, nullable=True)
 
+    # Set only for an account a provider created for themselves while
+    # registering a push source (provider_sources.register) -- that
+    # source's lifecycle then drives this account's: enabled only while
+    # the source is active, removed when the source is deleted. NULL for
+    # an admin-created account, which stays independently managed.
+    managed_source_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
     allowed_ips: Mapped[list["FtpAllowedIp"]] = relationship(
         back_populates="account", cascade="all, delete-orphan"
     )

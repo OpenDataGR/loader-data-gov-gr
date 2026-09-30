@@ -40,7 +40,13 @@ endpoint any HTTPS-capable provider could call directly.
   key) and mirrors it into this box's own local SQLite database --
   the one ProFTPD's `mod_sql_sqlite` actually authenticates against.
   Loader's admin panel stays the one place accounts get created,
-  edited, or disabled. Every cycle, this same process also reports
+  edited, or disabled -- a provider registering a push source via
+  FTP/SFTP creates their own account there too (see loader's README).
+  With `--upload-root` set it also creates each account's home directory
+  when it's missing (owned by `--upload-owner`, group-writable + setgid
+  so the relay can work inside it) -- ProFTPD can't log a virtual user
+  in without one, and only ever under that root, since this runs as
+  root and the list comes from loader. Every cycle, this same process also reports
   this box's own health (`box_health.py` -- is ProFTPD active, are
   ports 21/2222 actually listening, is the file-relay service active,
   did the account pull itself succeed) to loader via
@@ -129,6 +135,8 @@ systemd unit under `deploy/` for the real, deployed invocation):
 --sync-key-file /etc/ftp-forwarder/secrets/ftp-sync.key
 --db-path /etc/proftpd/ftp-accounts.db
 --interval-s 60                    # optional
+--upload-root /srv/ftp             # optional -- create missing account home directories under here
+--upload-owner virtualftp          # optional -- owner of those directories
 --proftpd-unit proftpd             # optional
 --relay-unit loader-ftp-forwarder  # optional
 --ftp-port 21                      # optional

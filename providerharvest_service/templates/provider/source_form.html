@@ -8,7 +8,7 @@
       {% if editing %}
         Credential fields below are always left blank -- leave them blank to keep the current one, or type a new value to replace it.
       {% else %}
-        Connect a provider's API, SFTP/SCP drop, or FTP server for scheduled harvesting.
+        Pull data from a provider's API, SFTP/SCP drop or FTP server on a schedule -- or let the provider push files to us as they're produced.
       {% endif %}
     </p>
 
@@ -36,34 +36,51 @@
       <input type="text" id="title" name="title" value="{{ data.get('title', '') }}">
       {% if errors.title %}<div class="error">{{ errors.title }}</div>{% endif %}
 
-      <label for="endpoint_url">Endpoint URL / host</label>
-      <input type="text" id="endpoint_url" name="endpoint_url" value="{{ data.get('endpoint_url', '') }}"
-             placeholder="https://provider.example.gr/api/records or sftp.example.gr">
-      {% if errors.endpoint_url %}<div class="error">{{ errors.endpoint_url }}</div>{% endif %}
-
-      <label for="frequency">Harvest frequency</label>
-      <select id="frequency" name="frequency">
-        {% for f in frequencies %}
-          <option value="{{ f }}" {% if data.get('frequency', 'DAILY') == f %}selected{% endif %}>{{ f }}</option>
-        {% endfor %}
-      </select>
-      {% if errors.frequency %}<div class="error">{{ errors.frequency }}</div>{% endif %}
-
       <label for="notification_email">Notification e-mail (optional)</label>
       <input type="email" id="notification_email" name="notification_email" value="{{ data.get('notification_email', '') }}">
 
-      <label>Connector</label>
-      <div class="connector-grid">
-        {% for t in transport_types %}
-          <label class="connector-card">
-            <input type="radio" name="transport_type" value="{{ t }}" onchange="showTransportFields()"
-                   {% if data.get('transport_type', 'http') == t %}checked{% endif %}>
-            <span class="connector-icon">{{ macros.icon(t, 26) }}</span>
-            <span class="connector-name">{{ t }}</span>
-          </label>
-        {% endfor %}
+      {% set kind = 'push' if data.get('transport_type') == 'push' else 'pull' %}
+      <label>How does this source deliver its data?</label>
+      <div class="segmented">
+        <span>
+          <input type="radio" id="kind-pull" name="kind" value="pull" onchange="showKind()"
+                 {% if kind == 'pull' %}checked{% endif %} {% if editing %}disabled{% endif %}>
+          <label for="kind-pull">Pull -- we fetch it, on a schedule</label>
+        </span>
+        <span>
+          <input type="radio" id="kind-push" name="kind" value="push" onchange="showKind()"
+                 {% if kind == 'push' %}checked{% endif %} {% if editing %}disabled{% endif %}>
+          <label for="kind-push">Push -- they send it to us, as it arrives</label>
+        </span>
       </div>
-      {% if errors.transport_type %}<div class="error">{{ errors.transport_type }}</div>{% endif %}
+      {% if editing %}<div class="muted" style="margin-top:0.3rem;">This can't be changed once registered.</div>{% endif %}
+
+      <div id="section-pull">
+        <label for="endpoint_url">Endpoint URL / host</label>
+        <input type="text" id="endpoint_url" name="endpoint_url" value="{{ data.get('endpoint_url', '') }}"
+               placeholder="https://provider.example.gr/api/records or sftp.example.gr">
+        {% if errors.endpoint_url %}<div class="error">{{ errors.endpoint_url }}</div>{% endif %}
+
+        <label for="frequency">Harvest frequency</label>
+        <select id="frequency" name="frequency">
+          {% for f in frequencies %}
+            <option value="{{ f }}" {% if data.get('frequency', 'DAILY') == f %}selected{% endif %}>{{ f }}</option>
+          {% endfor %}
+        </select>
+        {% if errors.frequency %}<div class="error">{{ errors.frequency }}</div>{% endif %}
+
+        <label>Connector</label>
+        <div class="connector-grid">
+          {% for t in pull_transport_types %}
+            <label class="connector-card">
+              <input type="radio" name="transport_type" value="{{ t }}" onchange="showTransportFields()"
+                     {% if data.get('transport_type', 'http') == t or (kind == 'push' and t == 'http') %}checked{% endif %}>
+              <span class="connector-icon">{{ macros.icon(t, 26) }}</span>
+              <span class="connector-name">{{ t }}</span>
+            </label>
+          {% endfor %}
+        </div>
+        {% if errors.transport_type %}<div class="error">{{ errors.transport_type }}</div>{% endif %}
 
       <fieldset id="fieldset-http">
         <legend>{{ macros.icon("http", 15) }} HTTP API settings</legend>
@@ -220,38 +237,88 @@
         {% if errors.ftp_max_file_size_bytes %}<div class="error">{{ errors.ftp_max_file_size_bytes }}</div>{% endif %}
       </fieldset>
 
-      <fieldset id="fieldset-push">
-        <legend>{{ macros.icon("push", 15) }} Push settings</legend>
-        <p class="muted" style="margin-top:0.2rem;">
-          No credentials to enter here -- once registered and approved, you'll be given a one-time
-          API key and an upload URL to push files to instead of us connecting out to fetch them.
-        </p>
-        <label for="push_max_file_size_bytes">Max file size (bytes)</label>
-        <input type="number" class="small" id="push_max_file_size_bytes" name="push_max_file_size_bytes" value="{{ data.get('push_max_file_size_bytes', 20971520) }}" oninput="updateHumanSize('push_max_file_size_bytes')">
-        <span class="muted" id="push_max_file_size_bytes_human"></span>
-        {% if errors.push_max_file_size_bytes %}<div class="error">{{ errors.push_max_file_size_bytes }}</div>{% endif %}
-      </fieldset>
+      </div>
+
+      <div id="section-push">
+        <input type="hidden" id="transport-type-push" name="transport_type" value="push">
+        <fieldset id="fieldset-push">
+          <legend>{{ macros.icon("push", 15) }} Push settings</legend>
+
+          <label>How will you send files?</label>
+          <div class="segmented">
+            <span>
+              <input type="radio" id="push-method-https" name="push_method" value="https" onchange="showPushMethodFields()"
+                     {% if data.get('push_method', 'https') == 'https' %}checked{% endif %} {% if editing %}disabled{% endif %}>
+              <label for="push-method-https">HTTPS upload (API key)</label>
+            </span>
+            <span>
+              <input type="radio" id="push-method-ftp" name="push_method" value="ftp" onchange="showPushMethodFields()"
+                     {% if data.get('push_method') == 'ftp' %}checked{% endif %} {% if editing %}disabled{% endif %}>
+              <label for="push-method-ftp">FTP / SFTP (username &amp; password)</label>
+            </span>
+          </div>
+          {% if errors.push_method %}<div class="error">{{ errors.push_method }}</div>{% endif %}
+
+          <p class="muted" id="push-https-note" style="margin-top:0.6rem;">
+            No credentials to enter here -- once registered and approved, you'll be given a one-time
+            API key and an upload URL to push files to instead of us connecting out to fetch them.
+          </p>
+
+          <div id="push-ftp-fields">
+            {% if editing %}
+              <p class="muted" style="margin-top:0.6rem;">
+                The FTP/SFTP login can't be changed here -- ask an admin to issue a new password.
+              </p>
+            {% else %}
+              <p class="muted" style="margin-top:0.6rem;">
+                We create a login for you on our FTP/SFTP server when you register. Pick your own
+                username and password below, or leave them blank and we'll generate them. You'll get the
+                server address and port on the next page; the login only works once an admin approves
+                this source.
+              </p>
+
+              <label for="push_ftp_username">Username (optional -- defaults to the source name)</label>
+              <input type="text" id="push_ftp_username" name="push_ftp_username" autocomplete="off"
+                     value="{{ data.get('push_ftp_username', '') }}">
+              {% if errors.push_ftp_username %}<div class="error">{{ errors.push_ftp_username }}</div>{% endif %}
+
+              <label for="push_ftp_password">Password (optional -- at least 12 characters; leave blank to generate one)</label>
+              <input type="password" id="push_ftp_password" name="push_ftp_password" autocomplete="new-password">
+              {% if errors.push_ftp_password %}<div class="error">{{ errors.push_ftp_password }}</div>{% endif %}
+            {% endif %}
+          </div>
+
+          <label for="push_max_file_size_bytes">Max file size (bytes)</label>
+          <input type="number" class="small" id="push_max_file_size_bytes" name="push_max_file_size_bytes" value="{{ data.get('push_max_file_size_bytes', 20971520) }}" oninput="updateHumanSize('push_max_file_size_bytes')">
+          <span class="muted" id="push_max_file_size_bytes_human"></span>
+          {% if errors.push_max_file_size_bytes %}<div class="error">{{ errors.push_max_file_size_bytes }}</div>{% endif %}
+        </fieldset>
+      </div>
 
       <button type="submit">{{ macros.icon(("check" if editing else "plus"), 16) }} {{ "Save changes" if editing else "Register source" }}</button>
     </form>
   </div>
 
   <script>
+    function showKind() {
+      var checked = document.querySelector('input[name="kind"]:checked');
+      var kind = checked ? checked.value : 'pull';
+      document.getElementById('section-pull').style.display = (kind === 'pull') ? '' : 'none';
+      document.getElementById('section-push').style.display = (kind === 'push') ? '' : 'none';
+      // Exactly one transport_type may be submitted: a pull connector's
+      // radio, or the push section's hidden input. Disabled inputs aren't
+      // sent, so switching kind swaps which one counts.
+      document.querySelectorAll('#section-pull input[name="transport_type"]').forEach(function (i) {
+        i.disabled = (kind !== 'pull');
+      });
+      document.getElementById('transport-type-push').disabled = (kind !== 'push');
+    }
     function showTransportFields() {
-      var checked = document.querySelector('input[name="transport_type"]:checked');
+      var checked = document.querySelector('#section-pull input[name="transport_type"]:checked');
       var t = checked ? checked.value : 'http';
       document.getElementById('fieldset-http').style.display = (t === 'http') ? '' : 'none';
       document.getElementById('fieldset-ssh').style.display = (t === 'sftp' || t === 'scp') ? '' : 'none';
       document.getElementById('fieldset-ftp').style.display = (t === 'ftp') ? '' : 'none';
-      document.getElementById('fieldset-push').style.display = (t === 'push') ? '' : 'none';
-      // A push-mode source has no endpoint of its own -- we never
-      // connect anywhere for one, the provider calls us instead.
-      var endpointInput = document.getElementById('endpoint_url');
-      var endpointLabel = endpointInput.previousElementSibling;
-      endpointInput.style.display = (t === 'push') ? 'none' : '';
-      if (endpointLabel && endpointLabel.tagName === 'LABEL') {
-        endpointLabel.style.display = (t === 'push') ? 'none' : '';
-      }
       // Fallback for browsers without CSS :has() support -- the base
       // stylesheet's :has(input:checked) rule already covers this, this
       // just makes the card highlight work everywhere.
@@ -259,6 +326,12 @@
         var input = card.querySelector('input');
         card.classList.toggle('selected', !!(input && input.checked));
       });
+    }
+    function showPushMethodFields() {
+      var checked = document.querySelector('input[name="push_method"]:checked');
+      var m = checked ? checked.value : 'https';
+      document.getElementById('push-https-note').style.display = (m === 'https') ? '' : 'none';
+      document.getElementById('push-ftp-fields').style.display = (m === 'ftp') ? '' : 'none';
     }
     function showAuthFields() {
       var checked = document.querySelector('input[name="auth_type"]:checked');
@@ -287,7 +360,9 @@
       if (input && span) span.textContent = formatBytesHuman(parseInt(input.value, 10));
     }
     ['sftp_max_file_size_bytes', 'ftp_max_file_size_bytes', 'push_max_file_size_bytes'].forEach(updateHumanSize);
+    showKind();
     showTransportFields();
+    showPushMethodFields();
     showAuthFields();
   </script>
 {% endblock %}

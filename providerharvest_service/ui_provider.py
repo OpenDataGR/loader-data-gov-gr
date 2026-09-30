@@ -84,6 +84,16 @@ async def new_source_submit(request: Request, session: Session = Depends(get_ses
                 "upload_url": _push_upload_url(request, source.name),
             },
         )
+    generated_ftp = getattr(source, "generated_ftp", None)
+    if generated_ftp:
+        # Same one-time rule as the API key above: the plaintext password
+        # (when we generated it) exists only in this response. A password
+        # the provider chose themselves is None here and never echoed.
+        return templates.TemplateResponse(
+            request,
+            "provider/push_ftp_credentials.html",
+            {"source": source, "ftp": generated_ftp, "server": _ftp_public_endpoint()},
+        )
     return RedirectResponse(
         _redirect_with_flash("Source %r registered and awaiting admin approval." % source.name),
         status_code=303,
@@ -279,6 +289,19 @@ def _push_upload_url(request: Request, source_name: str) -> str:
     return "%s/push/%s/upload" % (base.rstrip("/"), source_name)
 
 
+def _ftp_public_endpoint() -> dict:
+    """Where a provider connects to push files by FTP/SFTP -- the
+    external FTP-receiving box (see ftp-forwarder/README.md), not this
+    app's own host, so it can't be derived from the request; it's
+    configured. ``host`` is None until LOADER_FTP_PUBLIC_HOST is set, and
+    the credentials page says so rather than showing a wrong address."""
+    return {
+        "host": (os.environ.get("LOADER_FTP_PUBLIC_HOST") or "").strip() or None,
+        "ftp_port": os.environ.get("LOADER_FTP_PUBLIC_PORT") or "21",
+        "sftp_port": os.environ.get("LOADER_SFTP_PUBLIC_PORT") or "2222",
+    }
+
+
 def _redirect_with_flash(flash: str, kind: str = "success") -> str:
     return "/provider/sources?%s" % urlencode({"flash": flash, "flash_kind": kind})
 
@@ -296,6 +319,10 @@ def _form_template_vars(data, errors=None, editing=False, source_id=None) -> dic
         "data": data,
         "errors": errors or {},
         "transport_types": FIELD_TYPES,
+        # Pull sources are fetched by us (a connector per protocol, on a
+        # schedule); push sources have a single "push" transport whose
+        # sub-choice (HTTPS key vs FTP/SFTP login) is `push_method`.
+        "pull_transport_types": tuple(t for t in FIELD_TYPES if t != "push"),
         "frequencies": FREQUENCIES,
         "http_auth_types": HTTP_AUTH_TYPES,
         "editing": editing,

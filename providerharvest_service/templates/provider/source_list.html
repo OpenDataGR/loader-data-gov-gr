@@ -38,7 +38,7 @@
                 <div class="proxy-url"><a href="/proxy/{{ s.name }}">/proxy/{{ s.name }}</a></div>
               {% endif %}
             </td>
-            <td>{{ s.frequency }}</td>
+            <td>{% if s.transport_type == "push" %}<span class="muted">on arrival</span>{% else %}{{ s.frequency }}{% endif %}</td>
             <td>
               {{ macros.status_badge(s.status) }}
               {% if s.status == "rejected" and s.rejection_reason %}

@@ -29,6 +29,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--db-path", required=True, help="Path to the local SQLite DB ProFTPD's mod_sql_sqlite reads")
     parser.add_argument("--interval-s", type=int, default=60)
+    parser.add_argument(
+        "--upload-root",
+        help="If set, create each synced account's home directory under this root (e.g. /srv/ftp) when it's missing",
+    )
+    parser.add_argument(
+        "--upload-owner", default="virtualftp",
+        help="User and group that own the created home directories (only used with --upload-root)",
+    )
     parser.add_argument("--proftpd-unit", default="proftpd")
     parser.add_argument("--relay-unit", default="loader-ftp-forwarder")
     parser.add_argument("--ftp-port", type=int, default=21)
@@ -44,12 +52,25 @@ def main(argv: list[str] | None = None) -> int:
     session = requests.Session()
     hostname = socket.gethostname()
 
+    uid = gid = None
+    if args.upload_root:
+        # Linux-only lookups, and resolved once up front: a typo'd owner
+        # should fail loudly at startup (systemd restarts it, the journal
+        # says why), not silently create root-owned directories forever.
+        import grp
+        import pwd
+        uid = pwd.getpwnam(args.upload_owner).pw_uid
+        gid = grp.getgrnam(args.upload_owner).gr_gid
+
     while True:
         sync_ok = True
         sync_message = "ok"
         try:
-            account_sync.sync_once(session, args.loader_base_url, sync_key, args.db_path)
-        except account_sync.SyncError as exc:
+            account_sync.sync_once(
+                session, args.loader_base_url, sync_key, args.db_path,
+                upload_root=args.upload_root, uid=uid, gid=gid,
+            )
+        except (account_sync.SyncError, OSError) as exc:
             logger.error("sync failed: %s", exc)
             sync_ok = False
             sync_message = str(exc)

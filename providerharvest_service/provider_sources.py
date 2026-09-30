@@ -20,6 +20,7 @@ either depending on the other.
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 import secrets
 from urllib.parse import urlparse
@@ -30,10 +31,22 @@ from sqlalchemy.orm import Session
 
 from providerharvest_service.engine.secrets.base import SecretBundle
 from providerharvest_service.engine.secrets.envelope import EnvelopeSecretsBackend
-from providerharvest_service.models import ProviderSource, _new_id
+from providerharvest_service.ftp_credentials import (
+    USERNAME_RE,
+    ftp_upload_root,
+    generate_password,
+    hash_password,
+)
+from providerharvest_service.models import FtpAccount, ProviderSource, _new_id
 
 TRANSPORT_TYPES = ("http", "sftp", "scp", "ftp", "push")
 SSH_TRANSPORT_TYPES = ("sftp", "scp")
+# How a push-mode source receives its data: "https" (the provider calls
+# push_ingest.py with a generated API key) or "ftp" (the provider logs
+# into the external FTP/SFTP box with a username/password created for
+# them at registration, see ftp_relay_ingest.py).
+PUSH_METHODS = ("https", "ftp")
+MIN_CUSTOM_FTP_PASSWORD_LENGTH = 12
 FREQUENCIES = ("MANUAL", "DAILY", "WEEKLY", "MONTHLY")
 HTTP_AUTH_TYPES = ("api_key", "basic_auth", "oauth2_client_credentials", "mtls")
 STATUSES_ADMIN_MANAGES = ("pending", "active", "rejected", "paused")
@@ -331,37 +344,74 @@ def _ftp_fields(form: dict, endpoint_url: str, errors: dict) -> tuple[dict, dict
     return credential_fields, config_extra
 
 
-def _push_fields(form: dict, errors: dict) -> tuple[dict, dict, str]:
-    """Returns (credential_fields, config_extra, plaintext_api_key) for
-    a push-mode source -- one that never connects anywhere; instead the
-    provider calls this service's own upload endpoint (see
-    ``push_ingest.py``) and presents this key on every call. There's
-    nothing for the provider to type in here: we generate the key right
-    now.
+def _push_fields(session: Session, form: dict, source_name: str, errors: dict) -> tuple[dict, dict, dict]:
+    """Returns (credential_fields, config_extra, reveal) for a push-mode
+    source -- one that never connects anywhere; the provider sends us
+    data as it arrives instead, either by calling this service's own
+    upload endpoint (``push_method="https"``, see ``push_ingest.py``) or
+    by logging into the FTP/SFTP box (``push_method="ftp"``, see
+    ``ftp_relay_ingest.py``). ``reveal`` carries whatever must be shown
+    to the provider exactly once and never stored in recoverable form:
+    ``{"api_key": ...}`` for https, ``{"ftp": {...}}`` for ftp.
 
-    Stored as a one-way bcrypt hash in ``config`` (verified the same
-    way ``push_ingest.py`` checks it: hash-and-compare, never
-    decrypted) rather than through the envelope-encryption secret path
-    every other transport's *outbound* credentials use -- deliberately:
-    this key only ever needs to be *verified* against what a caller
-    presents, never read back out and used by this service itself, so
-    a one-way hash is strictly safer (a compromised master key or DB
-    dump exposes nothing usable). Matches the same "never re-shown,
-    never recoverable" choice already made for FTP-push account
-    passwords (``admin_ftp.py``'s own ``hash_password``), for the same
-    reason. ``credential_fields`` is returned empty only to keep the
-    same 2-tuple-plus shape every ``_x_fields`` function has; nothing
-    is ever stored via the secrets backend for a push-mode source."""
+    https: we generate the key right now, stored as a one-way bcrypt
+    hash in ``config`` (verified the same way ``push_ingest.py`` checks
+    it: hash-and-compare, never decrypted) rather than through the
+    envelope-encryption secret path every other transport's *outbound*
+    credentials use -- deliberately: this key only ever needs to be
+    *verified* against what a caller presents, never read back out and
+    used by this service itself, so a one-way hash is strictly safer (a
+    compromised master key or DB dump exposes nothing usable). Matches
+    the same "never re-shown, never recoverable" choice already made for
+    FTP-push account passwords (``ftp_credentials.hash_password``).
+
+    ftp: the provider may pick a username (defaults to the source name)
+    and a password (leave blank to have one generated); the actual
+    account is created in ``register``, after validation passes.
+    ``credential_fields`` is returned empty only to keep the same
+    shape every ``_x_fields`` function has; nothing is ever stored via
+    the secrets backend for a push-mode source."""
     config_extra = {
         "max_file_size_bytes": _parse_positive_int(
             form.get("push_max_file_size_bytes"), 20 * 1024 * 1024, "push_max_file_size_bytes", errors
         ),
     }
+    method = form.get("push_method") or "https"
+    if method not in PUSH_METHODS:
+        errors["push_method"] = "must be one of %s" % (PUSH_METHODS,)
+        method = "https"
+    config_extra["push_method"] = method
+
+    if method == "ftp":
+        typed_username = (form.get("push_ftp_username") or "").strip()
+        username = typed_username or source_name
+        if typed_username or "name" not in errors:
+            if not USERNAME_RE.match(username):
+                errors["push_ftp_username"] = (
+                    "3-32 characters, letters/digits/-/_ only"
+                    + ("" if typed_username else " -- the source name doesn't fit, so enter a username")
+                )
+            elif session.scalar(select(FtpAccount).where(FtpAccount.username == username)):
+                errors["push_ftp_username"] = "already in use -- pick another"
+
+        chosen_password = form.get("push_ftp_password") or ""
+        if chosen_password and len(chosen_password) < MIN_CUSTOM_FTP_PASSWORD_LENGTH:
+            errors["push_ftp_password"] = (
+                "at least %d characters (or leave blank to generate one)" % MIN_CUSTOM_FTP_PASSWORD_LENGTH
+            )
+        return {}, config_extra, {
+            "ftp": {
+                "username": username,
+                "password": chosen_password or generate_password(),
+                "generated": not chosen_password,
+            }
+        }
+
     plaintext_key = secrets.token_urlsafe(32)
     config_extra["push_api_key_hash"] = bcrypt.hashpw(
         plaintext_key.encode("utf-8"), bcrypt.gensalt()
     ).decode("ascii")
-    return {}, config_extra, plaintext_key
+    return {}, config_extra, {"api_key": plaintext_key}
 
 
 def register(session: Session, form: dict) -> ProviderSource:
@@ -401,6 +451,10 @@ def register(session: Session, form: dict) -> ProviderSource:
     if frequency not in FREQUENCIES:
         errors["frequency"] = "must be one of %s" % (FREQUENCIES,)
         frequency = "DAILY"
+    if transport_type == "push":
+        # A push source has no schedule -- data is received as it
+        # arrives, never fetched -- so a frequency doesn't apply.
+        frequency = "MANUAL"
 
     notification_email = (form.get("notification_email") or "").strip() or None
     # No default=True fallback here, same reasoning as ftp_use_tls
@@ -415,7 +469,7 @@ def register(session: Session, form: dict) -> ProviderSource:
     # proxies HTTP sources anyway), harmless to store for the others.
     proxy_enabled = _parse_bool(form.get("proxy_enabled"), default=False)
 
-    plaintext_api_key = None
+    push_reveal: dict = {}
     if transport_type in SSH_TRANSPORT_TYPES:
         credential_fields, config = _ssh_fields(form, endpoint_url, errors)
         auth_type = "ssh_credentials"  # inert for sftp/scp, matches base_generic's own dispatch
@@ -423,8 +477,10 @@ def register(session: Session, form: dict) -> ProviderSource:
         credential_fields, config = _ftp_fields(form, endpoint_url, errors)
         auth_type = "ftp_credentials"  # inert for ftp
     elif transport_type == "push":
-        credential_fields, config, plaintext_api_key = _push_fields(form, errors)
-        auth_type = "push_api_key"  # inert; push_ingest.py checks the key itself, not auth_strategies
+        credential_fields, config, push_reveal = _push_fields(session, form, name, errors)
+        # inert for push: push_ingest.py checks the key itself, and FTP
+        # push authenticates at ProFTPD -- neither goes through auth_strategies
+        auth_type = "push_ftp_account" if config.get("push_method") == "ftp" else "push_api_key"
     else:
         auth_type, credential_fields, config = _http_fields(form, errors)
 
@@ -451,7 +507,7 @@ def register(session: Session, form: dict) -> ProviderSource:
     session.flush()  # makes `row` persistent/gettable before the secrets backend looks it up
     _secrets_backend(session).put(harvest_source_id=row.id, fields=credential_fields)
     session.refresh(row)
-    if plaintext_api_key:
+    if "api_key" in push_reveal:
         # Shown exactly once, on the registration confirmation page --
         # only the bcrypt hash above is ever persisted, and bcrypt is
         # one-way, so this plaintext is genuinely never recoverable
@@ -460,7 +516,33 @@ def register(session: Session, form: dict) -> ProviderSource:
         # object is garbage collected. Same "generate once, never show
         # again" rule this codebase already applies to FTP-push account
         # passwords (admin_ftp.py) and CKAN tokens.
-        row.generated_api_key = plaintext_api_key
+        row.generated_api_key = push_reveal["api_key"]
+    elif "ftp" in push_reveal:
+        spec = push_reveal["ftp"]
+        home_directory = posixpath.join(ftp_upload_root(), spec["username"])
+        # Created disabled: anyone can reach the registration form (no
+        # login wall on the provider portal yet), so this account must
+        # not be able to log in -- or even be synced to the FTP box --
+        # until an admin approves the source. activate()/pause()/etc.
+        # flip it via _sync_managed_ftp_accounts.
+        session.add(FtpAccount(
+            username=spec["username"],
+            password_hash=hash_password(spec["password"]),
+            home_directory=home_directory,
+            protocol="sftp",  # informational only -- ProFTPD serves the same account on both ports
+            enabled=False,
+            push_target_source_name=row.name,
+            managed_source_id=row.id,
+        ))
+        session.commit()
+        # Same one-time, never-persisted-in-plaintext rule as the API
+        # key above. `password` stays None when the provider chose their
+        # own -- it's never echoed back.
+        row.generated_ftp = {
+            "username": spec["username"],
+            "password": spec["password"] if spec["generated"] else None,
+            "home_directory": home_directory,
+        }
     return row
 
 
@@ -511,6 +593,7 @@ def config_to_form_fields(source: ProviderSource) -> dict:
         data["ftp_max_file_size_bytes"] = str(config.get("max_file_size_bytes", 20 * 1024 * 1024))
     elif source.transport_type == "push":
         data["push_max_file_size_bytes"] = str(config.get("max_file_size_bytes", 20 * 1024 * 1024))
+        data["push_method"] = config.get("push_method", "https")
     return data
 
 
@@ -590,6 +673,8 @@ def update(session: Session, source_id: str, form: dict) -> ProviderSource:
     if frequency not in FREQUENCIES:
         errors["frequency"] = "must be one of %s" % (FREQUENCIES,)
         frequency = "DAILY"
+    if transport_type == "push":
+        frequency = "MANUAL"  # no schedule for a source that only receives data
 
     notification_email = (form.get("notification_email") or "").strip() or None
     proxy_enabled = _parse_bool(form.get("proxy_enabled"), default=False)
@@ -610,28 +695,30 @@ def update(session: Session, source_id: str, form: dict) -> ProviderSource:
         credential_fields, config = _ftp_fields(working_form, endpoint_url, errors)
         auth_type = "ftp_credentials"
     elif transport_type == "push":
-        # Never rotates the key through this generic edit path -- there
-        # is no form field for it to even submit, and regenerating one
-        # on every unrelated edit (e.g. just renaming the title) would
-        # silently break whatever the provider already configured with
-        # the old one. Only supported when the source was already
-        # push-mode (the common case, editing title/frequency/max
-        # size); switching an existing source *into* push mode via
-        # edit isn't supported yet -- there's no one-time-reveal page
-        # in this flow to show a freshly generated key on, unlike
-        # `register`.
+        # Never rotates the key (or touches the FTP account) through
+        # this generic edit path -- there is no form field for it to even
+        # submit, and regenerating credentials on every unrelated edit
+        # (e.g. just renaming the title) would silently break whatever
+        # the provider already configured with the old ones. Only the
+        # max file size is editable; everything else in the existing
+        # config (push_method, push_api_key_hash) is carried over as-is.
+        # Only supported when the source was already push-mode:
+        # switching an existing source *into* push mode via edit isn't
+        # supported -- there's no one-time-reveal page in this flow to
+        # show freshly generated credentials on, unlike `register`.
         max_file_size_bytes = _parse_positive_int(
             form.get("push_max_file_size_bytes"), 20 * 1024 * 1024, "push_max_file_size_bytes", errors
         )
-        existing_hash = json.loads(source.config or "{}").get("push_api_key_hash") if source.transport_type == "push" else None
-        if not existing_hash:
+        if source.transport_type != "push":
             errors["transport_type"] = (
                 "switching to push mode isn't supported via edit yet -- "
-                "delete and re-register the source as push instead, so its generated key can be shown once"
+                "delete and re-register the source as push instead, so its credentials can be shown once"
             )
-            existing_hash = ""
-        credential_fields, config = {}, {"max_file_size_bytes": max_file_size_bytes, "push_api_key_hash": existing_hash}
-        auth_type = "push_api_key"
+            existing_config: dict = {}
+        else:
+            existing_config = json.loads(source.config or "{}")
+        credential_fields, config = {}, {**existing_config, "max_file_size_bytes": max_file_size_bytes}
+        auth_type = source.auth_type if source.transport_type == "push" else "push_api_key"
     else:
         auth_type, credential_fields, config = _http_fields(working_form, errors)
 
@@ -660,6 +747,8 @@ def delete(session: Session, source_id: str) -> None:
     still runs as a single stand-in user, so there's no ownership check
     to enforce here yet either."""
     source = get_or_404(session, source_id)
+    for account in _managed_ftp_accounts(session, source):
+        session.delete(account)
     session.delete(source)
     session.commit()
 
@@ -699,6 +788,21 @@ def status_counts(session: Session) -> dict[str, int]:
     return counts
 
 
+def _managed_ftp_accounts(session: Session, source: ProviderSource) -> list[FtpAccount]:
+    return list(session.scalars(select(FtpAccount).where(FtpAccount.managed_source_id == source.id)).all())
+
+
+def _sync_managed_ftp_accounts(session: Session, source: ProviderSource) -> None:
+    """A self-service FTP account (created by ``register`` for an
+    ``push_method="ftp"`` source) can log in only while its source is
+    active -- so an unapproved, paused, or rejected source's account is
+    never even synced to the FTP box (see admin_ftp.sync_ftp_accounts,
+    which only returns enabled accounts). Admin-created accounts
+    (``managed_source_id`` NULL) are never touched here."""
+    for account in _managed_ftp_accounts(session, source):
+        account.enabled = source.status == "active"
+
+
 def _transition(session: Session, source_id: str, *, from_status: str, to_status: str) -> ProviderSource:
     row = get_or_404(session, source_id)
     if row.status != from_status:
@@ -707,6 +811,7 @@ def _transition(session: Session, source_id: str, *, from_status: str, to_status
             % (from_status, to_status, row.status)
         )
     row.status = to_status
+    _sync_managed_ftp_accounts(session, row)
     session.commit()
     return row
 
@@ -725,6 +830,7 @@ def reject(session: Session, source_id: str, reason: str | None) -> ProviderSour
         )
     row.status = "rejected"
     row.rejection_reason = (reason or "").strip() or None
+    _sync_managed_ftp_accounts(session, row)
     session.commit()
     return row
 

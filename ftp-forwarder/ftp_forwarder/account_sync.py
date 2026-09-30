@@ -15,6 +15,9 @@ the file forwarder itself already uses).
 from __future__ import annotations
 
 import logging
+import os
+import pathlib
+import posixpath
 import sqlite3
 
 import requests
@@ -94,8 +97,63 @@ def reconcile(db_path: str, accounts: list[dict]) -> None:
     logger.info("synced %d account(s)", len(accounts))
 
 
-def sync_once(session: requests.Session, base_url: str, sync_key: str, db_path: str) -> None:
+def ensure_home_directories(
+    accounts: list[dict],
+    upload_root: str,
+    *,
+    uid: int | None = None,
+    gid: int | None = None,
+    mode: int = 0o2775,
+) -> list[str]:
+    """Creates each account's home directory if it doesn't exist yet --
+    ProFTPD (``DefaultRoot ~``) can't log a virtual user in without one,
+    and the file relay's inotify watch needs it to attach to. Group
+    -writable plus setgid (``2775``, owned by the virtual-user account)
+    so the relay -- a member of that group, not root -- can create its
+    ``.forwarded/`` archive folder inside and move sent files into it.
+
+    Only ever creates a path strictly under ``upload_root``: the account
+    list comes from loader, and this runs as root, so a bad
+    ``home_directory`` must not become an arbitrary root-owned directory
+    anywhere on this box (loader validates the same thing on its side --
+    this is the second, independent check). Returns what was created."""
+    root = posixpath.normpath(upload_root)
+    created = []
+    for account in accounts:
+        home = posixpath.normpath(account["home_directory"])
+        if not home.startswith(root + "/"):
+            logger.warning(
+                "not creating home directory %r for %r: outside upload root %r",
+                home, account["username"], root,
+            )
+            continue
+        path = pathlib.Path(home)
+        if path.is_dir():
+            continue
+        path.mkdir(parents=True, exist_ok=True)
+        if uid is not None and gid is not None:
+            os.chown(path, uid, gid)
+        os.chmod(path, mode)
+        created.append(home)
+        logger.info("created home directory %s for %r", home, account["username"])
+    return created
+
+
+def sync_once(
+    session: requests.Session,
+    base_url: str,
+    sync_key: str,
+    db_path: str,
+    *,
+    upload_root: str | None = None,
+    uid: int | None = None,
+    gid: int | None = None,
+) -> None:
     accounts = fetch_accounts(session, base_url, sync_key)
+    if upload_root:
+        # Before reconcile, so an account never becomes loginable
+        # (present in the ProFTPD database) before its directory exists.
+        ensure_home_directories(accounts, upload_root, uid=uid, gid=gid)
     reconcile(db_path, accounts)
 
 
