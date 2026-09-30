@@ -96,16 +96,22 @@ the admin API can't be pointed at an arbitrary path. Generated
 passwords are bcrypt-hashed and shown exactly once, at creation (or
 rotation) -- never returned again.
 
-The admin HTML UI itself (`/admin/sources`, `/admin/ftp`) now sits
-behind a real login (`admin_session.py` -- a signed session cookie,
-single admin username/password, enforced by one ASGI middleware rather
-than a dependency repeated per route so a newly added HTML route can't
-be accidentally left ungated). A deliberate placeholder for the same
-reason the shared admin API key is: the real design is per-user
-Keycloak login, not built yet. `/provider/*` (the self-service
-registration portal) and the JSON APIs
-(`/admin/ftp-accounts*`, `/admin/ftp-box-status`, both already
-key-gated) are untouched by this -- only the two HTML UI prefixes are.
+The whole site -- the provider portal, the admin pages, the API docs --
+sits behind a real login (`admin_session.py`: a signed session cookie,
+one shared username/password, enforced by a single ASGI middleware). It
+is **deny by default**: a path needs the session unless it is on a short
+explicit list of things that aren't a person in a browser and carry their
+own credential -- `/health`, `/push/*` (API key), the FTP box's
+`/admin/ftp-relay/*`, `/admin/ftp-accounts-sync` and `/admin/ftp-box-status`
+(sync key), the JSON admin API `/admin/ftp-accounts*` and
+`/admin/harvest-db/health` (admin key), `/me` (bearer token) -- plus
+`/proxy/*`, the live open-data proxy, which is public by design. A route
+added later is therefore protected without anyone remembering to. (Until
+this it was the other way round -- only `/admin/sources` and `/admin/ftp`
+were gated, which left the provider portal, and the harvested files it
+serves, open to anyone.) All of it is a placeholder, for the same reason
+the shared admin API key is: the real design is per-user Keycloak login,
+not built yet.
 
 A source is either **pull** (we fetch it -- HTTP/SFTP/SCP/FTP, on a
 harvest frequency) or **push** (the provider sends it as it arrives, no

@@ -2,8 +2,9 @@
 source) and the "every source, any status" dashboard (pause/resume
 alongside activate/reject).
 
-No login wall yet -- see ui_provider.py's module docstring for why:
-this whole service currently runs as a single stand-in admin user.
+Behind the site-wide login (admin_session.py) -- see ui_provider.py's
+module docstring: this whole service currently runs as a single
+stand-in admin user.
 Once Keycloak is wired up, this module is exactly where a real
 admin-role check belongs (matching provider_source_activate/_reject's
 own access rule in the old plugin: a data.gov.gr admin, not merely the

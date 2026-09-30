@@ -2,7 +2,6 @@ import base64
 import os
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -53,8 +52,8 @@ def _isolated_harvest_db(tmp_path):
 
 
 @pytest.fixture
-def client():
-    return TestClient(app)
+def client(logged_in_client):
+    return logged_in_client
 
 
 def _register_and_activate_push_source(client, config_session_factory, **overrides):

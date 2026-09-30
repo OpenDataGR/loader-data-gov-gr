@@ -7,7 +7,7 @@ checks."""
 from __future__ import annotations
 
 import datetime
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -21,18 +21,21 @@ templates.env.globals["build_info"] = build_info.get_build_info()
 templates.env.globals["changelog"] = build_info.get_changelog()
 templates.env.globals["now"] = datetime.datetime.now
 
-_DEFAULT_NEXT = "/admin/sources"
+_DEFAULT_NEXT = "/provider/sources"
 
 
 def _safe_next(value: str | None) -> str:
-    # Only ever redirects back into this same app's own admin section --
-    # `next` is client-supplied (a query param/hidden form field), so an
+    # Only ever redirects to a path on this same site -- `next` is
+    # client-supplied (a query param/hidden form field), so an
     # unvalidated redirect there would be an open-redirect vector, same
-    # concern ui_admin.py's own `_came_from` already guards against.
+    # concern ui_admin.py's own `_came_from` already guards against. The
+    # whole site is behind the login now, so any local path is fair game;
+    # "//host" and "/\\host" are how a *relative-looking* value is
+    # smuggled off-site, so they're refused too.
     if not value:
         return _DEFAULT_NEXT
     parsed = urlparse(value)
-    if parsed.scheme or parsed.netloc or not value.startswith("/admin/"):
+    if parsed.scheme or parsed.netloc or not value.startswith("/") or value.startswith(("//", "/\\")):
         return _DEFAULT_NEXT
     return value
 
@@ -65,7 +68,7 @@ async def login_submit(request: Request):
 
     if not ok:
         return RedirectResponse(
-            "/admin/login?next=%s&flash=Invalid+username+or+password" % next_url, status_code=303
+            "/admin/login?next=%s&flash=Invalid+username+or+password" % quote(next_url, safe=""), status_code=303
         )
 
     response = RedirectResponse(next_url, status_code=303)

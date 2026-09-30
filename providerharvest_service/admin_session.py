@@ -1,7 +1,7 @@
-"""Cookie-based session gate for the human-facing admin HTML UI
-(ui_admin.py, ui_admin_ftp.py) -- distinct from admin_auth.py's shared
-API keys, which gate the JSON APIs a script or a remote box calls, not
-a browser. A real per-user Keycloak login is still the eventual design
+"""Cookie-based session gate for the whole human-facing loader -- the
+provider portal, the admin pages and the API docs -- distinct from
+admin_auth.py's shared API keys, which gate the JSON APIs a script or a
+remote box calls, not a browser. A real per-user Keycloak login is still the eventual design
 (see auth.py's own docstring for why that isn't wired up yet); this
 unblocks a real login *today* without needing a Keycloak client
 registered, using the same "deliberate placeholder, swap out later"
@@ -40,15 +40,34 @@ from starlette.responses import RedirectResponse
 COOKIE_NAME = "loader_admin_session"
 DEFAULT_TTL_S = 12 * 60 * 60  # 12h: long enough for a work session, short enough a stolen cookie doesn't work forever
 
-# Exactly these two HTML UI prefixes -- NOT the JSON APIs that happen
-# to share a similar path (/admin/ftp-accounts*, /admin/ftp-box-status
-# use their own X-Admin-Key/X-Ftp-Sync-Key auth, called by scripts and
-# the remote box, never a logged-in browser) and NOT /provider/* (the
-# self-service provider portal, deliberately public -- see
-# ui_provider.py's own docstring). Matched with a "/" boundary so
-# "/admin/ftp" never matches "/admin/ftp-accounts".
-_GATED_PREFIXES = ("/admin/sources", "/admin/ftp")
-_EXEMPT_PATHS = ("/admin/login", "/admin/logout")
+# Deny by default: every path needs a session unless it is on this short
+# list of things that are not a person in a browser. (The list used to
+# be the other way round -- only the admin pages were gated -- which left
+# the provider portal, and the harvested files it serves, open to anyone.
+# Deny-by-default also means a route added later is protected without
+# anyone having to remember to.)
+#
+# Exempt, and why -- each of these carries its own credential or is
+# public on purpose:
+#   /health                     the deploy smoke test and gateway probe
+#   /admin/login, /admin/logout the form itself
+#   /push/*                     a provider's system, X-Api-Key
+#   /admin/ftp-relay/*          the FTP box, X-Ftp-Sync-Key
+#   /admin/ftp-accounts-sync,
+#   /admin/ftp-box-status       the FTP box, X-Ftp-Sync-Key
+#   /admin/ftp-accounts*        the JSON admin API, X-Admin-Key
+#   /admin/harvest-db/health    ops check, X-Admin-Key
+#   /me                         Keycloak bearer token
+#   /proxy/*                    the live open-data proxy for outside
+#                               consumers -- public by design; gating it
+#                               would break every consumer of it
+# Matched with a "/" boundary, so "/admin/ftp-accounts" does not exempt
+# the admin page "/admin/ftp" (or the other way round).
+_EXEMPT_PATHS = frozenset({
+    "/health", "/me", "/admin/login", "/admin/logout",
+    "/admin/ftp-accounts-sync", "/admin/ftp-box-status", "/admin/harvest-db/health",
+})
+_EXEMPT_PREFIXES = ("/push", "/proxy", "/admin/ftp-accounts", "/admin/ftp-relay")
 
 
 class SessionConfigError(RuntimeError):
@@ -58,7 +77,7 @@ class SessionConfigError(RuntimeError):
 def _is_gated(path: str) -> bool:
     if path in _EXEMPT_PATHS:
         return False
-    return any(path == prefix or path.startswith(prefix + "/") for prefix in _GATED_PREFIXES)
+    return not any(path == prefix or path.startswith(prefix + "/") for prefix in _EXEMPT_PREFIXES)
 
 
 def _secret() -> str:

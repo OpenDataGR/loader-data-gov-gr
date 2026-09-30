@@ -1,7 +1,8 @@
 """Provider-facing self-service web UI: register a data source, see its
 own sources and their approval/run status, pause/resume an active one.
 
-No login wall yet -- every visitor here acts as the single stand-in
+Behind the site-wide login (admin_session.py) -- one shared login
+for now, so every signed-in visitor here acts as the single stand-in
 "admin, me" user the whole service currently runs as (see CLAUDE.md /
 README's roadmap: real per-user auth is Keycloak, not registered in
 production yet). Once that lands, ``source_list``/``pause``/``resume``
