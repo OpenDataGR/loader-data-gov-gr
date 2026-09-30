@@ -206,7 +206,9 @@ jobs:
 
           sudo tee /etc/fail2ban/filter.d/loader-ftp.conf > /dev/null <<'EOF'
           [Definition]
-          failregex = ^\d+ <HOST> \S+ PASS 530\s*$
+          # The epoch is consumed by datepattern before this is applied, so the
+          # line it sees starts at the client address.
+          failregex = ^\s*<HOST> \S+ PASS 530\s*$
           ignoreregex =
           datepattern = ^{EPOCH}
           EOF
