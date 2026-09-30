@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from providerharvest_service import db, provider_sources
 from providerharvest_service.app import app
-from providerharvest_service.models import FtpBoxStatus
+from providerharvest_service.models import FtpAccount, FtpBoxStatus
 
 ADMIN_USERNAME = "test-admin"
 ADMIN_PASSWORD = "test-password"
@@ -16,7 +16,7 @@ ADMIN_PASSWORD = "test-password"
 
 @pytest.fixture(autouse=True)
 def _upload_root(monkeypatch):
-    monkeypatch.setenv("LOADER_FTP_UPLOAD_ROOT", "/srv/ftp-uploads")
+    monkeypatch.setenv("LOADER_FTP_UPLOAD_ROOT", "/srv/ftp")
 
 
 @pytest.fixture(autouse=True)
@@ -59,53 +59,26 @@ def client(_admin_session_env):
     return c
 
 
-def _create_form(**overrides):
-    form = {
-        "username": "acme-provider",
-        "home_directory": "/srv/ftp-uploads/acme-provider",
-        "protocol": "ftps",
-    }
-    form.update(overrides)
-    return form
+def _register_ftp_push_source(session_factory, name="acme-push", activate=False):
+    """What a provider does: register a push source with FTP/SFTP, which
+    creates their account (disabled until the source is approved)."""
+    with session_factory() as session:
+        source = provider_sources.register(
+            session, {"name": name, "title": name, "transport_type": "push", "push_method": "ftp"}
+        )
+        source_id = source.id
+        if activate:
+            provider_sources.activate(session, source_id)
+        return source_id
 
 
-def test_overview_lists_no_accounts_or_boxes_initially(client):
-    resp = client.get("/admin/ftp")
-    assert resp.status_code == 200
-    assert "No FTP accounts configured yet." in resp.text
-    assert "No box has reported in yet." in resp.text
-
-
-def test_create_account_shows_the_password_exactly_once(client):
-    resp = client.post("/admin/ftp/accounts", data=_create_form())
-    assert resp.status_code == 200
-    assert "acme-provider" in resp.text
-    assert "password-field" in resp.text
-
-    overview = client.get("/admin/ftp")
-    assert "acme-provider" in overview.text
-    assert "enabled" in overview.text
-
-
-def test_create_account_rejects_duplicate_username(client):
-    client.post("/admin/ftp/accounts", data=_create_form())
-    resp = client.post("/admin/ftp/accounts", data=_create_form(), follow_redirects=False)
-    assert resp.status_code == 303
-    assert "flash_kind=error" in resp.headers["location"]
-
-
-def test_create_account_rejects_invalid_username(client):
-    resp = client.post(
-        "/admin/ftp/accounts", data=_create_form(username="a"), follow_redirects=False
-    )
-    assert resp.status_code == 303
-    assert "flash_kind=error" in resp.headers["location"]
-
-
-def _created_account_id(client):
-    client.post("/admin/ftp/accounts", data=_create_form())
-    overview = client.get("/admin/ftp")
-    return _extract_account_id(overview.text)
+def _add_admin_made_account(session_factory, username="legacy-account"):
+    with session_factory() as session:
+        session.add(FtpAccount(
+            username=username, password_hash="$2a$x", home_directory="/srv/ftp/%s" % username,
+            protocol="ftp", enabled=True,
+        ))
+        session.commit()
 
 
 def _extract_account_id(html: str) -> str:
@@ -118,42 +91,86 @@ def _extract_account_id(html: str) -> str:
     return html[start:end]
 
 
-def _register_push_source(session_factory, name="acme-push", activate=True):
-    with session_factory() as session:
-        source = provider_sources.register(
-            session, {"name": name, "title": name, "transport_type": "push", "frequency": "MANUAL"}
-        )
-        source_id = source.id
-        if activate:
-            provider_sources.activate(session, source_id)
-        return source_id
+def _account_id(client):
+    return _extract_account_id(client.get("/admin/ftp").text)
 
 
-def test_rotate_password_shows_new_password_once(client):
-    account_id = _created_account_id(client)
+def test_overview_lists_no_accounts_or_boxes_initially(client):
+    resp = client.get("/admin/ftp")
+    assert resp.status_code == 200
+    assert "No FTP accounts yet" in resp.text
+    assert "No box has reported in yet." in resp.text
+
+
+def test_there_is_no_manual_create_account_form(client):
+    assert "New FTP account" not in client.get("/admin/ftp").text
+    resp = client.post(
+        "/admin/ftp/accounts",
+        data={"username": "acme", "home_directory": "/srv/ftp/acme", "protocol": "ftp"},
+        follow_redirects=False,
+    )
+    assert resp.status_code in (404, 405)
+
+
+def test_a_providers_account_shows_its_source_and_is_disabled_until_approval(client, _isolated_db):
+    source_id = _register_ftp_push_source(_isolated_db)
+
+    text = client.get("/admin/ftp").text
+    assert "acme-push" in text
+    assert "<span>disabled</span>" in text
+    assert "created by an admin" not in text  # it came from the provider's own registration
+
+    with _isolated_db() as session:
+        provider_sources.activate(session, source_id)
+    assert "<span>enabled</span>" in client.get("/admin/ftp").text
+
+
+def test_an_account_made_by_an_admin_is_labelled_as_such(client, _isolated_db):
+    _add_admin_made_account(_isolated_db)
+    text = client.get("/admin/ftp").text
+    assert "legacy-account" in text
+    assert "created by an admin" in text
+
+
+def test_the_forwarding_target_is_shown_read_only(client, _isolated_db):
+    _register_ftp_push_source(_isolated_db)
+    text = client.get("/admin/ftp").text
+    assert "forward-target" not in text  # no dropdown that could break the source link
+    resp = client.post("/admin/ftp/anything/forward-target", follow_redirects=False)
+    assert resp.status_code in (404, 405)
+
+
+def test_rotate_password_shows_new_password_once(client, _isolated_db):
+    _register_ftp_push_source(_isolated_db)
+    account_id = _account_id(client)
+
     resp = client.post("/admin/ftp/%s/rotate-password" % account_id)
     assert resp.status_code == 200
     assert "password-field" in resp.text
     assert "rotated" in resp.text
 
 
-def test_disable_then_enable_account(client):
-    account_id = _created_account_id(client)
+def test_disable_then_enable_account(client, _isolated_db):
+    _register_ftp_push_source(_isolated_db, activate=True)
+    account_id = _account_id(client)
 
     resp = client.post("/admin/ftp/%s/disable" % account_id, follow_redirects=False)
     assert resp.status_code == 303
-    assert "disabled" in client.get("/admin/ftp").text
+    assert "<span>disabled</span>" in client.get("/admin/ftp").text
 
     resp = client.post("/admin/ftp/%s/enable" % account_id, follow_redirects=False)
     assert resp.status_code == 303
-    assert "enabled" in client.get("/admin/ftp").text
+    text = client.get("/admin/ftp").text
+    assert "<span>enabled</span>" in text and "<span>disabled</span>" not in text
 
 
-def test_delete_account(client):
-    account_id = _created_account_id(client)
+def test_delete_account(client, _isolated_db):
+    _register_ftp_push_source(_isolated_db)
+    account_id = _account_id(client)
+
     resp = client.post("/admin/ftp/%s/delete" % account_id, follow_redirects=False)
     assert resp.status_code == 303
-    assert "acme-provider" not in client.get("/admin/ftp").text
+    assert "acme-push" not in client.get("/admin/ftp").text
 
 
 def test_action_on_unknown_account_shows_not_found(client):
@@ -161,58 +178,6 @@ def test_action_on_unknown_account_shows_not_found(client):
     assert resp.status_code == 303
     followed = client.get(resp.headers["location"])
     assert "No such account." in followed.text
-
-
-def test_create_form_lists_push_sources_and_can_set_a_forward_target(client, _isolated_db):
-    _register_push_source(_isolated_db)
-    resp = client.post("/admin/ftp/accounts", data=_create_form(push_target_source_name="acme-push"))
-    assert resp.status_code == 200
-
-    overview = client.get("/admin/ftp")
-    assert "acme-push" in overview.text
-
-
-def test_create_rejects_an_unknown_forward_target(client):
-    resp = client.post(
-        "/admin/ftp/accounts",
-        data=_create_form(push_target_source_name="no-such-source"),
-        follow_redirects=False,
-    )
-    assert resp.status_code == 303
-    assert "flash_kind=error" in resp.headers["location"]
-
-
-def test_set_forward_target_updates_and_clears_it(client, _isolated_db):
-    _register_push_source(_isolated_db)
-    account_id = _created_account_id(client)
-
-    resp = client.post(
-        "/admin/ftp/%s/forward-target" % account_id,
-        data={"push_target_source_name": "acme-push"},
-        follow_redirects=False,
-    )
-    assert resp.status_code == 303
-    assert "flash_kind=error" not in resp.headers["location"]
-    assert "acme-push" in client.get("/admin/ftp").text
-
-    resp = client.post(
-        "/admin/ftp/%s/forward-target" % account_id,
-        data={"push_target_source_name": ""},
-        follow_redirects=False,
-    )
-    assert resp.status_code == 303
-    assert "cleared" in resp.headers["location"]
-
-
-def test_set_forward_target_rejects_an_unknown_source(client):
-    account_id = _created_account_id(client)
-    resp = client.post(
-        "/admin/ftp/%s/forward-target" % account_id,
-        data={"push_target_source_name": "no-such-source"},
-        follow_redirects=False,
-    )
-    assert resp.status_code == 303
-    assert "flash_kind=error" in resp.headers["location"]
 
 
 def test_overview_shows_box_status(client, _isolated_db):

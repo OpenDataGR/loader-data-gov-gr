@@ -47,37 +47,31 @@
   <div class="panel" style="margin-top:1.5rem;">
     <h1>FTP-push accounts</h1>
     <p class="subtitle">
-      A created or rotated password is shown exactly once, right after the action --
-      it is never stored in a recoverable form, so if it's lost the only way back is
-      rotating again.
+      Providers create their own account by registering a push source with FTP/SFTP
+      (it stays disabled until you approve the source). A rotated password is shown
+      exactly once, right after the action -- it is never stored in a recoverable form,
+      so if a provider loses it the only way back is rotating again.
     </p>
 
     {% if not accounts %}
       <div class="empty-state">
         {{ macros.icon("inbox", 40) }}
-        <p>No FTP accounts configured yet.</p>
+        <p>No FTP accounts yet -- one is created when a provider registers a push source with FTP/SFTP.</p>
       </div>
     {% else %}
       <table>
         <thead>
-          <tr><th>Username</th><th>Home directory</th><th>Protocol</th><th>Status</th><th>Forwards to</th><th></th></tr>
+          <tr><th>Username</th><th>Home directory</th><th>Status</th><th>Forwards to</th><th></th></tr>
         </thead>
         <tbody>
           {% for a in accounts %}
           <tr>
             <td class="name-title">{{ a.username }}</td>
             <td class="muted">{{ a.home_directory }}</td>
-            <td>{{ macros.transport_badge(a.protocol) }}</td>
             <td>{% if a.enabled %}<span class="badge badge-active">{{ macros.icon("active", 13) }}<span>enabled</span></span>{% else %}<span class="badge badge-paused">{{ macros.icon("paused", 13) }}<span>disabled</span></span>{% endif %}</td>
             <td>
-              <form class="inline" method="post" action="/admin/ftp/{{ a.id }}/forward-target">
-                <select name="push_target_source_name" class="small" onchange="this.form.requestSubmit()">
-                  <option value=""{{ " selected" if not a.push_target_source_name else "" }}>(none)</option>
-                  {% for s in push_sources %}
-                    <option value="{{ s.name }}"{{ " selected" if a.push_target_source_name == s.name else "" }}>{{ s.title }} ({{ s.status }})</option>
-                  {% endfor %}
-                </select>
-              </form>
+              {% if a.push_target_source_name %}<span class="name-slug">{{ a.push_target_source_name }}</span>{% else %}<span class="muted">none</span>{% endif %}
+              {% if not a.managed_source_id %}<div class="muted">created by an admin, not a provider</div>{% endif %}
             </td>
             <td style="white-space:nowrap;">
               <form class="inline" method="post" action="/admin/ftp/{{ a.id }}/rotate-password">
@@ -101,35 +95,5 @@
         </tbody>
       </table>
     {% endif %}
-
-    <fieldset>
-      <legend>New FTP account</legend>
-      <form method="post" action="/admin/ftp/accounts">
-        <label for="username">Username</label>
-        <input type="text" id="username" name="username" class="small" required pattern="[a-zA-Z0-9_-]{3,32}">
-
-        <label for="home_directory">Home directory</label>
-        <input type="text" id="home_directory" name="home_directory" required placeholder="/srv/ftp-uploads/&lt;provider&gt;">
-
-        <label for="protocol">Protocol</label>
-        <select id="protocol" name="protocol">
-          <option value="ftps" selected>ftps</option>
-          <option value="ftp">ftp</option>
-          <option value="sftp">sftp</option>
-        </select>
-
-        <label for="push_target_source_name">Forwards to (push-mode source)</label>
-        <select id="push_target_source_name" name="push_target_source_name">
-          <option value="">(set later)</option>
-          {% for s in push_sources %}
-            <option value="{{ s.name }}">{{ s.title }} ({{ s.status }})</option>
-          {% endfor %}
-        </select>
-
-        <div style="margin-top:1.2rem;">
-          <button type="submit">{{ macros.icon("push", 14) }} Create account</button>
-        </div>
-      </form>
-    </fieldset>
   </div>
 {% endblock %}
