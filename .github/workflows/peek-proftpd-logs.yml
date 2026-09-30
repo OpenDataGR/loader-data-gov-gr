@@ -12,12 +12,10 @@ jobs:
     runs-on: [self-hosted, loader-ftp]
     timeout-minutes: 5
     steps:
-      - name: Show the transfer log
+      - name: Show what the loader logs recorded
         run: |
           sudo -n ls -la /var/log/proftpd/
-          echo "--- TransferLog / SystemLog / UseReverseDNS in the config ---"
-          sudo -n grep -rhE "^\s*(TransferLog|SystemLog|UseReverseDNS|LogFormat|ExtendedLog)" /etc/proftpd/proftpd.conf /etc/proftpd/conf.d/ || true
-          echo "--- xferlog (last 20) ---"
-          sudo -n tail -n 20 /var/log/proftpd/xferlog || true
-          echo "--- dry-run lines in the system log ---"
-          sudo -n grep -h "zz-dryrun" /var/log/proftpd/proftpd.log | tail -n 12 || true
+          echo "--- loader-auth.log (last 30) ---"
+          sudo -n tail -n 30 /var/log/proftpd/loader-auth.log || true
+          echo "--- loader-discovery.log, SFTP context only (last 40) ---"
+          sudo -n tail -n 40 /var/log/proftpd/loader-discovery.log || true

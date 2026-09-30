@@ -99,6 +99,12 @@ jobs:
           SQLDefaultGID $VGID
           RequireValidShell off
           DefaultRoot ~
+          # One line per login attempt: epoch, client address, user, command, reply code
+          # (230 = success). The account-sync service tails this to tell loader where
+          # each provider connects from -- plain FTP's TransferLog doesn't record
+          # SFTP at all, and neither log records a successful login as such.
+          LogFormat loader_auth "%{%s}t %a %u %m %s"
+          ExtendedLog /var/log/proftpd/loader-auth.log AUTH loader_auth
           EOF
 
           sudo tee /etc/proftpd/conf.d/loader-sftp.conf > /dev/null <<EOF
@@ -120,6 +126,8 @@ jobs:
             SQLDefaultGID $VGID
             RequireValidShell off
             DefaultRoot ~
+            ExtendedLog /var/log/proftpd/loader-auth.log AUTH loader_auth
+            ExtendedLog /var/log/proftpd/loader-discovery.log ALL loader_auth
           </VirtualHost>
           EOF
           sudo proftpd -t
