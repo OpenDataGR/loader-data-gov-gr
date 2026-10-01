@@ -236,6 +236,120 @@ def test_currently_banned_addresses_are_marked(admin, machine, _isolated_db):
     assert "banned now" in admin.get("/admin/security/failed-logins").text
 
 
+# -- ban list and unban (moved here from the FTP subsystem page) -------------------------------
+
+PAGE = "/admin/security/failed-logins"
+UNBAN = "/admin/security/boxes/snf-899358/unban"
+
+
+def _add_ban_box(session_factory, banned=(), fail2ban_active=True, hostname="snf-899358"):
+    import json
+
+    with session_factory() as session:
+        session.add(FtpBoxStatus(
+            hostname=hostname, reported_at=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None),
+            proftpd_active=True, ftp_port_listening=True, sftp_port_listening=True,
+            relay_service_active=True, account_count=0, sync_ok=True, sync_message=None,
+            banned_ips=json.dumps(list(banned)), fail2ban_active=fail2ban_active,
+        ))
+        session.commit()
+
+
+def _unban_requests(session_factory):
+    from providerharvest_service.models import FtpUnbanRequest
+
+    with session_factory() as session:
+        return sorted((r.hostname, r.ip) for r in session.query(FtpUnbanRequest).all())
+
+
+def test_the_page_lists_banned_addresses_with_an_unban_button(admin, _isolated_db):
+    _add_ban_box(_isolated_db, banned=["169.58.53.194", "84.205.215.132"])
+    text = admin.get(PAGE).text
+    assert "<code>169.58.53.194</code>" in text and "<code>84.205.215.132</code>" in text
+    assert text.count('action="%s"' % UNBAN) == 2
+
+
+def test_the_page_says_so_when_nobody_is_banned(admin, _isolated_db):
+    _add_ban_box(_isolated_db, banned=[])
+    assert "No addresses banned right now." in admin.get(PAGE).text
+
+
+def test_the_ban_list_is_no_longer_on_the_ftp_subsystem_page(admin, _isolated_db):
+    _add_ban_box(_isolated_db, banned=["84.205.215.132"])
+    text = admin.get("/admin/ftp").text
+    assert 'action="/admin/ftp/boxes/' not in text and "Banned addresses" not in text
+    assert 'href="%s"' % PAGE in text  # but it points to where it went
+
+
+def test_the_page_warns_when_fail2ban_is_off(admin, _isolated_db):
+    _add_ban_box(_isolated_db, fail2ban_active=False)
+    assert "fail2ban off" in admin.get(PAGE).text
+
+
+def test_unbanning_records_a_request_and_the_page_shows_it_waiting(admin, _isolated_db):
+    _add_ban_box(_isolated_db, banned=["84.205.215.132"])
+
+    resp = admin.post(UNBAN, data={"ip": "84.205.215.132"}, follow_redirects=False)
+    assert resp.status_code == 303 and resp.headers["location"].startswith(PAGE)
+    assert "flash_kind=error" not in resp.headers["location"]
+    assert _unban_requests(_isolated_db) == [("snf-899358", "84.205.215.132")]
+
+    text = admin.get(PAGE).text
+    assert "unban requested" in text
+    assert text.count('action="%s"' % UNBAN) == 0  # no second button for it
+
+
+def test_asking_twice_does_not_queue_it_twice(admin, _isolated_db):
+    _add_ban_box(_isolated_db, banned=["84.205.215.132"])
+    for _ in range(2):
+        admin.post(UNBAN, data={"ip": "84.205.215.132"})
+    assert len(_unban_requests(_isolated_db)) == 1
+
+
+def test_only_an_address_that_is_actually_banned_can_be_unbanned(admin, _isolated_db):
+    _add_ban_box(_isolated_db, banned=["84.205.215.132"])
+    for ip in ("203.0.113.9", "not-an-ip", "", "84.205.215.132; reboot"):
+        resp = admin.post(UNBAN, data={"ip": ip}, follow_redirects=False)
+        assert resp.status_code == 303 and "flash_kind=error" in resp.headers["location"], ip
+    assert _unban_requests(_isolated_db) == []
+
+
+def test_unbanning_on_an_unknown_box_is_refused(admin):
+    resp = admin.post("/admin/security/boxes/no-such-box/unban", data={"ip": "84.205.215.132"}, follow_redirects=False)
+    assert resp.status_code == 303 and "flash_kind=error" in resp.headers["location"]
+
+
+def test_the_unban_needs_the_login(machine, _isolated_db):
+    _add_ban_box(_isolated_db, banned=["84.205.215.132"])
+    resp = machine.post(UNBAN, data={"ip": "84.205.215.132"}, follow_redirects=False)
+    assert resp.status_code == 303 and resp.headers["location"].startswith("/admin/login")
+    assert _unban_requests(_isolated_db) == []
+
+
+def test_a_request_travels_from_the_page_to_the_box_and_back(admin, machine, _isolated_db):
+    # The whole loop: an admin clicks Unban, the box's next heartbeat reply carries it,
+    # and the heartbeat after the box has acted closes it.
+    payload = {
+        "hostname": "snf-899358", "proftpd_active": True, "ftp_port_listening": True,
+        "sftp_port_listening": True, "relay_service_active": True, "account_count": 0,
+        "sync_ok": True, "sync_message": "ok", "fail2ban_active": True,
+    }
+
+    def beat(banned):
+        return machine.put("/admin/ftp-box-status", json=dict(payload, banned_ips=banned), headers=SYNC_HEADERS).json()
+
+    beat(["84.205.215.132"])
+    assert "84.205.215.132" in admin.get(PAGE).text
+
+    admin.post(UNBAN, data={"ip": "84.205.215.132"})
+    assert beat(["84.205.215.132"])["unban"] == ["84.205.215.132"]  # the box is told to act
+
+    assert beat([])["unban"] == []  # it did
+    assert _unban_requests(_isolated_db) == []
+    text = admin.get(PAGE).text
+    assert "<code>84.205.215.132</code>" not in text and "No addresses banned right now." in text
+
+
 # -- HTTP: the web login and the API/sync keys ----------------------------------------------
 
 def _http_rows(session_factory):

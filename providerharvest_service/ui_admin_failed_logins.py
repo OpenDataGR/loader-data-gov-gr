@@ -19,18 +19,19 @@ import csv
 import dataclasses
 import datetime
 import io
+import ipaddress
 import math
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import case, distinct, func, select
 from sqlalchemy.orm import Session
 
 from providerharvest_service import build_info, failed_auth
 from providerharvest_service.db import get_session
-from providerharvest_service.models import FtpBoxStatus, FtpLoginAttempt
+from providerharvest_service.models import FtpBoxStatus, FtpLoginAttempt, FtpUnbanRequest
 
 router = APIRouter(prefix="/admin/security", tags=["security-ui"])
 templates = Jinja2Templates(directory="providerharvest_service/templates")
@@ -145,6 +146,45 @@ def _banned_now(session: Session) -> set[str]:
     return banned
 
 
+def _boxes_with_pending_unbans(session: Session) -> list[FtpBoxStatus]:
+    boxes = list(session.scalars(select(FtpBoxStatus).order_by(FtpBoxStatus.hostname)).all())
+    waiting = {(r.hostname, r.ip) for r in session.scalars(select(FtpUnbanRequest)).all()}
+    for box in boxes:
+        box.pending_unban = {ip for host, ip in waiting if host == box.hostname}  # type: ignore[attr-defined]
+    return boxes
+
+
+def _back(flash: str, kind: str = "success") -> RedirectResponse:
+    return RedirectResponse("/admin/security/failed-logins?%s" % urlencode({"flash": flash, "flash_kind": kind}), status_code=303)
+
+
+@router.post("/boxes/{hostname}/unban")
+async def unban_address(request: Request, hostname: str, session: Session = Depends(get_session)):
+    """Ask a box to let an address back in. Loader can't reach the box, so
+    this only records the request; the box collects it from the reply to
+    its next heartbeat (about a minute) and lifts the ban itself. Only an
+    address currently on that box's reported ban list is accepted -- this
+    is a way to release what fail2ban banned, not to send the box
+    arbitrary addresses."""
+    box = session.get(FtpBoxStatus, hostname)
+    if box is None:
+        return _back("No such box.", "error")
+    form = await request.form()
+    try:
+        address = str(ipaddress.ip_address((form.get("ip") or "").strip()))
+    except ValueError:
+        return _back("That is not an IP address.", "error")
+    if address not in box.banned:
+        return _back("%s is not on the ban list (it may already have been released)." % address, "error")
+    already = session.scalar(
+        select(FtpUnbanRequest).where(FtpUnbanRequest.hostname == hostname, FtpUnbanRequest.ip == address)
+    )
+    if already is None:
+        session.add(FtpUnbanRequest(hostname=hostname, ip=address))
+        session.commit()
+    return _back("Unban requested for %s -- the box applies it within about a minute." % address)
+
+
 @router.get("/failed-logins", response_class=HTMLResponse)
 def attempts_report(request: Request, page: int = 1, session: Session = Depends(get_session)) -> HTMLResponse:
     f = _read_filters(request)
@@ -192,6 +232,9 @@ def attempts_report(request: Request, page: int = 1, session: Session = Depends(
             "top_usernames": top_usernames,
             "events": events,
             "banned": _banned_now(session),
+            "boxes": _boxes_with_pending_unbans(session),
+            "flash": request.query_params.get("flash"),
+            "flash_kind": request.query_params.get("flash_kind", "success"),
             "page": page,
             "pages": pages,
             "page_size": PAGE_SIZE,

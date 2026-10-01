@@ -8,8 +8,8 @@
       Every refused login or credential, on any way in -- FTP and SFTP (reported by the box),
       the web login and the API/sync keys (seen by loader itself) -- kept for {{ retention_note }}
       {% if oldest %}(the oldest on record is {{ oldest|utc }} UTC){% endif %}.
-      FTP/SFTP addresses that keep failing are banned automatically -- the ban list, with Unban, is on the
-      <a href="/admin/ftp">FTP subsystem</a> page.
+      FTP/SFTP addresses that keep failing are banned automatically (see below); the boxes themselves
+      are on the <a href="/admin/ftp">FTP subsystem</a> page.
     </p>
 
     <form method="get" action="/admin/security/failed-logins" style="display:flex; flex-wrap:wrap; gap:0.8rem; align-items:flex-end;">
@@ -52,6 +52,47 @@
   </div>
 
   <div class="panel">
+    <h1>Banned addresses</h1>
+    <p class="subtitle">
+      FTP/SFTP addresses blocked after repeated refused logins (5 in 10 minutes bans for an hour, longer for
+      repeat offenders). If a provider has locked themselves out, let them back in here -- the box
+      applies it within about a minute. Shown as last reported by each box.
+    </p>
+    {% if not boxes %}
+      <div class="empty-state"><p>No FTP box has reported in yet.</p></div>
+    {% endif %}
+    {% for box in boxes %}
+      <div class="name-title" style="margin-top:0.8rem;">{{ box.hostname }}
+        {% if box.fail2ban_active is false %}<span class="badge badge-error" title="fail2ban is not running: failed logins are not being banned">{{ macros.icon("rejected", 13) }}<span>fail2ban off</span></span>{% endif %}
+      </div>
+      {% if box.banned %}
+        <table>
+          <tbody>
+            {% for ip in box.banned %}
+            <tr>
+              <td style="width:14rem;"><code>{{ ip }}</code></td>
+              <td>
+                {% if ip in box.pending_unban %}
+                  <span class="muted">unban requested -- waiting for the box</span>
+                {% else %}
+                  <form class="inline" method="post" action="/admin/security/boxes/{{ box.hostname }}/unban"
+                        onsubmit="return confirm('Let {{ ip }} back in?');">
+                    <input type="hidden" name="ip" value="{{ ip }}">
+                    <button type="submit" class="btn-sm btn-secondary">Unban</button>
+                  </form>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="muted" style="margin:0.3rem 0 0;">No addresses banned right now.</p>
+      {% endif %}
+    {% endfor %}
+  </div>
+
+  <div class="panel" style="margin-top:1.2rem;">
     <div class="top-actions">
       <h1 style="margin:0;">By source address</h1>
       <a class="btn btn-secondary btn-sm" href="/admin/security/failed-logins-by-address.csv?{{ export_query }}">Download CSV</a>

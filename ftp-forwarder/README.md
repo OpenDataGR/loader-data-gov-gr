@@ -100,7 +100,7 @@ made-up log before enabling it, and prints the jail's status each run.
 
 A legitimate provider who mistypes a password too often is banned like
 anyone else and waits out the hour -- or an admin can let them back in
-right away, from loader's **FTP subsystem** page (`/admin/ftp`): it lists
+right away, from loader's **Failed logins** page (`/admin/security/failed-logins`): it lists
 the addresses currently banned on each box, with an Unban button. Loader
 can't reach the box, so the click only records a request
 (`FtpUnbanRequest`); the box collects it from the reply to its next
@@ -115,7 +115,7 @@ its `unban_ip` input if the page itself is unavailable.
 ### Report of failed logins
 
 The ban list says who is blocked *now*; the **Failed logins**
-report (`/admin/security/failed-logins`, linked from the FTP subsystem page) says who
+report (`/admin/security/failed-logins`, the same page as the ban list) says who
 has been knocking and how often. ProFTPD writes a second log,
 `/var/log/proftpd/loader-attempts.log` (`%{%s}t %a %p %m %s %U`: time,
 client address, server port -- 21 FTP / 2222 SFTP --, command, reply code,

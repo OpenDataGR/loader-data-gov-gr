@@ -34,7 +34,6 @@ through even briefly.
 from __future__ import annotations
 
 import datetime
-import ipaddress
 from urllib.parse import urlencode, urlparse
 
 from fastapi import APIRouter, Depends, Request
@@ -46,7 +45,7 @@ from sqlalchemy.orm import Session
 from providerharvest_service import build_info
 from providerharvest_service.admin_ftp import generate_password, hash_password
 from providerharvest_service.db import get_session
-from providerharvest_service.models import FtpAccount, FtpBoxStatus, FtpUnbanRequest
+from providerharvest_service.models import FtpAccount, FtpBoxStatus
 
 router = APIRouter(prefix="/admin/ftp", tags=["ftp-ui"])
 templates = Jinja2Templates(directory="providerharvest_service/templates")
@@ -77,10 +76,8 @@ def _utcnow() -> datetime.datetime:
 def ftp_overview(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
     accounts = list(session.scalars(select(FtpAccount)).all())
     boxes = list(session.scalars(select(FtpBoxStatus)).all())
-    waiting = {(r.hostname, r.ip) for r in session.scalars(select(FtpUnbanRequest)).all()}
     now = _utcnow()
     for box in boxes:
-        box.pending_unban = {ip for host, ip in waiting if host == box.hostname}  # type: ignore[attr-defined]
         reported_at = box.reported_at
         if reported_at.tzinfo is None:
             reported_at = reported_at.replace(tzinfo=datetime.timezone.utc)
@@ -94,39 +91,6 @@ def ftp_overview(request: Request, session: Session = Depends(get_session)) -> H
             "flash": request.query_params.get("flash"),
             "flash_kind": request.query_params.get("flash_kind", "success"),
         },
-    )
-
-
-@router.post("/boxes/{hostname}/unban")
-async def unban_address(request: Request, hostname: str, session: Session = Depends(get_session)):
-    """Ask a box to let an address back in. Loader can't reach the box, so
-    this only records the request; the box collects it from the reply to
-    its next heartbeat (about a minute) and lifts the ban itself. Only an
-    address currently on that box's reported ban list is accepted -- this
-    is a way to release what fail2ban banned, not to send the box
-    arbitrary addresses."""
-    box = session.get(FtpBoxStatus, hostname)
-    if box is None:
-        return RedirectResponse(_came_from(request, "No such box.", kind="error"), status_code=303)
-    form = await request.form()
-    try:
-        address = str(ipaddress.ip_address((form.get("ip") or "").strip()))
-    except ValueError:
-        return RedirectResponse(_came_from(request, "That is not an IP address.", kind="error"), status_code=303)
-    if address not in box.banned:
-        return RedirectResponse(
-            _came_from(request, "%s is not on the ban list (it may already have been released)." % address, kind="error"),
-            status_code=303,
-        )
-    already = session.scalar(
-        select(FtpUnbanRequest).where(FtpUnbanRequest.hostname == hostname, FtpUnbanRequest.ip == address)
-    )
-    if already is None:
-        session.add(FtpUnbanRequest(hostname=hostname, ip=address))
-        session.commit()
-    return RedirectResponse(
-        _came_from(request, "Unban requested for %s -- the box applies it within about a minute." % address),
-        status_code=303,
     )
 
 
