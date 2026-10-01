@@ -114,8 +114,8 @@ its `unban_ip` input if the page itself is unavailable.
 
 ### Report of failed logins
 
-The ban list says who is blocked *now*; the **Failed login attempts**
-report (`/admin/ftp/attempts`, linked from the FTP subsystem page) says who
+The ban list says who is blocked *now*; the **Failed logins**
+report (`/admin/security/failed-logins`, linked from the FTP subsystem page) says who
 has been knocking and how often. ProFTPD writes a second log,
 `/var/log/proftpd/loader-attempts.log` (`%{%s}t %a %p %m %s %U`: time,
 client address, server port -- 21 FTP / 2222 SFTP --, command, reply code,

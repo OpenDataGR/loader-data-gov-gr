@@ -34,7 +34,7 @@ from providerharvest_service.proxy import router as proxy_router
 from providerharvest_service.push_ingest import router as push_ingest_router
 from providerharvest_service.ui_admin import router as admin_sources_ui_router
 from providerharvest_service.ui_admin_ftp import router as admin_ftp_ui_router
-from providerharvest_service.ui_admin_ftp_attempts import router as admin_ftp_attempts_ui_router
+from providerharvest_service.ui_admin_failed_logins import router as admin_failed_logins_ui_router
 from providerharvest_service.ui_admin_login import router as admin_login_ui_router
 from providerharvest_service.ui_provider import router as provider_sources_ui_router
 
@@ -64,7 +64,7 @@ app.include_router(ftp_accounts_sync_router)
 app.include_router(provider_sources_ui_router)
 app.include_router(admin_sources_ui_router)
 app.include_router(admin_ftp_ui_router)
-app.include_router(admin_ftp_attempts_ui_router)
+app.include_router(admin_failed_logins_ui_router)
 app.include_router(admin_login_ui_router)
 app.include_router(proxy_router)
 app.include_router(push_ingest_router)

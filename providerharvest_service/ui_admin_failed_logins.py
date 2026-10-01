@@ -32,7 +32,7 @@ from providerharvest_service import build_info, failed_auth
 from providerharvest_service.db import get_session
 from providerharvest_service.models import FtpBoxStatus, FtpLoginAttempt
 
-router = APIRouter(prefix="/admin/ftp", tags=["ftp-ui"])
+router = APIRouter(prefix="/admin/security", tags=["security-ui"])
 templates = Jinja2Templates(directory="providerharvest_service/templates")
 templates.env.globals["build_info"] = build_info.get_build_info()
 templates.env.globals["changelog"] = build_info.get_changelog()
@@ -145,7 +145,7 @@ def _banned_now(session: Session) -> set[str]:
     return banned
 
 
-@router.get("/attempts", response_class=HTMLResponse)
+@router.get("/failed-logins", response_class=HTMLResponse)
 def attempts_report(request: Request, page: int = 1, session: Session = Depends(get_session)) -> HTMLResponse:
     f = _read_filters(request)
     conditions = _conditions(f)
@@ -180,7 +180,7 @@ def attempts_report(request: Request, page: int = 1, session: Session = Depends(
 
     return templates.TemplateResponse(
         request,
-        "admin/ftp_attempts.html",
+        "admin/failed_logins.html",
         {
             "f": f,
             "windows": WINDOWS,
@@ -232,7 +232,7 @@ def _csv_response(header: list[str], rows, filename: str) -> Response:
     )
 
 
-@router.get("/attempts.csv")
+@router.get("/failed-logins.csv")
 def attempts_csv(request: Request, session: Session = Depends(get_session)) -> Response:
     f = _read_filters(request)
     attempts = session.scalars(
@@ -248,7 +248,7 @@ def attempts_csv(request: Request, session: Session = Depends(get_session)) -> R
     )
 
 
-@router.get("/attempts-by-address.csv")
+@router.get("/failed-logins-by-address.csv")
 def attempts_by_address_csv(request: Request, session: Session = Depends(get_session)) -> Response:
     f = _read_filters(request)
     banned = _banned_now(session)

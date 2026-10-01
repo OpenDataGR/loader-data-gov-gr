@@ -2,21 +2,17 @@
 {% import "_macros.html" as macros %}
 {% block title %}Failed logins -- loader.data.gov.gr{% endblock %}
 {% block content %}
-  <div class="top-actions">
-    <a class="btn btn-secondary" href="/admin/ftp">&larr; FTP subsystem</a>
-  </div>
-
-  <div class="panel" style="margin-top:0.8rem;">
-    <h1>Failed login attempts</h1>
+  <div class="panel">
+    <h1>Failed logins</h1>
     <p class="subtitle">
       Every refused login or credential, on any way in -- FTP and SFTP (reported by the box),
       the web login and the API/sync keys (seen by loader itself) -- kept for {{ retention_note }}
       {% if oldest %}(the oldest on record is {{ oldest|utc }} UTC){% endif %}.
-      Addresses that keep failing are banned automatically -- see the ban list on the
+      FTP/SFTP addresses that keep failing are banned automatically -- the ban list, with Unban, is on the
       <a href="/admin/ftp">FTP subsystem</a> page.
     </p>
 
-    <form method="get" action="/admin/ftp/attempts" style="display:flex; flex-wrap:wrap; gap:0.8rem; align-items:flex-end;">
+    <form method="get" action="/admin/security/failed-logins" style="display:flex; flex-wrap:wrap; gap:0.8rem; align-items:flex-end;">
       <div>
         <label for="window" style="margin-top:0;">Period</label>
         <select id="window" name="window" style="width:auto;">
@@ -43,7 +39,7 @@
         <input type="text" id="username" name="username" value="{{ f.username }}" class="small" placeholder="e.g. root">
       </div>
       <button type="submit">Apply</button>
-      <a class="btn btn-secondary" href="/admin/ftp/attempts">Reset</a>
+      <a class="btn btn-secondary" href="/admin/security/failed-logins">Reset</a>
     </form>
   </div>
 
@@ -58,7 +54,7 @@
   <div class="panel">
     <div class="top-actions">
       <h1 style="margin:0;">By source address</h1>
-      <a class="btn btn-secondary btn-sm" href="/admin/ftp/attempts-by-address.csv?{{ export_query }}">Download CSV</a>
+      <a class="btn btn-secondary btn-sm" href="/admin/security/failed-logins-by-address.csv?{{ export_query }}">Download CSV</a>
     </div>
     <p class="subtitle">Most attempts first{% if by_address|length >= 25 %} (top 25 here; the CSV has every address){% endif %}.</p>
     {% if not by_address %}
@@ -108,7 +104,7 @@
   <div class="panel" style="margin-top:1.2rem;">
     <div class="top-actions">
       <h1 style="margin:0;">Every attempt</h1>
-      <a class="btn btn-secondary btn-sm" href="/admin/ftp/attempts.csv?{{ export_query }}">Download CSV</a>
+      <a class="btn btn-secondary btn-sm" href="/admin/security/failed-logins.csv?{{ export_query }}">Download CSV</a>
     </div>
     <p class="subtitle">
       Newest first. {% if total > page_size %}Page {{ page }} of {{ pages }}.{% endif %}
@@ -137,9 +133,9 @@
       </table>
       {% if pages > 1 %}
         <p style="margin-top:1rem; display:flex; gap:0.5rem; align-items:center;">
-          {% if page > 1 %}<a class="btn btn-secondary btn-sm" href="/admin/ftp/attempts?{{ page_query }}&page={{ page - 1 }}">&larr; Newer</a>{% endif %}
+          {% if page > 1 %}<a class="btn btn-secondary btn-sm" href="/admin/security/failed-logins?{{ page_query }}&page={{ page - 1 }}">&larr; Newer</a>{% endif %}
           <span class="muted">Page {{ page }} of {{ pages }}</span>
-          {% if page < pages %}<a class="btn btn-secondary btn-sm" href="/admin/ftp/attempts?{{ page_query }}&page={{ page + 1 }}">Older &rarr;</a>{% endif %}
+          {% if page < pages %}<a class="btn btn-secondary btn-sm" href="/admin/security/failed-logins?{{ page_query }}&page={{ page + 1 }}">Older &rarr;</a>{% endif %}
         </p>
       {% endif %}
     {% endif %}

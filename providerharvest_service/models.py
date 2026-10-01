@@ -263,7 +263,7 @@ class FtpUnbanRequest(Base):
 
 class FtpLoginAttempt(Base):
     """One refused login or credential check, on any way in -- for the report
-    of who has been trying the door (see ui_admin_ftp_attempts.py). FTP/SFTP
+    of who has been trying the door (see ui_admin_failed_logins.py). FTP/SFTP
     ones are shipped in batches by the box's sync service, HTTP ones are
     recorded by loader itself (failed_auth.py); kept for a limited time only (see
     ``admin_ftp.ATTEMPT_RETENTION``). ``username`` is whatever the client

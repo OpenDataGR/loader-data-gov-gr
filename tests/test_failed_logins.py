@@ -128,10 +128,10 @@ def test_old_attempts_are_pruned_on_intake(machine, _isolated_db):
 # -- the report page ------------------------------------------------------------------
 
 def test_the_report_needs_a_login(machine):
-    resp = machine.get("/admin/ftp/attempts", follow_redirects=False)
+    resp = machine.get("/admin/security/failed-logins", follow_redirects=False)
     assert resp.status_code == 303
     assert resp.headers["location"].startswith("/admin/login")
-    assert machine.get("/admin/ftp/attempts.csv", follow_redirects=False).status_code == 303
+    assert machine.get("/admin/security/failed-logins.csv", follow_redirects=False).status_code == 303
 
 
 def _seed(machine):
@@ -145,11 +145,11 @@ def _seed(machine):
 
 def test_the_report_counts_attempts_per_address(machine, admin):
     _seed(machine)
-    html = admin.get("/admin/ftp/attempts").text
+    html = admin.get("/admin/security/failed-logins").text
     assert "188.166.1.1" in html and "45.9.9.9" in html
     # most attempts first
     assert html.index("188.166.1.1") < html.index("45.9.9.9")
-    csv_text = admin.get("/admin/ftp/attempts-by-address.csv").text.splitlines()
+    csv_text = admin.get("/admin/security/failed-logins-by-address.csv").text.splitlines()
     assert csv_text[0].startswith("source_address,attempts")
     row = csv_text[1].split(",")
     assert row[0] == "188.166.1.1" and row[1] == "3"  # attempts
@@ -160,7 +160,7 @@ def test_the_report_counts_attempts_per_address(machine, admin):
 
 def test_the_attempt_log_shows_port_protocol_and_username(admin, machine):
     _seed(machine)
-    csv_lines = admin.get("/admin/ftp/attempts.csv").text.splitlines()
+    csv_lines = admin.get("/admin/security/failed-logins.csv").text.splitlines()
     assert csv_lines[0] == "time_utc,box,source_address,port,method,username_tried,refusal_code"
     assert len(csv_lines) == 5
     assert any(",45.9.9.9,21,FTP,ubuntu,530" in line for line in csv_lines)
@@ -170,56 +170,56 @@ def test_the_attempt_log_shows_port_protocol_and_username(admin, machine):
 
 def test_filters_narrow_the_report(admin, machine):
     _seed(machine)
-    assert len(admin.get("/admin/ftp/attempts.csv?method=FTP").text.splitlines()) == 3
-    assert len(admin.get("/admin/ftp/attempts.csv?method=SFTP").text.splitlines()) == 3
-    assert len(admin.get("/admin/ftp/attempts.csv?method=Web+login").text.splitlines()) == 1
-    assert len(admin.get("/admin/ftp/attempts.csv?address=45.").text.splitlines()) == 2
-    assert len(admin.get("/admin/ftp/attempts.csv?username=roo").text.splitlines()) == 3
-    assert len(admin.get("/admin/ftp/attempts.csv?address=188.166.1.1&method=SFTP").text.splitlines()) == 3
+    assert len(admin.get("/admin/security/failed-logins.csv?method=FTP").text.splitlines()) == 3
+    assert len(admin.get("/admin/security/failed-logins.csv?method=SFTP").text.splitlines()) == 3
+    assert len(admin.get("/admin/security/failed-logins.csv?method=Web+login").text.splitlines()) == 1
+    assert len(admin.get("/admin/security/failed-logins.csv?address=45.").text.splitlines()) == 2
+    assert len(admin.get("/admin/security/failed-logins.csv?username=roo").text.splitlines()) == 3
+    assert len(admin.get("/admin/security/failed-logins.csv?address=188.166.1.1&method=SFTP").text.splitlines()) == 3
 
 
 def test_the_time_window_filter(admin, machine):
     _send(machine, [_attempt(ip="1.1.1.1", ago_s=30 * 60), _attempt(ip="2.2.2.2", ago_s=5 * 3600)])
-    assert len(admin.get("/admin/ftp/attempts.csv?window=1").text.splitlines()) == 2
-    assert len(admin.get("/admin/ftp/attempts.csv?window=24").text.splitlines()) == 3
-    assert len(admin.get("/admin/ftp/attempts.csv?window=all").text.splitlines()) == 3
-    assert len(admin.get("/admin/ftp/attempts.csv?window=bogus").text.splitlines()) == 3  # falls back to 24h
+    assert len(admin.get("/admin/security/failed-logins.csv?window=1").text.splitlines()) == 2
+    assert len(admin.get("/admin/security/failed-logins.csv?window=24").text.splitlines()) == 3
+    assert len(admin.get("/admin/security/failed-logins.csv?window=all").text.splitlines()) == 3
+    assert len(admin.get("/admin/security/failed-logins.csv?window=bogus").text.splitlines()) == 3  # falls back to 24h
 
 
 def test_percent_and_underscore_in_filters_are_literal(admin, machine):
     _send(machine, [_attempt(username="root"), _attempt(username="r_t")])
-    assert len(admin.get("/admin/ftp/attempts.csv?username=r_t").text.splitlines()) == 2  # not "r?t"
-    assert len(admin.get("/admin/ftp/attempts.csv?username=%25").text.splitlines()) == 1  # no wildcard
+    assert len(admin.get("/admin/security/failed-logins.csv?username=r_t").text.splitlines()) == 2  # not "r?t"
+    assert len(admin.get("/admin/security/failed-logins.csv?username=%25").text.splitlines()) == 1  # no wildcard
 
 
 def test_junk_filter_values_do_not_break_the_page(admin):
-    assert admin.get("/admin/ftp/attempts?method=abc&window=zzz&page=-4&address=%00").status_code == 200
+    assert admin.get("/admin/security/failed-logins?method=abc&window=zzz&page=-4&address=%00").status_code == 200
 
 
 def test_a_hostile_username_is_escaped_in_the_page(admin, machine):
     _send(machine, [_attempt(username="<script>alert(1)</script>")])
-    html = admin.get("/admin/ftp/attempts").text
+    html = admin.get("/admin/security/failed-logins").text
     assert "<script>alert(1)</script>" not in html
     assert "&lt;script&gt;" in html
 
 
 def test_csv_defuses_spreadsheet_formulas(admin, machine):
     _send(machine, [_attempt(username="=HYPERLINK(\"http://evil\")"), _attempt(username="+1"), _attempt(username="@x")])
-    body = admin.get("/admin/ftp/attempts.csv").text
+    body = admin.get("/admin/security/failed-logins.csv").text
     assert ",=HYPERLINK" not in body
     assert "'=HYPERLINK" in body and "'+1" in body and "'@x" in body
 
 
 def test_the_page_paginates(admin, machine):
     _send(machine, [_attempt(ip="3.3.3.%d" % (i % 250), ago_s=i + 1) for i in range(150)])
-    page1 = admin.get("/admin/ftp/attempts").text
+    page1 = admin.get("/admin/security/failed-logins").text
     assert "Page 1 of 2" in page1
-    assert "Page 2 of 2" in admin.get("/admin/ftp/attempts?page=2").text
-    assert "Page 2 of 2" in admin.get("/admin/ftp/attempts?page=99").text  # clamped
+    assert "Page 2 of 2" in admin.get("/admin/security/failed-logins?page=2").text
+    assert "Page 2 of 2" in admin.get("/admin/security/failed-logins?page=99").text  # clamped
 
 
 def test_an_empty_report_renders(admin):
-    resp = admin.get("/admin/ftp/attempts")
+    resp = admin.get("/admin/security/failed-logins")
     assert resp.status_code == 200
     assert "No refused logins" in resp.text
 
@@ -232,8 +232,8 @@ def test_currently_banned_addresses_are_marked(admin, machine, _isolated_db):
             relay_service_active=True, account_count=1, sync_ok=True, banned_ips='["188.166.1.1"]',
         ))
         session.commit()
-    assert admin.get("/admin/ftp/attempts-by-address.csv").text.splitlines()[1].endswith(",yes")
-    assert "banned now" in admin.get("/admin/ftp/attempts").text
+    assert admin.get("/admin/security/failed-logins-by-address.csv").text.splitlines()[1].endswith(",yes")
+    assert "banned now" in admin.get("/admin/security/failed-logins").text
 
 
 # -- HTTP: the web login and the API/sync keys ----------------------------------------------
@@ -292,10 +292,10 @@ def test_successful_and_unrelated_responses_record_nothing(machine, _isolated_db
 def test_http_failures_show_up_in_the_report_with_their_method(machine, admin, _isolated_db):
     machine.post("/admin/login", data={"username": "root", "password": "x"}, headers=_from("203.0.113.7"))
     _send(machine, [_attempt(ip="203.0.113.7", port=21)])
-    csv_lines = admin.get("/admin/ftp/attempts-by-address.csv").text.splitlines()
+    csv_lines = admin.get("/admin/security/failed-logins-by-address.csv").text.splitlines()
     assert csv_lines[1].split(",")[4] == "FTP; Web login"
-    assert len(admin.get("/admin/ftp/attempts.csv?method=Web+login").text.splitlines()) == 2
-    assert "Web login" in admin.get("/admin/ftp/attempts").text
+    assert len(admin.get("/admin/security/failed-logins.csv?method=Web+login").text.splitlines()) == 2
+    assert "Web login" in admin.get("/admin/security/failed-logins").text
 
 
 def test_a_flood_from_one_address_is_capped(machine, _isolated_db):
@@ -323,5 +323,5 @@ def test_old_rows_without_a_channel_are_told_apart_by_port(admin, _isolated_db):
             ip="7.7.7.7", port=2222, username="old", code=530, channel=None,
         ))
         session.commit()
-    assert ",7.7.7.7,2222,SFTP,old,530" in admin.get("/admin/ftp/attempts.csv").text
-    assert len(admin.get("/admin/ftp/attempts.csv?method=SFTP").text.splitlines()) == 2
+    assert ",7.7.7.7,2222,SFTP,old,530" in admin.get("/admin/security/failed-logins.csv").text
+    assert len(admin.get("/admin/security/failed-logins.csv?method=SFTP").text.splitlines()) == 2
