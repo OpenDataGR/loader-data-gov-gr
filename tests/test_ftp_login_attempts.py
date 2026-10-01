@@ -30,9 +30,10 @@ def _env(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _isolated_db(tmp_path):
+def _isolated_db(tmp_path, monkeypatch):
     engine = db.make_engine("sqlite:///%s" % (tmp_path / "test.db"))
     session_factory = db.make_session_factory(engine)
+    monkeypatch.setattr(db, "SessionLocal", session_factory)  # where failed_auth.py writes
 
     def _override():
         session = session_factory()
@@ -152,26 +153,29 @@ def test_the_report_counts_attempts_per_address(machine, admin):
     assert csv_text[0].startswith("source_address,attempts")
     row = csv_text[1].split(",")
     assert row[0] == "188.166.1.1" and row[1] == "3"  # attempts
-    assert row[4] == "1" and row[5] == "2"  # ftp, sftp
-    assert row[6] == "2"  # distinct usernames: root, admin
-    assert row[7] == "no"
+    assert row[4] == "FTP; SFTP"  # methods
+    assert row[5] == "2"  # distinct usernames: root, admin
+    assert row[6] == "no"
 
 
 def test_the_attempt_log_shows_port_protocol_and_username(admin, machine):
     _seed(machine)
     csv_lines = admin.get("/admin/ftp/attempts.csv").text.splitlines()
-    assert csv_lines[0] == "time_utc,box,source_address,port,protocol,username_tried,refusal_code"
+    assert csv_lines[0] == "time_utc,box,source_address,port,method,username_tried,refusal_code"
     assert len(csv_lines) == 5
     assert any(",45.9.9.9,21,FTP,ubuntu,530" in line for line in csv_lines)
+    assert any(",188.166.1.1,2222,SFTP,root,530" in line for line in csv_lines)
     assert any(",188.166.1.1,2222,SFTP,admin,530" in line for line in csv_lines)
 
 
 def test_filters_narrow_the_report(admin, machine):
     _seed(machine)
-    assert len(admin.get("/admin/ftp/attempts.csv?port=21").text.splitlines()) == 3
+    assert len(admin.get("/admin/ftp/attempts.csv?method=FTP").text.splitlines()) == 3
+    assert len(admin.get("/admin/ftp/attempts.csv?method=SFTP").text.splitlines()) == 3
+    assert len(admin.get("/admin/ftp/attempts.csv?method=Web+login").text.splitlines()) == 1
     assert len(admin.get("/admin/ftp/attempts.csv?address=45.").text.splitlines()) == 2
     assert len(admin.get("/admin/ftp/attempts.csv?username=roo").text.splitlines()) == 3
-    assert len(admin.get("/admin/ftp/attempts.csv?address=188.166.1.1&port=2222").text.splitlines()) == 3
+    assert len(admin.get("/admin/ftp/attempts.csv?address=188.166.1.1&method=SFTP").text.splitlines()) == 3
 
 
 def test_the_time_window_filter(admin, machine):
@@ -189,7 +193,7 @@ def test_percent_and_underscore_in_filters_are_literal(admin, machine):
 
 
 def test_junk_filter_values_do_not_break_the_page(admin):
-    assert admin.get("/admin/ftp/attempts?port=abc&window=zzz&page=-4&address=%00").status_code == 200
+    assert admin.get("/admin/ftp/attempts?method=abc&window=zzz&page=-4&address=%00").status_code == 200
 
 
 def test_a_hostile_username_is_escaped_in_the_page(admin, machine):
@@ -230,3 +234,94 @@ def test_currently_banned_addresses_are_marked(admin, machine, _isolated_db):
         session.commit()
     assert admin.get("/admin/ftp/attempts-by-address.csv").text.splitlines()[1].endswith(",yes")
     assert "banned now" in admin.get("/admin/ftp/attempts").text
+
+
+# -- HTTP: the web login and the API/sync keys ----------------------------------------------
+
+def _http_rows(session_factory):
+    return [(r.channel, r.ip, r.port, r.username, r.code) for r in _rows(session_factory) if r.hostname == "loader"]
+
+
+def _from(ip):
+    # Behind the gateway the client is the second-to-last entry.
+    return {"X-Forwarded-For": "%s:5555, 10.0.0.4" % ip}
+
+
+def test_a_wrong_web_login_is_recorded_with_the_typed_username(machine, _isolated_db):
+    machine.post("/admin/login", data={"username": "root", "password": "nope"}, headers=_from("203.0.113.7"))
+    assert _http_rows(_isolated_db) == [("Web login", "203.0.113.7", 443, "root", 401)]
+
+
+def test_a_correct_web_login_records_nothing(machine, _isolated_db):
+    machine.post("/admin/login", data={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD})
+    assert _http_rows(_isolated_db) == []
+
+
+def test_the_password_is_never_recorded(machine, _isolated_db):
+    machine.post("/admin/login", data={"username": "root", "password": "hunter2-secret"}, headers=_from("203.0.113.7"))
+    assert "hunter2" not in repr([vars(r) for r in _rows(_isolated_db)])
+
+
+def test_bad_keys_are_recorded_under_the_credential_they_were_for(machine, _isolated_db, monkeypatch):
+    monkeypatch.setenv("LOADER_ADMIN_API_KEY", "real-admin-key")
+    h = _from("203.0.113.8")
+    machine.get("/admin/ftp-accounts", headers={**h, "X-Admin-Key": "wrong"})
+    machine.get("/admin/ftp-accounts-sync", headers={**h, "X-Ftp-Sync-Key": "wrong"})
+    machine.put("/admin/ftp-box-status", json={}, headers={**h, "X-Ftp-Sync-Key": "wrong"})
+    machine.get("/me", headers=h)
+    channels = sorted(c for c, *_ in _http_rows(_isolated_db))
+    assert channels == ["Admin API key", "Bearer token", "FTP box key", "FTP box key"]
+
+
+def test_push_paths_are_filed_under_the_push_key_with_the_source_name():
+    from providerharvest_service import failed_auth
+
+    assert failed_auth.channel_for_path("/push/acme/upload") == "Push API key"
+    assert failed_auth.channel_for_path("/admin/ftp-accounts-sync") == "FTP box key"
+    assert failed_auth.channel_for_path("/admin/ftp-accounts") == "Admin API key"
+    assert failed_auth.channel_for_path("/admin/ftp-accounts/x/allowed-ips") == "Admin API key"
+    assert failed_auth.channel_for_path("/pushy") == "HTTP"  # a prefix match needs the "/" boundary
+
+
+def test_successful_and_unrelated_responses_record_nothing(machine, _isolated_db):
+    machine.get("/health")
+    machine.get("/provider/sources", follow_redirects=False)  # a redirect to the login page, not a failure
+    assert _http_rows(_isolated_db) == []
+
+
+def test_http_failures_show_up_in_the_report_with_their_method(machine, admin, _isolated_db):
+    machine.post("/admin/login", data={"username": "root", "password": "x"}, headers=_from("203.0.113.7"))
+    _send(machine, [_attempt(ip="203.0.113.7", port=21)])
+    csv_lines = admin.get("/admin/ftp/attempts-by-address.csv").text.splitlines()
+    assert csv_lines[1].split(",")[4] == "FTP; Web login"
+    assert len(admin.get("/admin/ftp/attempts.csv?method=Web+login").text.splitlines()) == 2
+    assert "Web login" in admin.get("/admin/ftp/attempts").text
+
+
+def test_a_flood_from_one_address_is_capped(machine, _isolated_db):
+    from providerharvest_service import failed_auth
+
+    for _ in range(failed_auth.MAX_PER_ADDRESS_PER_MINUTE + 10):
+        machine.get("/me", headers=_from("203.0.113.50"))
+    assert len(_http_rows(_isolated_db)) == failed_auth.MAX_PER_ADDRESS_PER_MINUTE
+
+
+def test_a_recording_failure_never_breaks_the_refusal(machine, monkeypatch):
+    from providerharvest_service import failed_auth
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(failed_auth, "_record", boom)
+    assert machine.get("/me", headers=_from("203.0.113.51")).status_code == 401
+
+
+def test_old_rows_without_a_channel_are_told_apart_by_port(admin, _isolated_db):
+    with _isolated_db() as session:
+        session.add(FtpLoginAttempt(
+            hostname="box1", at=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None),
+            ip="7.7.7.7", port=2222, username="old", code=530, channel=None,
+        ))
+        session.commit()
+    assert ",7.7.7.7,2222,SFTP,old,530" in admin.get("/admin/ftp/attempts.csv").text
+    assert len(admin.get("/admin/ftp/attempts.csv?method=SFTP").text.splitlines()) == 2

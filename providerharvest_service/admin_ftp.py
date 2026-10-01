@@ -481,6 +481,7 @@ def report_login_attempts(payload: LoginAttemptsIn, session: Session = Depends(g
         session.add(FtpLoginAttempt(
             hostname=payload.hostname, at=when, ip=address, port=attempt.port,
             username=clean_username(attempt.username), code=attempt.code,
+            channel={21: "FTP", 2222: "SFTP"}.get(attempt.port, "FTP/SFTP port %d" % attempt.port),
         ))
         stored += 1
     session.execute(delete(FtpLoginAttempt).where(FtpLoginAttempt.at < oldest))

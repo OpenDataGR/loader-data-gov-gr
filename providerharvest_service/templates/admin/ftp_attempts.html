@@ -9,7 +9,8 @@
   <div class="panel" style="margin-top:0.8rem;">
     <h1>Failed login attempts</h1>
     <p class="subtitle">
-      Every refused FTP/SFTP login the box has reported, kept for {{ retention_note }}
+      Every refused login or credential, on any way in -- FTP and SFTP (reported by the box),
+      the web login and the API/sync keys (seen by loader itself) -- kept for {{ retention_note }}
       {% if oldest %}(the oldest on record is {{ oldest|utc }} UTC){% endif %}.
       Addresses that keep failing are banned automatically -- see the ban list on the
       <a href="/admin/ftp">FTP subsystem</a> page.
@@ -29,11 +30,12 @@
         <input type="text" id="address" name="address" value="{{ f.address }}" class="small" placeholder="e.g. 188.166.">
       </div>
       <div>
-        <label for="port" style="margin-top:0;">Port</label>
-        <select id="port" name="port" style="width:auto;">
+        <label for="method" style="margin-top:0;">Method</label>
+        <select id="method" name="method" style="width:auto;">
           <option value="">any</option>
-          <option value="21" {% if f.port == 21 %}selected{% endif %}>21 (FTP)</option>
-          <option value="2222" {% if f.port == 2222 %}selected{% endif %}>2222 (SFTP)</option>
+          {% for m in methods %}
+            <option value="{{ m }}" {% if f.method == m %}selected{% endif %}>{{ m }}</option>
+          {% endfor %}
         </select>
       </div>
       <div>
@@ -48,8 +50,9 @@
   <div class="stats" style="margin-top:1.2rem;">
     {{ macros.stat_tile("attempts", total, "rejected") }}
     {{ macros.stat_tile("different addresses", addresses, "pending") }}
-    {{ macros.stat_tile("on SFTP (2222)", sftp_total, "paused") }}
-    {{ macros.stat_tile("on FTP (21)", ftp_total, "paused") }}
+    {% for row in by_method[:3] %}
+      {{ macros.stat_tile("via " ~ row.method, row.n, "paused") }}
+    {% endfor %}
   </div>
 
   <div class="panel">
@@ -65,7 +68,7 @@
         <thead>
           <tr>
             <th>Address</th><th>Attempts</th><th>First attempt (UTC)</th><th>Last attempt (UTC)</th>
-            <th>SFTP</th><th>FTP</th><th>Usernames tried</th><th></th>
+            <th>Methods</th><th>Usernames tried</th><th></th>
           </tr>
         </thead>
         <tbody>
@@ -75,8 +78,7 @@
             <td class="name-title">{{ row.attempts }}</td>
             <td class="muted">{{ row.first_at|utc }}</td>
             <td class="muted">{{ row.last_at|utc }}</td>
-            <td>{{ row.sftp }}</td>
-            <td>{{ row.ftp }}</td>
+            <td>{% for m in (row.methods or "").split(",")|sort %}<span class="chip">{{ m }}</span> {% endfor %}</td>
             <td>{{ row.usernames }}</td>
             <td>{% if row.ip in banned %}<span class="badge badge-error" title="Currently banned by fail2ban">{{ macros.icon("rejected", 13) }}<span>banned now</span></span>{% endif %}</td>
           </tr>
@@ -117,7 +119,7 @@
     {% else %}
       <table>
         <thead>
-          <tr><th>Time (UTC)</th><th>Address</th><th>Port</th><th>Protocol</th><th>Username tried</th><th>Refused</th><th></th></tr>
+          <tr><th>Time (UTC)</th><th>Address</th><th>Port</th><th>Method</th><th>Username tried</th><th>Refused</th><th></th></tr>
         </thead>
         <tbody>
           {% for e in events %}
@@ -125,7 +127,7 @@
             <td class="muted">{{ e.at|utc }}</td>
             <td><code>{{ e.ip }}</code></td>
             <td>{{ e.port }}</td>
-            <td><span class="chip">{{ e.port|protocol }}</span></td>
+            <td><span class="chip">{{ e|method }}</span></td>
             <td>{% if e.username %}<code>{{ e.username }}</code>{% else %}<span class="muted">(none)</span>{% endif %}</td>
             <td class="muted">{{ e.code }}</td>
             <td>{% if e.ip in banned %}<span class="badge badge-error" title="Currently banned by fail2ban"><span>banned now</span></span>{% endif %}</td>

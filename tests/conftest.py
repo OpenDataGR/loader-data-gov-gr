@@ -8,6 +8,17 @@ ADMIN_USERNAME = "test-admin"
 ADMIN_PASSWORD = "test-password"
 
 
+@pytest.fixture(autouse=True)
+def _failed_auth_goes_to_a_throwaway_db(tmp_path, monkeypatch):
+    """Refused logins/keys are recorded through ``db.SessionLocal`` (see
+    failed_auth.py), outside the get_session dependency that tests override.
+    Without this every 401 any test provokes would be written to the real
+    default database file."""
+    from providerharvest_service import db
+
+    monkeypatch.setattr(db, "SessionLocal", db.make_session_factory(db.make_engine("sqlite:///%s" % (tmp_path / "failed-auth.db"))))
+
+
 @pytest.fixture
 def admin_session_env(monkeypatch):
     monkeypatch.setenv("LOADER_ADMIN_UI_USERNAME", ADMIN_USERNAME)

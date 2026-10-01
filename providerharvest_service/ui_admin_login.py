@@ -13,7 +13,9 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from providerharvest_service import admin_session, build_info
+from starlette.concurrency import run_in_threadpool
+
+from providerharvest_service import admin_session, build_info, failed_auth
 
 router = APIRouter(prefix="/admin", tags=["admin-login"])
 templates = Jinja2Templates(directory="providerharvest_service/templates")
@@ -67,6 +69,7 @@ async def login_submit(request: Request):
         )
 
     if not ok:
+        await run_in_threadpool(failed_auth.record, request, failed_auth.WEB_LOGIN, str(username), 401)
         return RedirectResponse(
             "/admin/login?next=%s&flash=Invalid+username+or+password" % quote(next_url, safe=""), status_code=303
         )

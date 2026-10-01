@@ -133,6 +133,14 @@ dropped and the length capped on intake, the page escapes it, and the CSV
 defuses spreadsheet formulas. Attempts from before this log existed are not
 in the report.
 
+The same report also covers loader's own HTTP side, recorded by loader itself
+(`failed_auth.py`, no box involved): a wrong password on the web login (with
+the username typed -- never the password), and any `401` for an API/sync key
+or bearer token, filed as *Admin API key*, *FTP box key*, *Push API key* or
+*Bearer token* by the path it hit. Capped at 30 rows per address per minute
+so a flood of bad requests cannot flood the table. Not yet covered: sshd on
+the box (22 / 7002).
+
 Not covered, deliberately left for later: enforcing each account's
 per-account allowed-IP list on the box (stored in loader, not yet
 applied), and whether plain FTP (unencrypted) should stay open at all.

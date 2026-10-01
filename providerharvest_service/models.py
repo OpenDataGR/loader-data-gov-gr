@@ -262,9 +262,10 @@ class FtpUnbanRequest(Base):
 
 
 class FtpLoginAttempt(Base):
-    """One refused FTP/SFTP login, as the box saw it -- for the report of who
-    has been trying the door (see ui_admin_ftp_attempts.py). Shipped in
-    batches by the box's sync service; kept for a limited time only (see
+    """One refused login or credential check, on any way in -- for the report
+    of who has been trying the door (see ui_admin_ftp_attempts.py). FTP/SFTP
+    ones are shipped in batches by the box's sync service, HTTP ones are
+    recorded by loader itself (failed_auth.py); kept for a limited time only (see
     ``admin_ftp.ATTEMPT_RETENTION``). ``username`` is whatever the client
     typed, so it is hostile input: cleaned on the way in and treated as
     untrusted wherever it is shown or exported."""
@@ -281,7 +282,11 @@ class FtpLoginAttempt(Base):
     ip: Mapped[str] = mapped_column(String, nullable=False)
     port: Mapped[int] = mapped_column(Integer, nullable=False)  # the server port it hit: 21 FTP, 2222 SFTP
     username: Mapped[str] = mapped_column(String, nullable=False, default="")
-    code: Mapped[int] = mapped_column(Integer, nullable=False)  # the refusal, e.g. 530
+    code: Mapped[int] = mapped_column(Integer, nullable=False)  # the refusal, e.g. 530 (FTP) or 401 (HTTP)
+    # How they came in: "FTP", "SFTP" (from the box), or an HTTP credential
+    # ("Web login", "Push API key", ...; see failed_auth.py). NULL on rows
+    # that predate the column -- those are FTP/SFTP, told apart by port.
+    channel: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class FtpAllowedIp(Base):
