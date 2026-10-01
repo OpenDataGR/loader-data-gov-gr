@@ -235,6 +235,30 @@ class FtpBoxStatus(Base):
     account_count: Mapped[int] = mapped_column(Integer, nullable=False)
     sync_ok: Mapped[bool] = mapped_column(Boolean, nullable=False)
     sync_message: Mapped[str | None] = mapped_column(String, nullable=True)
+    # fail2ban's current ban list for the box's login jail, as a JSON list
+    # of addresses (NULL until the box has reported one), and whether
+    # fail2ban itself is running (NULL: a box that doesn't report it).
+    banned_ips: Mapped[str | None] = mapped_column(String, nullable=True)
+    fail2ban_active: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+    @property
+    def banned(self) -> list[str]:
+        return json.loads(self.banned_ips) if self.banned_ips else []
+
+
+class FtpUnbanRequest(Base):
+    """An admin asked for an address to be let back in on a box. Loader
+    can't reach the box, so the request waits here until that box's next
+    heartbeat collects it (the reply to ``PUT /admin/ftp-box-status``
+    lists it); it is dropped once the box reports the address no longer
+    banned, or after a timeout if the box never does."""
+
+    __tablename__ = "ftp_unban_request"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_new_id)
+    hostname: Mapped[str] = mapped_column(String, nullable=False)
+    ip: Mapped[str] = mapped_column(String, nullable=False)
+    requested_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
 
 
 class FtpAllowedIp(Base):

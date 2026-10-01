@@ -483,3 +483,101 @@ def test_the_heartbeat_ignores_an_account_that_forwards_nowhere(client, _isolate
 
 def test_a_heartbeat_without_clients_still_works(client):
     assert client.put("/admin/ftp-box-status", json=_status_payload(), headers=SYNC_HEADERS).status_code == 200
+
+
+# -- fail2ban ban list and unban requests -----------------------------------------
+
+
+def _heartbeat(client, **overrides):
+    resp = client.put("/admin/ftp-box-status", json=dict(_status_payload(), **overrides), headers=SYNC_HEADERS)
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def _box(session_factory):
+    from providerharvest_service.models import FtpBoxStatus
+
+    with session_factory() as session:
+        row = session.get(FtpBoxStatus, "snf-899358")
+        return row.banned, row.fail2ban_active
+
+
+def _add_unban_request(session_factory, ip, hostname="snf-899358", age_minutes=0):
+    import datetime
+
+    from providerharvest_service.models import FtpUnbanRequest
+
+    with session_factory() as session:
+        requested = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(minutes=age_minutes)
+        session.add(FtpUnbanRequest(hostname=hostname, ip=ip, requested_at=requested))
+        session.commit()
+
+
+def _pending_requests(session_factory):
+    from sqlalchemy import select
+
+    from providerharvest_service.models import FtpUnbanRequest
+
+    with session_factory() as session:
+        return sorted((r.hostname, r.ip) for r in session.scalars(select(FtpUnbanRequest)).all())
+
+
+def test_the_heartbeat_stores_the_ban_list_and_whether_fail2ban_is_running(client, _isolated_db):
+    _heartbeat(client, banned_ips=["84.205.215.132", "169.58.53.194"], fail2ban_active=True)
+    assert _box(_isolated_db) == (["169.58.53.194", "84.205.215.132"], True)
+
+
+def test_junk_in_the_reported_ban_list_is_dropped(client, _isolated_db):
+    _heartbeat(client, banned_ips=["169.58.53.194", "not-an-address", "1.2.3.4; reboot", "169.58.53.194"])
+    assert _box(_isolated_db)[0] == ["169.58.53.194"]
+
+
+def test_a_report_without_a_ban_list_keeps_the_last_known_one(client, _isolated_db):
+    _heartbeat(client, banned_ips=["169.58.53.194"], fail2ban_active=True)
+    _heartbeat(client, fail2ban_active=False)  # fail2ban could not be asked this time
+    assert _box(_isolated_db) == (["169.58.53.194"], False)
+
+
+def test_a_reported_empty_list_clears_it(client, _isolated_db):
+    _heartbeat(client, banned_ips=["169.58.53.194"])
+    _heartbeat(client, banned_ips=[])
+    assert _box(_isolated_db)[0] == []
+
+
+def test_the_reply_hands_back_a_pending_unban_while_the_address_is_still_banned(client, _isolated_db):
+    _heartbeat(client, banned_ips=["84.205.215.132", "169.58.53.194"])
+    _add_unban_request(_isolated_db, "84.205.215.132")
+
+    reply = _heartbeat(client, banned_ips=["84.205.215.132", "169.58.53.194"])
+    assert reply["unban"] == ["84.205.215.132"]
+    # ...and keeps handing it back until the box has actually done it.
+    assert _heartbeat(client, banned_ips=["84.205.215.132", "169.58.53.194"])["unban"] == ["84.205.215.132"]
+
+
+def test_a_request_is_closed_once_the_box_reports_the_address_released(client, _isolated_db):
+    _heartbeat(client, banned_ips=["84.205.215.132"])
+    _add_unban_request(_isolated_db, "84.205.215.132")
+
+    reply = _heartbeat(client, banned_ips=[])  # the box lifted it
+    assert reply["unban"] == []
+    assert _pending_requests(_isolated_db) == []
+
+
+def test_a_request_the_box_never_acts_on_expires(client, _isolated_db):
+    _heartbeat(client, banned_ips=["84.205.215.132"])
+    _add_unban_request(_isolated_db, "84.205.215.132", age_minutes=60)
+
+    assert _heartbeat(client, banned_ips=["84.205.215.132"])["unban"] == []
+    assert _pending_requests(_isolated_db) == []
+
+
+def test_one_boxs_requests_are_not_handed_to_another(client, _isolated_db):
+    _heartbeat(client, banned_ips=["84.205.215.132"])
+    _add_unban_request(_isolated_db, "84.205.215.132", hostname="some-other-box")
+
+    assert _heartbeat(client, banned_ips=["84.205.215.132"])["unban"] == []
+    assert _pending_requests(_isolated_db) == [("some-other-box", "84.205.215.132")]  # not this box's to clear
+
+
+def test_the_reply_has_no_unban_requests_by_default(client):
+    assert _heartbeat(client)["unban"] == []

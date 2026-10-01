@@ -14,6 +14,7 @@ the file forwarder itself already uses).
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 import pathlib
@@ -170,6 +171,18 @@ def local_account_count(db_path: str) -> int:
         conn.close()
 
 
+@dataclasses.dataclass(frozen=True)
+class Report:
+    """The outcome of one heartbeat. ``unban`` is what loader asked this
+    box to do in its reply -- addresses an admin wants let back in."""
+
+    accepted: bool
+    unban: tuple[str, ...] = ()
+
+    def __bool__(self) -> bool:
+        return self.accepted
+
+
 def report_status(
     session: requests.Session,
     base_url: str,
@@ -181,18 +194,22 @@ def report_status(
     sync_ok: bool,
     sync_message: str | None,
     clients: list[dict] | None = None,
+    banned_ips: list[str] | None = None,
     timeout_s: float = 30.0,
-) -> bool:
+) -> Report:
     """Best-effort: a failed heartbeat is logged, never raised -- this
     is telemetry for loader's own admin panel, not something that
     should crash the sync loop itself (that loop's actual job, keeping
     ProFTPD's account database current, must keep running regardless
     of whether reporting on it succeeds). Returns whether loader
     accepted the report, so the caller can hold on to anything (the
-    ``clients`` logins) that must be re-sent after a failure.
+    ``clients`` logins) that must be re-sent after a failure, plus
+    anything loader asked this box to do in its reply.
 
     ``clients``: ``{"username", "ip"}`` for each provider that logged in
-    since the last delivered report (see ``auth_log.py``)."""
+    since the last delivered report (see ``auth_log.py``).
+    ``banned_ips``: fail2ban's current ban list, or None when it could
+    not be read (omitted, so loader keeps showing the last known list)."""
     url = "%s/admin/ftp-box-status" % base_url.rstrip("/")
     payload = {
         "hostname": hostname,
@@ -202,12 +219,21 @@ def report_status(
         "clients": clients or [],
         **health,
     }
+    if banned_ips is not None:
+        payload["banned_ips"] = banned_ips
     try:
         resp = session.put(url, json=payload, headers={"X-Ftp-Sync-Key": sync_key}, timeout=timeout_s)
         if resp.status_code != 200:
             logger.error("status report to %s failed: %d %s", url, resp.status_code, resp.text[:200])
-            return False
+            return Report(accepted=False)
     except requests.RequestException as exc:
         logger.error("status report to %s failed: %s", url, exc)
-        return False
-    return True
+        return Report(accepted=False)
+    try:
+        body = resp.json()
+    except ValueError:
+        body = {}
+    unban = body.get("unban") if isinstance(body, dict) else None
+    if not isinstance(unban, list):
+        unban = []
+    return Report(accepted=True, unban=tuple(a for a in unban if isinstance(a, str)))

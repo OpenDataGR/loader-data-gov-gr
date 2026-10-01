@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime
 import ipaddress
+import json
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -30,7 +31,7 @@ from providerharvest_service.ftp_credentials import (
     hash_password,
     validate_home_directory,
 )
-from providerharvest_service.models import FtpAccount, FtpAllowedIp, FtpBoxStatus, ProviderSource
+from providerharvest_service.models import FtpAccount, FtpAllowedIp, FtpBoxStatus, FtpUnbanRequest, ProviderSource
 
 
 def _utcnow() -> datetime.datetime:
@@ -323,18 +324,27 @@ class ClientSeen(BaseModel):
 
 class FtpBoxStatusIn(_BoxStatusFields):
     clients: list[ClientSeen] = []
+    # The box's fail2ban state; both optional so a box on older code still reports.
+    banned_ips: list[str] | None = None
+    fail2ban_active: bool | None = None
 
 
 class FtpBoxStatusOut(_BoxStatusFields):
     reported_at: datetime.datetime
+    # Addresses an admin asked to be let back in, for the box to release
+    # now -- how a request made here reaches a box that loader can't call.
+    unban: list[str] = []
 
-    model_config = {"from_attributes": True}
+
+# A request the box never acts on (it's down, or fail2ban is) shouldn't sit
+# there forever and then fire an unban long after anyone remembers asking.
+UNBAN_REQUEST_TTL = datetime.timedelta(minutes=15)
 
 
 @sync_router.put("/admin/ftp-box-status", response_model=FtpBoxStatusOut)
 def report_ftp_box_status(
     payload: FtpBoxStatusIn, session: Session = Depends(get_session)
-) -> FtpBoxStatus:
+) -> FtpBoxStatusOut:
     # Same narrow LOADER_FTP_SYNC_KEY as the sync pull above, not a new
     # credential -- this is that same remote box reporting on itself
     # during the same cycle, not a distinct capability that needs its
@@ -351,11 +361,51 @@ def report_ftp_box_status(
     row.account_count = payload.account_count
     row.sync_ok = payload.sync_ok
     row.sync_message = payload.sync_message
+    if payload.banned_ips is not None:
+        addresses = {_valid_address(candidate) for candidate in payload.banned_ips}
+        row.banned_ips = json.dumps(sorted(a for a in addresses if a))
+    row.fail2ban_active = payload.fail2ban_active
     for client in payload.clients:
         _record_sender(session, client.username, client.ip)
+    pending = _collect_unban_requests(session, row)
     session.commit()
     session.refresh(row)
-    return row
+    return FtpBoxStatusOut(
+        hostname=row.hostname,
+        proftpd_active=row.proftpd_active,
+        ftp_port_listening=row.ftp_port_listening,
+        sftp_port_listening=row.sftp_port_listening,
+        relay_service_active=row.relay_service_active,
+        account_count=row.account_count,
+        sync_ok=row.sync_ok,
+        sync_message=row.sync_message,
+        reported_at=row.reported_at,
+        unban=pending,
+    )
+
+
+def _valid_address(value: str) -> str | None:
+    try:
+        return str(ipaddress.ip_address(value))
+    except ValueError:
+        return None
+
+
+def _collect_unban_requests(session: Session, box: FtpBoxStatus) -> list[str]:
+    """The addresses this box should release now. A request is finished
+    once the box reports that address no longer banned (so it is dropped
+    here), or has expired; until then it is handed back on every report --
+    harmless to repeat, since unbanning an address that isn't banned is a
+    no-op, and it means a dropped reply doesn't lose the request."""
+    banned = set(box.banned)
+    cutoff = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - UNBAN_REQUEST_TTL
+    pending: set[str] = set()
+    for request in session.scalars(select(FtpUnbanRequest).where(FtpUnbanRequest.hostname == box.hostname)).all():
+        if request.ip not in banned or request.requested_at < cutoff:
+            session.delete(request)
+        else:
+            pending.add(request.ip)
+    return sorted(pending)
 
 
 def _record_sender(session: Session, username: str, ip: str) -> None:
@@ -363,9 +413,8 @@ def _record_sender(session: Session, username: str, ip: str) -> None:
     their account forwards to. Best effort and silent: an address that
     isn't one, an unknown account, or one that forwards nowhere is just
     skipped -- a bad entry must never fail the whole heartbeat."""
-    try:
-        address = str(ipaddress.ip_address(ip))
-    except ValueError:
+    address = _valid_address(ip)
+    if address is None:
         return
     account = session.scalar(select(FtpAccount).where(FtpAccount.username == username))
     if account is None or not account.push_target_source_name:

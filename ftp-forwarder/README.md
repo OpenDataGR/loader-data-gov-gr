@@ -100,8 +100,17 @@ made-up log before enabling it, and prints the jail's status each run.
 
 A legitimate provider who mistypes a password too often is banned like
 anyone else and waits out the hour -- or an admin can let them back in
-right away: run `provision-ftp-box.yml` with the address in its
-`unban_ip` input (it validates the value before use).
+right away, from loader's **FTP subsystem** page (`/admin/ftp`): it lists
+the addresses currently banned on each box, with an Unban button. Loader
+can't reach the box, so the click only records a request
+(`FtpUnbanRequest`); the box collects it from the reply to its next
+heartbeat (about a minute), lifts the ban itself
+(`box_health.unban` -- it accepts nothing but an IP address, since it runs
+as root), and the heartbeat after that shows the address gone, which closes
+the request. A request the box never acts on expires after 15 minutes.
+The same page shows whether fail2ban is running at all (a dead jail would
+otherwise fail silently). Run `provision-ftp-box.yml` with the address in
+its `unban_ip` input if the page itself is unavailable.
 
 Not covered, deliberately left for later: enforcing each account's
 per-account allowed-IP list on the box (stored in loader, not yet
@@ -170,6 +179,8 @@ systemd unit under `deploy/` for the real, deployed invocation):
 --auth-log /var/log/proftpd/loader-auth.log   # optional -- ProFTPD's login log, tailed for provider addresses
 --proftpd-unit proftpd             # optional
 --relay-unit loader-ftp-forwarder  # optional
+--fail2ban-unit fail2ban           # optional -- reported, so a dead jail shows on the admin page
+--fail2ban-jail loader-ftp         # optional -- whose ban list is reported and unbanned from
 --ftp-port 21                      # optional
 --sftp-port 2222                   # optional
 ```

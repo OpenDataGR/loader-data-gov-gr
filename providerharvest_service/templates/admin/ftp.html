@@ -20,7 +20,7 @@
         <thead>
           <tr>
             <th>Box</th><th>ProFTPD</th><th>FTP :21</th><th>SFTP :2222</th>
-            <th>Relay</th><th>Sync</th><th>Accounts</th><th>Last report</th>
+            <th>Relay</th><th>Sync</th><th>Login bans</th><th>Accounts</th><th>Last report</th>
           </tr>
         </thead>
         <tbody>
@@ -35,12 +35,51 @@
               {% if box.sync_ok %}<span class="badge badge-ok" title="{{ box.sync_message or '' }}">{{ macros.icon("active", 13) }}<span>ok</span></span>
               {% else %}<span class="badge badge-error" title="{{ box.sync_message or '' }}">{{ macros.icon("rejected", 13) }}<span>failing</span></span>{% endif %}
             </td>
+            <td>
+              {% if box.fail2ban_active is none %}<span class="muted">unknown</span>
+              {% elif box.fail2ban_active %}<span class="badge badge-ok" title="Addresses that keep failing to log in are banned">{{ macros.icon("active", 13) }}<span>on</span></span>
+              {% else %}<span class="badge badge-error" title="fail2ban is not running: failed logins are not being banned">{{ macros.icon("rejected", 13) }}<span>off</span></span>{% endif %}
+            </td>
             <td>{{ box.account_count }}</td>
             <td class="muted health-timestamp">{{ box.reported_at.strftime("%Y-%m-%d %H:%M") }} UTC</td>
           </tr>
           {% endfor %}
         </tbody>
       </table>
+
+      <h2 style="font-size:1.05rem; margin:1.6rem 0 0.2rem; color:var(--color-primary);">Banned addresses</h2>
+      <p class="subtitle" style="margin-top:0;">
+        Addresses blocked after repeated refused logins (5 in 10 minutes bans for an hour, longer for
+        repeat offenders). If a provider has locked themselves out, let them back in here -- the box
+        applies it within about a minute.
+      </p>
+      {% for box in boxes %}
+        <div class="name-title" style="margin-top:0.8rem;">{{ box.hostname }}</div>
+        {% if box.banned %}
+          <table>
+            <tbody>
+              {% for ip in box.banned %}
+              <tr>
+                <td style="width:14rem;"><code>{{ ip }}</code></td>
+                <td>
+                  {% if ip in box.pending_unban %}
+                    <span class="muted">unban requested -- waiting for the box</span>
+                  {% else %}
+                    <form class="inline" method="post" action="/admin/ftp/boxes/{{ box.hostname }}/unban"
+                          onsubmit="return confirm('Let {{ ip }} back in?');">
+                      <input type="hidden" name="ip" value="{{ ip }}">
+                      <button type="submit" class="btn-sm btn-secondary">Unban</button>
+                    </form>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="muted" style="margin:0.3rem 0 0;">No addresses banned right now.</p>
+        {% endif %}
+      {% endfor %}
     {% endif %}
   </div>
 

@@ -282,12 +282,44 @@ def test_report_status_sends_an_empty_list_when_there_are_no_logins():
 
 def test_report_status_says_whether_loader_accepted_the_report():
     # The caller keeps unsent logins until this is True.
-    assert _report(FakeSession(FakeResponse(200), put_response=FakeResponse(200))) is True
-    assert _report(FakeSession(FakeResponse(200), put_response=FakeResponse(401, text="no"))) is False
+    assert _report(FakeSession(FakeResponse(200), put_response=FakeResponse(200))).accepted is True
+    assert _report(FakeSession(FakeResponse(200), put_response=FakeResponse(401, text="no"))).accepted is False
 
     class Unreachable(FakeSession):
         def put(self, *args, **kwargs):
             import requests
             raise requests.ConnectionError("down")
 
-    assert _report(Unreachable(FakeResponse(200))) is False
+    assert _report(Unreachable(FakeResponse(200))).accepted is False
+
+
+def test_report_status_sends_the_ban_list_and_omits_it_when_unreadable():
+    session = FakeSession(FakeResponse(200), put_response=FakeResponse(200))
+    _report(session, banned_ips=["84.205.215.132"])
+    assert session.put_calls[0]["json"]["banned_ips"] == ["84.205.215.132"]
+
+    session = FakeSession(FakeResponse(200), put_response=FakeResponse(200))
+    _report(session, banned_ips=None)  # fail2ban could not be asked: say nothing, keep the last known list
+    assert "banned_ips" not in session.put_calls[0]["json"]
+
+    session = FakeSession(FakeResponse(200), put_response=FakeResponse(200))
+    _report(session, banned_ips=[])  # asked, and nobody is banned: that IS worth saying
+    assert session.put_calls[0]["json"]["banned_ips"] == []
+
+
+def test_report_status_returns_the_unban_requests_in_the_reply():
+    report = _report(FakeSession(FakeResponse(200), put_response=FakeResponse(200, json_body={"unban": ["1.2.3.4", "5.6.7.8"]})))
+    assert report.accepted is True
+    assert report.unban == ("1.2.3.4", "5.6.7.8")
+
+
+def test_report_status_copes_with_a_reply_that_has_no_unban_list():
+    for body in ({}, [], {"unban": None}, {"unban": [1, None, "1.2.3.4"]}):
+        report = _report(FakeSession(FakeResponse(200), put_response=FakeResponse(200, json_body=body)))
+        assert report.accepted is True
+        assert report.unban in ((), ("1.2.3.4",)), body
+
+
+def test_a_refused_report_asks_for_nothing_to_be_unbanned():
+    report = _report(FakeSession(FakeResponse(200), put_response=FakeResponse(401, text="no")))
+    assert report.accepted is False and report.unban == ()
