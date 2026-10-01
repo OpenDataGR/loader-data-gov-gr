@@ -237,3 +237,30 @@ def report_status(
     if not isinstance(unban, list):
         unban = []
     return Report(accepted=True, unban=tuple(a for a in unban if isinstance(a, str)))
+
+
+def report_attempts(
+    session: requests.Session,
+    base_url: str,
+    sync_key: str,
+    *,
+    hostname: str,
+    attempts: list[dict],
+    timeout_s: float = 30.0,
+) -> bool:
+    """Ships a batch of refused logins (see ``attempts_log.py``). True only
+    when loader accepted it -- the caller moves its read position forward on
+    that and on nothing else, so a failure is retried, never dropped."""
+    url = "%s/admin/ftp-login-attempts" % base_url.rstrip("/")
+    try:
+        resp = session.post(
+            url, json={"hostname": hostname, "attempts": attempts},
+            headers={"X-Ftp-Sync-Key": sync_key}, timeout=timeout_s,
+        )
+    except requests.RequestException as exc:
+        logger.error("failed-login report to %s failed: %s", url, exc)
+        return False
+    if resp.status_code != 200:
+        logger.error("failed-login report to %s failed: %d %s", url, resp.status_code, resp.text[:200])
+        return False
+    return True

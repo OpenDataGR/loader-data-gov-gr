@@ -111,6 +111,12 @@ jobs:
           # SFTP at all, and neither log records a successful login as such.
           LogFormat loader_auth "%{%s}t %a %u %m %s"
           ExtendedLog /var/log/proftpd/loader-auth.log AUTH loader_auth
+          # The same attempts again for loader's failed-login report, which also needs
+          # the server port (21 FTP / 2222 SFTP) and the username as typed. A separate
+          # file so the fail2ban filter above keeps its shape. Username last: it may
+          # contain spaces.
+          LogFormat loader_attempt "%{%s}t %a %p %m %s %U"
+          ExtendedLog /var/log/proftpd/loader-attempts.log AUTH loader_attempt
           EOF
 
           sudo tee /etc/proftpd/conf.d/loader-sftp.conf > /dev/null <<EOF
@@ -133,6 +139,7 @@ jobs:
             RequireValidShell off
             DefaultRoot ~
             ExtendedLog /var/log/proftpd/loader-auth.log AUTH loader_auth
+            ExtendedLog /var/log/proftpd/loader-attempts.log AUTH loader_attempt
           </VirtualHost>
           EOF
           # The all-commands log used once to see what mod_sftp records; no longer configured.
@@ -148,6 +155,9 @@ jobs:
       - name: Store the loader FTP-sync key (its own restricted file, never inline in any config)
         run: |
           sudo mkdir -p /etc/ftp-forwarder/secrets
+          # Where the account-sync service remembers how far it has delivered the
+          # failed-login log (root-only: it runs as root).
+          sudo mkdir -p /var/lib/ftp-forwarder
           echo -n "$SYNC_KEY" | sudo tee /etc/ftp-forwarder/secrets/ftp-sync.key > /dev/null
           # Group-readable by virtualftp, not just root: both services
           # that need this key (account-sync, running as root, and the

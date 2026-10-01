@@ -54,7 +54,8 @@ DEFAULT_TTL_S = 12 * 60 * 60  # 12h: long enough for a work session, short enoug
 #   /push/*                     a provider's system, X-Api-Key
 #   /admin/ftp-relay/*          the FTP box, X-Ftp-Sync-Key
 #   /admin/ftp-accounts-sync,
-#   /admin/ftp-box-status       the FTP box, X-Ftp-Sync-Key
+#   /admin/ftp-box-status,
+#   /admin/ftp-login-attempts   the FTP box, X-Ftp-Sync-Key
 #   /admin/ftp-accounts*        the JSON admin API, X-Admin-Key
 #   /admin/harvest-db/health    ops check, X-Admin-Key
 #   /me                         Keycloak bearer token
@@ -65,7 +66,8 @@ DEFAULT_TTL_S = 12 * 60 * 60  # 12h: long enough for a work session, short enoug
 # the admin page "/admin/ftp" (or the other way round).
 _EXEMPT_PATHS = frozenset({
     "/health", "/me", "/admin/login", "/admin/logout",
-    "/admin/ftp-accounts-sync", "/admin/ftp-box-status", "/admin/harvest-db/health",
+    "/admin/ftp-accounts-sync", "/admin/ftp-box-status", "/admin/ftp-login-attempts",
+    "/admin/harvest-db/health",
 })
 _EXEMPT_PREFIXES = ("/push", "/proxy", "/admin/ftp-accounts", "/admin/ftp-relay")
 

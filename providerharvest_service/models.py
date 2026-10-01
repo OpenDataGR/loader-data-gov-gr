@@ -15,7 +15,7 @@ import datetime
 import json
 import uuid
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, LargeBinary, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, LargeBinary, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -259,6 +259,29 @@ class FtpUnbanRequest(Base):
     hostname: Mapped[str] = mapped_column(String, nullable=False)
     ip: Mapped[str] = mapped_column(String, nullable=False)
     requested_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class FtpLoginAttempt(Base):
+    """One refused FTP/SFTP login, as the box saw it -- for the report of who
+    has been trying the door (see ui_admin_ftp_attempts.py). Shipped in
+    batches by the box's sync service; kept for a limited time only (see
+    ``admin_ftp.ATTEMPT_RETENTION``). ``username`` is whatever the client
+    typed, so it is hostile input: cleaned on the way in and treated as
+    untrusted wherever it is shown or exported."""
+
+    __tablename__ = "ftp_login_attempt"
+    __table_args__ = (
+        Index("ix_ftp_login_attempt_at", "at"),
+        Index("ix_ftp_login_attempt_ip", "ip"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    hostname: Mapped[str] = mapped_column(String, nullable=False)
+    at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)  # UTC
+    ip: Mapped[str] = mapped_column(String, nullable=False)
+    port: Mapped[int] = mapped_column(Integer, nullable=False)  # the server port it hit: 21 FTP, 2222 SFTP
+    username: Mapped[str] = mapped_column(String, nullable=False, default="")
+    code: Mapped[int] = mapped_column(Integer, nullable=False)  # the refusal, e.g. 530
 
 
 class FtpAllowedIp(Base):

@@ -102,8 +102,9 @@ one shared username/password, enforced by a single ASGI middleware). It
 is **deny by default**: a path needs the session unless it is on a short
 explicit list of things that aren't a person in a browser and carry their
 own credential -- `/health`, `/push/*` (API key), the FTP box's
-`/admin/ftp-relay/*`, `/admin/ftp-accounts-sync` and `/admin/ftp-box-status`
-(sync key), the JSON admin API `/admin/ftp-accounts*` and
+`/admin/ftp-relay/*`, `/admin/ftp-accounts-sync`, `/admin/ftp-box-status` and
+`/admin/ftp-login-attempts` (sync key; the last feeds the failed-login report
+at `/admin/ftp/attempts`, see `ftp-forwarder/README.md`), the JSON admin API `/admin/ftp-accounts*` and
 `/admin/harvest-db/health` (admin key), `/me` (bearer token) -- plus
 `/proxy/*`, the live open-data proxy, which is public by design. A route
 added later is therefore protected without anyone remembering to. (Until

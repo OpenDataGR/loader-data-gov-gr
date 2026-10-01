@@ -172,7 +172,8 @@ def test_machine_and_public_endpoints_are_never_sent_to_the_login(monkeypatch):
     calls = (
         ("get", "/health"), ("get", "/me"), ("get", "/admin/harvest-db/health"),
         ("get", "/admin/ftp-accounts"), ("get", "/admin/ftp-accounts-sync"),
-        ("put", "/admin/ftp-box-status"), ("post", "/admin/ftp-relay/x/upload"),
+        ("put", "/admin/ftp-box-status"), ("post", "/admin/ftp-login-attempts"),
+        ("post", "/admin/ftp-relay/x/upload"),
         ("post", "/push/x/upload"), ("get", "/proxy/x"),
     )
     for method, path in calls:

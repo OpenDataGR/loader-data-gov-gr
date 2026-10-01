@@ -16,6 +16,7 @@ import time
 import requests
 
 from ftp_forwarder import account_sync, box_health
+from ftp_forwarder.attempts_log import AttemptsLogTail
 from ftp_forwarder.auth_log import AuthLogTail
 
 
@@ -41,6 +42,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--auth-log", default="/var/log/proftpd/loader-auth.log",
         help="ProFTPD's login log (see auth_log.py); each provider's last login address is reported to loader",
+    )
+    parser.add_argument(
+        "--attempts-log", default="/var/log/proftpd/loader-attempts.log",
+        help="ProFTPD's log of every login attempt (see attempts_log.py); refused ones feed loader's failed-login report",
+    )
+    parser.add_argument(
+        "--attempts-state", default="/var/lib/ftp-forwarder/attempts.state",
+        help="Where the delivered-up-to position in --attempts-log is kept",
     )
     parser.add_argument("--proftpd-unit", default="proftpd")
     parser.add_argument("--relay-unit", default="loader-ftp-forwarder")
@@ -73,6 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     # Logins seen but not yet accepted by loader -- kept across cycles so a
     # failed report doesn't lose them (only the latest per user matters).
     pending_logins: dict = {}
+    attempts_tail = AttemptsLogTail(args.attempts_log, args.attempts_state)
 
     while True:
         pending_logins.update(auth_tail.poll())
@@ -114,6 +124,24 @@ def main(argv: list[str] | None = None) -> int:
                     logger.info("lifted the ban on %s at an admin's request", address)
                 else:
                     logger.error("could not lift the ban on %r", address)
+        # Refused logins for the report: the read position only moves on once
+        # loader has accepted the batch. A busy scanner day is drained a batch
+        # per cycle without sleeping in between.
+        while True:
+            try:
+                attempts, position = attempts_tail.poll()
+                if not attempts:
+                    attempts_tail.commit(position)  # nothing to send, but skip past unrelated lines
+                    break
+                if not account_sync.report_attempts(
+                    session, args.loader_base_url, sync_key,
+                    hostname=hostname, attempts=[a.as_payload() for a in attempts],
+                ):
+                    break
+                attempts_tail.commit(position)
+            except OSError as exc:
+                logger.error("could not process the attempts log: %s", exc)
+                break
         time.sleep(args.interval_s)
 
 

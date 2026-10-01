@@ -18,8 +18,8 @@ import json
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, field_validator
-from sqlalchemy import select
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from providerharvest_service.admin_auth import require_admin_key, require_ftp_sync_key
@@ -31,7 +31,7 @@ from providerharvest_service.ftp_credentials import (
     hash_password,
     validate_home_directory,
 )
-from providerharvest_service.models import FtpAccount, FtpAllowedIp, FtpBoxStatus, FtpUnbanRequest, ProviderSource
+from providerharvest_service.models import FtpAccount, FtpAllowedIp, FtpBoxStatus, FtpLoginAttempt, FtpUnbanRequest, ProviderSource
 
 
 def _utcnow() -> datetime.datetime:
@@ -427,3 +427,62 @@ def _record_sender(session: Session, username: str, ip: str) -> None:
     )
     if source is not None:
         source.last_sender = address
+
+
+# -- the record of refused logins ---------------------------------------------------
+
+# Long enough to see a slow campaign, short enough that the table stays small.
+ATTEMPT_RETENTION = datetime.timedelta(days=90)
+MAX_ATTEMPTS_PER_REPORT = 2000
+MAX_USERNAME_LENGTH = 100
+
+
+def clean_username(raw: str) -> str:
+    """What a client typed as its username, made safe to store and show:
+    control characters (including anything that could fake a new log line
+    or hide text) are dropped and the length is capped. It is still
+    untrusted -- the report page escapes it and the CSV export defuses
+    spreadsheet formulas -- this just keeps the worst of it out."""
+    printable = "".join(ch for ch in raw if ch.isprintable())
+    return printable[:MAX_USERNAME_LENGTH]
+
+
+class LoginAttemptIn(BaseModel):
+    at: int  # epoch seconds
+    ip: str
+    port: int
+    username: str = ""
+    code: int
+
+
+class LoginAttemptsIn(BaseModel):
+    hostname: str
+    attempts: list[LoginAttemptIn] = Field(max_length=MAX_ATTEMPTS_PER_REPORT)
+
+
+@sync_router.post("/admin/ftp-login-attempts")
+def report_login_attempts(payload: LoginAttemptsIn, session: Session = Depends(get_session)) -> dict:
+    """A batch of refused logins from a box. Entries that don't make sense
+    (a bad address, a port that isn't one, a time outside the retention
+    window or in the future) are counted and skipped, never a reason to
+    refuse the whole batch -- the box would otherwise resend it forever."""
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    oldest, newest = now - ATTEMPT_RETENTION, now + datetime.timedelta(days=1)
+    stored = rejected = 0
+    for attempt in payload.attempts:
+        address = _valid_address(attempt.ip)
+        try:
+            when = datetime.datetime.fromtimestamp(attempt.at, tz=datetime.timezone.utc).replace(tzinfo=None)
+        except (OverflowError, OSError, ValueError):
+            when = None
+        if address is None or when is None or not (1 <= attempt.port <= 65535) or not (oldest <= when <= newest):
+            rejected += 1
+            continue
+        session.add(FtpLoginAttempt(
+            hostname=payload.hostname, at=when, ip=address, port=attempt.port,
+            username=clean_username(attempt.username), code=attempt.code,
+        ))
+        stored += 1
+    session.execute(delete(FtpLoginAttempt).where(FtpLoginAttempt.at < oldest))
+    session.commit()
+    return {"stored": stored, "rejected": rejected}

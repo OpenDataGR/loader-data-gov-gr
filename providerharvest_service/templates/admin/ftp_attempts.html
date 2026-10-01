@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% import "_macros.html" as macros %}
+{% block title %}Failed logins -- loader.data.gov.gr{% endblock %}
+{% block content %}
+  <div class="top-actions">
+    <a class="btn btn-secondary" href="/admin/ftp">&larr; FTP subsystem</a>
+  </div>
+
+  <div class="panel" style="margin-top:0.8rem;">
+    <h1>Failed login attempts</h1>
+    <p class="subtitle">
+      Every refused FTP/SFTP login the box has reported, kept for {{ retention_note }}
+      {% if oldest %}(the oldest on record is {{ oldest|utc }} UTC){% endif %}.
+      Addresses that keep failing are banned automatically -- see the ban list on the
+      <a href="/admin/ftp">FTP subsystem</a> page.
+    </p>
+
+    <form method="get" action="/admin/ftp/attempts" style="display:flex; flex-wrap:wrap; gap:0.8rem; align-items:flex-end;">
+      <div>
+        <label for="window" style="margin-top:0;">Period</label>
+        <select id="window" name="window" style="width:auto;">
+          {% for key, label, _ in windows %}
+            <option value="{{ key }}" {% if f.window == key %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="address" style="margin-top:0;">Address starts with</label>
+        <input type="text" id="address" name="address" value="{{ f.address }}" class="small" placeholder="e.g. 188.166.">
+      </div>
+      <div>
+        <label for="port" style="margin-top:0;">Port</label>
+        <select id="port" name="port" style="width:auto;">
+          <option value="">any</option>
+          <option value="21" {% if f.port == 21 %}selected{% endif %}>21 (FTP)</option>
+          <option value="2222" {% if f.port == 2222 %}selected{% endif %}>2222 (SFTP)</option>
+        </select>
+      </div>
+      <div>
+        <label for="username" style="margin-top:0;">Username contains</label>
+        <input type="text" id="username" name="username" value="{{ f.username }}" class="small" placeholder="e.g. root">
+      </div>
+      <button type="submit">Apply</button>
+      <a class="btn btn-secondary" href="/admin/ftp/attempts">Reset</a>
+    </form>
+  </div>
+
+  <div class="stats" style="margin-top:1.2rem;">
+    {{ macros.stat_tile("attempts", total, "rejected") }}
+    {{ macros.stat_tile("different addresses", addresses, "pending") }}
+    {{ macros.stat_tile("on SFTP (2222)", sftp_total, "paused") }}
+    {{ macros.stat_tile("on FTP (21)", ftp_total, "paused") }}
+  </div>
+
+  <div class="panel">
+    <div class="top-actions">
+      <h1 style="margin:0;">By source address</h1>
+      <a class="btn btn-secondary btn-sm" href="/admin/ftp/attempts-by-address.csv?{{ export_query }}">Download CSV</a>
+    </div>
+    <p class="subtitle">Most attempts first{% if by_address|length >= 25 %} (top 25 here; the CSV has every address){% endif %}.</p>
+    {% if not by_address %}
+      <div class="empty-state"><p>No refused logins in this selection.</p></div>
+    {% else %}
+      <table>
+        <thead>
+          <tr>
+            <th>Address</th><th>Attempts</th><th>First attempt (UTC)</th><th>Last attempt (UTC)</th>
+            <th>SFTP</th><th>FTP</th><th>Usernames tried</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in by_address %}
+          <tr>
+            <td><code>{{ row.ip }}</code></td>
+            <td class="name-title">{{ row.attempts }}</td>
+            <td class="muted">{{ row.first_at|utc }}</td>
+            <td class="muted">{{ row.last_at|utc }}</td>
+            <td>{{ row.sftp }}</td>
+            <td>{{ row.ftp }}</td>
+            <td>{{ row.usernames }}</td>
+            <td>{% if row.ip in banned %}<span class="badge badge-error" title="Currently banned by fail2ban">{{ macros.icon("rejected", 13) }}<span>banned now</span></span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
+
+  <div class="panel" style="margin-top:1.2rem;">
+    <h1>Usernames tried</h1>
+    <p class="subtitle">The ten most common in this selection -- as typed by whoever was knocking.</p>
+    {% if not top_usernames %}
+      <div class="empty-state"><p>None.</p></div>
+    {% else %}
+      <table>
+        <thead><tr><th>Username</th><th>Attempts</th></tr></thead>
+        <tbody>
+          {% for name, n in top_usernames %}
+            <tr><td>{% if name %}<code>{{ name }}</code>{% else %}<span class="muted">(none)</span>{% endif %}</td><td>{{ n }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
+
+  <div class="panel" style="margin-top:1.2rem;">
+    <div class="top-actions">
+      <h1 style="margin:0;">Every attempt</h1>
+      <a class="btn btn-secondary btn-sm" href="/admin/ftp/attempts.csv?{{ export_query }}">Download CSV</a>
+    </div>
+    <p class="subtitle">
+      Newest first. {% if total > page_size %}Page {{ page }} of {{ pages }}.{% endif %}
+      The CSV is capped at 50,000 rows -- narrow the selection if you need to stay under that.
+    </p>
+    {% if not events %}
+      <div class="empty-state"><p>No refused logins in this selection.</p></div>
+    {% else %}
+      <table>
+        <thead>
+          <tr><th>Time (UTC)</th><th>Address</th><th>Port</th><th>Protocol</th><th>Username tried</th><th>Refused</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for e in events %}
+          <tr>
+            <td class="muted">{{ e.at|utc }}</td>
+            <td><code>{{ e.ip }}</code></td>
+            <td>{{ e.port }}</td>
+            <td><span class="chip">{{ e.port|protocol }}</span></td>
+            <td>{% if e.username %}<code>{{ e.username }}</code>{% else %}<span class="muted">(none)</span>{% endif %}</td>
+            <td class="muted">{{ e.code }}</td>
+            <td>{% if e.ip in banned %}<span class="badge badge-error" title="Currently banned by fail2ban"><span>banned now</span></span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% if pages > 1 %}
+        <p style="margin-top:1rem; display:flex; gap:0.5rem; align-items:center;">
+          {% if page > 1 %}<a class="btn btn-secondary btn-sm" href="/admin/ftp/attempts?{{ page_query }}&page={{ page - 1 }}">&larr; Newer</a>{% endif %}
+          <span class="muted">Page {{ page }} of {{ pages }}</span>
+          {% if page < pages %}<a class="btn btn-secondary btn-sm" href="/admin/ftp/attempts?{{ page_query }}&page={{ page + 1 }}">Older &rarr;</a>{% endif %}
+        </p>
+      {% endif %}
+    {% endif %}
+  </div>
+{% endblock %}

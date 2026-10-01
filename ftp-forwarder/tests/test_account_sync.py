@@ -323,3 +323,37 @@ def test_report_status_copes_with_a_reply_that_has_no_unban_list():
 def test_a_refused_report_asks_for_nothing_to_be_unbanned():
     report = _report(FakeSession(FakeResponse(200), put_response=FakeResponse(401, text="no")))
     assert report.accepted is False and report.unban == ()
+
+
+# -- shipping refused logins ------------------------------------------------------
+
+class PostSession:
+    def __init__(self, response=None, error=None):
+        self.response, self.error, self.calls = response, error, []
+
+    def post(self, url, *, json, headers, timeout):
+        self.calls.append({"url": url, "json": json, "headers": headers})
+        if self.error:
+            raise self.error
+        return self.response
+
+
+def test_report_attempts_posts_the_batch_with_the_sync_key():
+    from ftp_forwarder.account_sync import report_attempts
+
+    session = PostSession(FakeResponse(200))
+    batch = [{"at": 1, "ip": "1.1.1.1", "port": 21, "username": "root", "code": 530}]
+    assert report_attempts(session, "https://loader.data.gov.gr/", "k", hostname="box", attempts=batch) is True
+    call = session.calls[0]
+    assert call["url"] == "https://loader.data.gov.gr/admin/ftp-login-attempts"
+    assert call["headers"] == {"X-Ftp-Sync-Key": "k"}
+    assert call["json"] == {"hostname": "box", "attempts": batch}
+
+
+def test_report_attempts_is_false_on_any_failure_so_the_batch_is_retried():
+    import requests
+    from ftp_forwarder.account_sync import report_attempts
+
+    for session in (PostSession(FakeResponse(401, text="no")), PostSession(FakeResponse(500)),
+                    PostSession(error=requests.ConnectionError("down"))):
+        assert report_attempts(session, "https://x", "k", hostname="box", attempts=[]) is False

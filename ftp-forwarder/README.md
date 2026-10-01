@@ -112,6 +112,27 @@ The same page shows whether fail2ban is running at all (a dead jail would
 otherwise fail silently). Run `provision-ftp-box.yml` with the address in
 its `unban_ip` input if the page itself is unavailable.
 
+### Report of failed logins
+
+The ban list says who is blocked *now*; the **Failed login attempts**
+report (`/admin/ftp/attempts`, linked from the FTP subsystem page) says who
+has been knocking and how often. ProFTPD writes a second log,
+`/var/log/proftpd/loader-attempts.log` (`%{%s}t %a %p %m %s %U`: time,
+client address, server port -- 21 FTP / 2222 SFTP --, command, reply code,
+username as typed), kept apart from the fail2ban log so that filter keeps its
+shape. The sync service ships the `PASS 530` lines to loader in batches of up
+to 2000 (`POST /admin/ftp-login-attempts`). Its read position is kept in
+`/var/lib/ftp-forwarder/attempts.state` and moves forward only once loader
+accepted the batch, so nothing is lost or repeated across a failure or restart.
+
+Loader keeps them 90 days (`FtpLoginAttempt`) and shows a per-address
+summary (number of attempts, first/last, FTP vs SFTP, distinct usernames,
+banned now) above the attempt-by-attempt log, with filters and CSV
+downloads. The username is whatever a stranger typed: control characters are
+dropped and the length capped on intake, the page escapes it, and the CSV
+defuses spreadsheet formulas. Attempts from before this log existed are not
+in the report.
+
 Not covered, deliberately left for later: enforcing each account's
 per-account allowed-IP list on the box (stored in loader, not yet
 applied), and whether plain FTP (unencrypted) should stay open at all.
@@ -177,6 +198,8 @@ systemd unit under `deploy/` for the real, deployed invocation):
 --upload-root /srv/ftp             # optional -- create missing account home directories under here
 --upload-owner virtualftp          # optional -- owner of those directories
 --auth-log /var/log/proftpd/loader-auth.log   # optional -- ProFTPD's login log, tailed for provider addresses
+--attempts-log /var/log/proftpd/loader-attempts.log   # optional -- refused logins, shipped to loader's report
+--attempts-state /var/lib/ftp-forwarder/attempts.state  # optional -- how far that log has been delivered
 --proftpd-unit proftpd             # optional
 --relay-unit loader-ftp-forwarder  # optional
 --fail2ban-unit fail2ban           # optional -- reported, so a dead jail shows on the admin page
