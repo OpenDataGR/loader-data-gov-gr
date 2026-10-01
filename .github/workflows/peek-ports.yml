@@ -1,0 +1,24 @@
+name: Peek at listening ports (one-off, read-only)
+
+# One-off, read-only: what is listening on the FTP box, and in particular
+# who owns port 22 -- to answer whether ProFTPD's SFTP could ever use the
+# standard SFTP port. Deleted after one run.
+on:
+  workflow_dispatch:
+
+jobs:
+  peek:
+    runs-on: [self-hosted, loader-ftp]
+    timeout-minutes: 5
+    steps:
+      - name: Show listeners
+        run: |
+          echo "--- everything listening on TCP ---"
+          sudo -n ss -tlnp
+          echo "--- who owns :22 ---"
+          sudo -n ss -tlnp | grep -E ':22\s' || echo "nothing is listening on :22"
+          echo "--- sshd's configured port(s) ---"
+          sudo -n sshd -T 2>/dev/null | grep -iE '^(port|listenaddress) ' || echo "sshd not installed or not readable"
+          echo "--- ssh unit state ---"
+          systemctl is-active ssh 2>/dev/null || true
+          systemctl is-enabled ssh 2>/dev/null || true
