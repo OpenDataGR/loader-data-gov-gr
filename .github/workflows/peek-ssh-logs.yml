@@ -1,0 +1,35 @@
+name: Peek at the FTP box SSH logs (one-off)
+
+# Read-only. Shows how sshd is set up on the FTP box and what its failed
+# logins really look like, so a parser can be written against the real format
+# and not a guessed one. Deleted again once that is done.
+on:
+  workflow_dispatch:
+
+jobs:
+  peek:
+    runs-on: [self-hosted, loader-ftp]
+    steps:
+      - name: sshd configuration that matters
+        run: |
+          sudo -n sshd -T 2>/dev/null | grep -Ei '^(port|loglevel|syslogfacility|passwordauthentication|permitrootlogin|maxauthtries) ' || true
+          echo "--- listening"
+          sudo -n ss -tlnp | grep -E ':22 |:7002 ' || true
+          echo "--- units"
+          systemctl list-units --type=service --no-legend | grep -Ei 'ssh' || true
+
+      - name: fail2ban jails and whether one covers sshd
+        run: |
+          sudo -n fail2ban-client status
+          sudo -n fail2ban-client status sshd 2>&1 | head -20 || true
+          echo "--- sshd jail files"
+          sudo -n grep -rEl 'sshd' /etc/fail2ban/jail.d /etc/fail2ban/jail.local 2>/dev/null || true
+          sudo -n grep -rE '^(port|maxretry|findtime|bantime|enabled|backend|logpath)' /etc/fail2ban/jail.d 2>/dev/null | grep -i ssh || true
+
+      - name: Where sshd logs, and what a failed login looks like
+        run: |
+          ls -l /var/log/auth.log 2>&1 || true
+          echo "--- last 15 failed-password lines (journal)"
+          sudo -n journalctl -u ssh -u sshd --no-pager --since "-2 days" 2>/dev/null | grep -Ei 'failed|invalid user|authentication failure|disconnected from (invalid|authenticating)' | tail -15 || true
+          echo "--- count by kind, last 2 days"
+          sudo -n journalctl -u ssh -u sshd --no-pager --since "-2 days" 2>/dev/null | grep -Eoi 'failed password|invalid user|connection closed by authenticating user|disconnected from invalid user|maximum authentication attempts exceeded' | sort | uniq -c | sort -rn || true
