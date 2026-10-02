@@ -146,6 +146,31 @@ def delete_source(source_id: str, session: Session = Depends(get_session)) -> Re
     return RedirectResponse(_redirect_with_flash("Source deleted."), status_code=303)
 
 
+@router.post("/sources/{source_id}/rotate-key", response_class=HTMLResponse)
+def source_rotate_key(source_id: str, request: Request, session: Session = Depends(get_session)):
+    """A new API key for an HTTPS push source -- the way back from a lost or leaked
+    one. The old key stops working at once. The new one is rendered in the response
+    body of this POST, never in a redirect or flash (a URL ends up in history and
+    Referer headers), and shown exactly once, like at registration."""
+    try:
+        source, api_key = provider_sources.rotate_api_key(session, source_id)
+    except provider_sources.NotFound:
+        return RedirectResponse(_redirect_with_flash("No such source.", kind="error"), status_code=303)
+    except provider_sources.NotRotatable as exc:
+        return RedirectResponse(_redirect_with_flash(str(exc).capitalize() + ".", kind="error"), status_code=303)
+    return templates.TemplateResponse(
+        request,
+        "provider/push_credentials.html",
+        {
+            "source": source,
+            "api_key": api_key,
+            "upload_url": _push_upload_url(request, source.name),
+            "allowed_senders": provider_sources.allowed_senders(source),
+            "rotated": True,
+        },
+    )
+
+
 @router.post("/sources/{source_id}/pause")
 def source_pause(source_id: str, session: Session = Depends(get_session)) -> RedirectResponse:
     try:

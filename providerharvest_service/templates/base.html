@@ -245,7 +245,18 @@
     button.btn-secondary:hover, .btn-secondary:hover { background: #f2f4f8; }
     button.btn-danger { background: var(--status-rejected); }
     button.btn-danger:hover { background: #b3261e; }
-    button.btn-sm { padding: 0.32rem 0.65rem; font-size: 0.78rem; }
+    /* One height for every small button -- text, icon-only ("...") and link-styled alike -- so a row of
+       them lines up. Without a fixed height the icon-only button was a few pixels shorter than its neighbours. */
+    button.btn-sm, .btn.btn-sm {
+      padding: 0.32rem 0.65rem; font-size: 0.78rem; line-height: 1.2;
+      min-height: 1.95rem; box-sizing: border-box; justify-content: center;
+    }
+    button.btn-sm svg, .btn.btn-sm svg { flex: none; }
+    /* A table cell of action buttons: centred on the row, buttons on one line, one gap between them. */
+    td.actions-cell { vertical-align: middle; white-space: nowrap; }
+    .row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 0.4rem; flex-wrap: nowrap; }
+    .row-actions form, .row-actions .actions-menu { margin: 0; }
+    .row-actions form.inline { flex-wrap: nowrap; }
     .top-actions { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem; }
 
     .connector-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.7rem; margin-top: 0.4rem; }

@@ -46,9 +46,11 @@
               {% endif %}
             </td>
             <td>{{ macros.health_badge(s) }}</td>
-            <td style="white-space:nowrap;">
-              {{ macros.primary_action(s, "/provider/sources") }}
-              {{ macros.actions_menu(s, "/provider/sources") }}
+            <td class="actions-cell">
+              <div class="row-actions">
+                {{ macros.primary_action(s, "/provider/sources") }}
+                {{ macros.actions_menu(s, "/provider/sources") }}
+              </div>
             </td>
           </tr>
           {% endfor %}

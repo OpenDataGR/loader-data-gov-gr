@@ -25,14 +25,16 @@
           <td class="muted">{% if s.kind == "push" %}{{ macros.push_origin(s) }}{% else %}{{ s.endpoint_url }}{% endif %}</td>
           <td class="muted">{{ s.notification_email or "--" }}</td>
           <td class="muted">{{ s.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
-          <td>
-            <form class="inline" method="post" action="/admin/sources/{{ s.id }}/activate">
-              <button type="submit" class="btn-sm">{{ macros.icon("check", 14) }} Activate</button>
-            </form>
-            <form class="inline" method="post" action="/admin/sources/{{ s.id }}/reject">
-              <input type="text" name="reason" class="small" placeholder="reason (optional)">
-              <button type="submit" class="btn-danger btn-sm">{{ macros.icon("x", 14) }} Reject</button>
-            </form>
+          <td class="actions-cell">
+            <div class="row-actions">
+              <form class="inline" method="post" action="/admin/sources/{{ s.id }}/activate">
+                <button type="submit" class="btn-sm">{{ macros.icon("check", 14) }} Activate</button>
+              </form>
+              <form class="inline" method="post" action="/admin/sources/{{ s.id }}/reject">
+                <input type="text" name="reason" class="small" placeholder="reason (optional)" style="margin:0; max-width:11rem; width:11rem;">
+                <button type="submit" class="btn-danger btn-sm">{{ macros.icon("x", 14) }} Reject</button>
+              </form>
+            </div>
           </td>
         </tr>
         {% endfor %}
@@ -73,9 +75,11 @@
               {% endif %}
             </td>
             <td>{{ macros.health_badge(s) }}</td>
-            <td style="white-space:nowrap;">
-              {{ macros.primary_action(s, "/admin/sources", is_admin=True) }}
-              {{ macros.actions_menu(s, "/admin/sources", is_admin=True) }}
+            <td class="actions-cell">
+              <div class="row-actions">
+                {{ macros.primary_action(s, "/admin/sources", is_admin=True) }}
+                {{ macros.actions_menu(s, "/admin/sources", is_admin=True) }}
+              </div>
             </td>
           </tr>
           {% endfor %}

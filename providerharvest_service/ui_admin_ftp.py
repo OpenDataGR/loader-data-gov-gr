@@ -44,6 +44,7 @@ from sqlalchemy.orm import Session
 
 from providerharvest_service import build_info, nav
 from providerharvest_service.admin_ftp import generate_password, hash_password, normalize_allowed_cidr
+from providerharvest_service.ftp_credentials import password_problem
 from providerharvest_service.db import get_session
 from providerharvest_service.models import FtpAccount, FtpAllowedIp, FtpBoxStatus
 
@@ -138,6 +139,45 @@ def remove_allowed_address(request: Request, account_id: str, ip_id: str, sessio
     session.refresh(account)
     note = "" if account.allowed_ips else " -- the account can now log in from anywhere"
     return RedirectResponse(_came_from(request, "Removed %s for %r%s." % (allowed.cidr, account.username, note)), status_code=303)
+
+
+@router.get("/{account_id}/set-password", response_class=HTMLResponse)
+def set_password_form(request: Request, account_id: str, session: Session = Depends(get_session)):
+    account = session.get(FtpAccount, account_id)
+    if account is None:
+        return RedirectResponse(_came_from(request, "No such account.", kind="error"), status_code=303)
+    return templates.TemplateResponse(request, "admin/ftp_set_password.html", {"account": account, "error": None})
+
+
+@router.post("/{account_id}/set-password", response_class=HTMLResponse)
+async def set_password(request: Request, account_id: str, session: Session = Depends(get_session)):
+    """Set an account's password to one the admin chose -- typically what a
+    provider told them -- instead of rotating to a generated one. The typed
+    password is checked, hashed and forgotten: never echoed into the page, never
+    put in a redirect or flash (a URL ends up in history and Referer headers),
+    never stored in a form that could be shown again."""
+    account = session.get(FtpAccount, account_id)
+    if account is None:
+        return RedirectResponse(_came_from(request, "No such account.", kind="error"), status_code=303)
+    form = await request.form()
+    password = str(form.get("password") or "")
+    error = None
+    if password != str(form.get("password_confirm") or ""):
+        error = "The two passwords do not match."
+    else:
+        problem = password_problem(password)
+        if problem:
+            error = "Password: %s." % problem
+    if error:
+        return templates.TemplateResponse(
+            request, "admin/ftp_set_password.html", {"account": account, "error": error}, status_code=400
+        )
+    account.password_hash = hash_password(password)
+    session.commit()
+    return RedirectResponse(
+        _came_from(request, "Password for %r set. It is stored only as a hash and cannot be shown again." % account.username),
+        status_code=303,
+    )
 
 
 @router.post("/{account_id}/rotate-password", response_class=HTMLResponse)

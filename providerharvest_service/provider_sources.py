@@ -32,10 +32,12 @@ from sqlalchemy.orm import Session
 from providerharvest_service.engine.secrets.base import SecretBundle
 from providerharvest_service.engine.secrets.envelope import EnvelopeSecretsBackend
 from providerharvest_service.ftp_credentials import (
+    MIN_CUSTOM_PASSWORD_LENGTH,
     USERNAME_RE,
     ftp_upload_root,
     generate_password,
     hash_password,
+    password_problem,
 )
 from providerharvest_service import sender_allowlist
 from providerharvest_service.models import FtpAccount, FtpAllowedIp, ProviderSource, _new_id
@@ -47,7 +49,7 @@ SSH_TRANSPORT_TYPES = ("sftp", "scp")
 # into the external FTP/SFTP box with a username/password created for
 # them at registration, see ftp_relay_ingest.py).
 PUSH_METHODS = ("https", "ftp")
-MIN_CUSTOM_FTP_PASSWORD_LENGTH = 12
+MIN_CUSTOM_FTP_PASSWORD_LENGTH = MIN_CUSTOM_PASSWORD_LENGTH  # (kept under its old name)
 FREQUENCIES = ("MANUAL", "DAILY", "WEEKLY", "MONTHLY")
 HTTP_AUTH_TYPES = ("api_key", "basic_auth", "oauth2_client_credentials", "mtls")
 STATUSES_ADMIN_MANAGES = ("pending", "active", "rejected", "paused")
@@ -393,10 +395,9 @@ def _push_fields(session: Session, form: dict, source_name: str, errors: dict) -
                 errors["push_ftp_username"] = "already in use -- pick another"
 
         chosen_password = form.get("push_ftp_password") or ""
-        if chosen_password and len(chosen_password) < MIN_CUSTOM_FTP_PASSWORD_LENGTH:
-            errors["push_ftp_password"] = (
-                "at least %d characters (or leave blank to generate one)" % MIN_CUSTOM_FTP_PASSWORD_LENGTH
-            )
+        problem = password_problem(chosen_password) if chosen_password else None
+        if problem:
+            errors["push_ftp_password"] = "%s (or leave blank to generate one)" % problem
         return {}, config_extra, {
             "ftp": {
                 "username": username,
@@ -745,6 +746,28 @@ def update(session: Session, source_id: str, form: dict) -> ProviderSource:
     _secrets_backend(session).rotate(source.id, credential_fields)
     session.refresh(source)
     return source
+
+
+class NotRotatable(Exception):
+    """The source has no API key to rotate (it is not an HTTPS push source)."""
+
+
+def rotate_api_key(session: Session, source_id: str) -> tuple[ProviderSource, str]:
+    """Issue a new API key for an HTTPS push source, replacing the old one at
+    once: the old key stops working the moment this commits. Returns the source
+    and the new key in plain text -- shown once by the caller and never stored
+    (only its bcrypt hash is, exactly as at registration), so there is nothing
+    to look it up from later. Lost keys used to mean deleting and re-registering
+    the source."""
+    source = get_or_404(session, source_id)
+    if source.transport_type != "push" or source.push_method != "https":
+        raise NotRotatable("only an HTTPS push source has an API key")
+    config = json.loads(source.config or "{}")
+    plaintext = secrets.token_urlsafe(32)
+    config["push_api_key_hash"] = bcrypt.hashpw(plaintext.encode("utf-8"), bcrypt.gensalt()).decode("ascii")
+    source.config = json.dumps(config)
+    session.commit()
+    return source, plaintext
 
 
 def delete(session: Session, source_id: str) -> None:

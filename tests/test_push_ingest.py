@@ -383,6 +383,95 @@ def test_a_bad_list_on_edit_is_refused_and_the_old_one_stays(client, _isolated_d
     assert _config(_isolated_db)["allowed_senders"] == ["203.0.113.9/32"]
 
 
+# -- rotating the API key ------------------------------------------------------------------
+
+def _rotate(client, source_id):
+    return client.post("/provider/sources/%s/rotate-key" % source_id, follow_redirects=False)
+
+
+def test_rotating_issues_a_new_key_and_the_old_one_stops_working_at_once(client, _isolated_db):
+    source_id, old_key = _register_and_activate_push_source(client, _isolated_db)
+    assert _upload(client, old_key).status_code == 200
+
+    resp = _rotate(client, source_id)
+    assert resp.status_code == 200
+    new_key = _extract_api_key(resp.text)
+    assert new_key != old_key
+    assert _upload(client, old_key).status_code == 401  # gone, immediately
+    assert _upload(client, new_key).status_code == 200
+
+
+def test_the_new_key_is_shown_once_and_stored_only_as_a_hash(client, _isolated_db):
+    import json
+
+    import bcrypt
+
+    source_id, _ = _register_and_activate_push_source(client, _isolated_db)
+    resp = _rotate(client, source_id)
+    new_key = _extract_api_key(resp.text)
+    assert "no longer works" in resp.text and "awaiting admin approval" not in resp.text  # says it is a replacement
+    config = _config(_isolated_db)
+    assert new_key not in json.dumps(config)  # nothing recoverable is kept
+    assert bcrypt.checkpw(new_key.encode(), config["push_api_key_hash"].encode())
+    assert new_key not in client.get("/provider/sources").text  # and it is not on any later page
+
+
+def test_rotating_twice_invalidates_the_first_rotated_key_too(client, _isolated_db):
+    source_id, _ = _register_and_activate_push_source(client, _isolated_db)
+    first = _extract_api_key(_rotate(client, source_id).text)
+    second = _extract_api_key(_rotate(client, source_id).text)
+    assert _upload(client, first).status_code == 401 and _upload(client, second).status_code == 200
+
+
+def test_rotating_keeps_everything_else_about_the_source(client, _isolated_db):
+    source_id, _ = _register_and_activate_push_source(client, _isolated_db, allowed_senders="203.0.113.9")
+    _rotate(client, source_id)
+    config = _config(_isolated_db)
+    assert config["allowed_senders"] == ["203.0.113.9/32"] and config["push_method"] == "https"
+    assert _source(_isolated_db).status == "active"
+
+
+def test_only_an_https_push_source_has_a_key_to_rotate(client, _isolated_db):
+    _register_ftp(client)
+    with _isolated_db() as session:
+        ftp_source = provider_sources.list_all(session)[0].id
+        before = provider_sources.list_all(session)[0].config
+    resp = _rotate(client, ftp_source)
+    assert resp.status_code == 303 and "flash_kind=error" in resp.headers["location"]
+    with _isolated_db() as session:
+        assert provider_sources.list_all(session)[0].config == before
+
+    pull = client.post("/provider/sources/new", data={
+        "name": "a-pull-source", "title": "p", "transport_type": "http", "endpoint_url": "https://x.example.gr/a",
+        "frequency": "DAILY", "auth_type": "api_key", "api_key": "k"})
+    with _isolated_db() as session:
+        pull_id = [s.id for s in provider_sources.list_all(session) if s.name == "a-pull-source"][0]
+    assert "flash_kind=error" in _rotate(client, pull_id).headers["location"]
+
+
+def test_rotating_an_unknown_source_or_without_the_login_is_refused(client, _isolated_db):
+    from fastapi.testclient import TestClient
+
+    from providerharvest_service.app import app
+
+    assert "flash_kind=error" in _rotate(client, "no-such-source").headers["location"]
+    anonymous = TestClient(app, base_url="https://testserver")
+    resp = anonymous.post("/provider/sources/x/rotate-key", follow_redirects=False)
+    assert resp.status_code == 303 and resp.headers["location"].startswith("/admin/login")
+
+
+def test_the_menu_offers_rotate_api_key_only_for_https_push_sources_and_asks_first(client, _isolated_db):
+    source_id, _ = _register_and_activate_push_source(client, _isolated_db)
+    page = client.get("/provider/sources").text
+    item = page.split('action="/provider/sources/%s/rotate-key"' % source_id, 1)[1].split("</form>", 1)[0]
+    assert "return confirm(" in item and "stops working at once" in item and "Rotate API key" in item
+
+    other = client.post("/provider/sources/new", data={"name": "ftp-one", "title": "t", "transport_type": "push", "push_method": "ftp"})
+    assert other.status_code == 200
+    assert page.count("/rotate-key") == 1
+    assert client.get("/provider/sources").text.count("/rotate-key") == 1  # the FTP push source got none
+
+
 # -- FTP/SFTP push: the list becomes the account's login limit --------------------------------
 
 def _ftp_account(_isolated_db):
@@ -405,6 +494,13 @@ def test_an_ftp_push_source_limits_its_account_to_the_listed_senders(client, _is
     resp = _register_ftp(client, allowed_senders="203.0.113.9, 198.51.100.0/24")
     assert resp.status_code == 200 and "Logins accepted only from" in resp.text
     assert _ftp_account(_isolated_db)[1] == ["198.51.100.0/24", "203.0.113.9/32"]
+
+
+def test_a_chosen_ftp_password_follows_the_same_rules_as_a_set_one(client, _isolated_db):
+    for password, message in (("short", "at least 12"), ("x" * 80, "at most 72"), ("é" * 40, "at most 72")):
+        resp = _register_ftp(client, push_ftp_password=password)
+        assert resp.status_code == 400 and message in resp.text and password not in resp.text
+    assert _register_ftp(client, push_ftp_password="a perfectly fine password").status_code == 200
 
 
 def test_an_ftp_push_source_with_no_list_leaves_its_account_unrestricted(client, _isolated_db):

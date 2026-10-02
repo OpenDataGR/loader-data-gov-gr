@@ -1,6 +1,7 @@
 import base64
 import datetime
 import os
+import re
 
 import bcrypt
 import pytest
@@ -256,6 +257,110 @@ def test_the_login_bans_column_shows_whether_fail2ban_is_running(client, _isolat
 def test_the_login_bans_column_says_unknown_for_a_box_that_does_not_report_it(client, _isolated_db):
     _add_box(_isolated_db, fail2ban_active=None)
     assert '<span class="muted">unknown</span>' in client.get("/admin/ftp").text
+
+
+# -- setting a defined password / rotating ------------------------------------------------
+
+def _hash_of(session_factory, username="legacy-account"):
+    with session_factory() as session:
+        return session.scalar(select(FtpAccount).where(FtpAccount.username == username)).password_hash
+
+
+def _set_password(client, account_id, password, confirm=None):
+    return client.post(
+        "/admin/ftp/%s/set-password" % account_id,
+        data={"password": password, "password_confirm": password if confirm is None else confirm},
+        follow_redirects=False,
+    )
+
+
+def test_the_account_menu_offers_set_rotate_disable_and_delete_and_rotate_asks_first(client, _isolated_db):
+    _add_admin_made_account(_isolated_db)
+    text = client.get("/admin/ftp").text
+    account_id = _account_id(client)
+    assert 'href="/admin/ftp/%s/set-password"' % account_id in text and "Set a password" in text
+    rotate = text.split('action="/admin/ftp/%s/rotate-password"' % account_id, 1)[1].split("</form>", 1)[0]
+    assert "return confirm(" in rotate and "stops working at once" in rotate  # one click must not break a provider silently
+    assert "A password they chose themselves is replaced too" in rotate
+    assert text.count('class="actions-menu"') >= 1 and "Disable" in text
+
+
+def test_the_set_password_page_explains_it_cannot_show_the_old_one(client, _isolated_db):
+    _add_admin_made_account(_isolated_db)
+    page = client.get("/admin/ftp/%s/set-password" % _account_id(client)).text
+    assert 'name="password"' in page and 'name="password_confirm"' in page and 'type="password"' in page
+    assert "can never be shown again" in page and "replaces the current" in page
+
+
+def test_setting_a_password_stores_a_proftpd_compatible_hash_of_exactly_that_password(client, _isolated_db):
+    _add_admin_made_account(_isolated_db)
+    before = _hash_of(_isolated_db)
+    resp = _set_password(client, _account_id(client), "the password the provider gave me")
+    assert resp.status_code == 303 and "flash_kind=error" not in resp.headers["location"]
+    stored = _hash_of(_isolated_db)
+    assert stored != before and stored.startswith("$2a$")  # the prefix ProFTPD needs
+    assert bcrypt.checkpw(b"the password the provider gave me", stored.encode())
+    assert not bcrypt.checkpw(b"something else entirely", stored.encode())
+
+
+def test_the_typed_password_never_appears_in_a_redirect_or_a_page(client, _isolated_db):
+    _add_admin_made_account(_isolated_db)
+    secret = "very-secret-typed-value-123"
+    resp = _set_password(client, _account_id(client), secret)
+    assert secret not in resp.headers["location"] and secret not in resp.text
+    assert secret not in client.get(resp.headers["location"]).text
+    bad = _set_password(client, _account_id(client), secret, confirm="does-not-match-at-all")  # an error page re-renders the form
+    assert bad.status_code == 400 and secret not in bad.text and "does-not-match-at-all" not in bad.text
+
+
+@pytest.mark.parametrize("password, confirm, message", [
+    ("a-good-password-1", "a-good-password-2", "do not match"),
+    ("short", None, "at least 12"),
+    ("x" * 73, None, "at most 72"),
+    ("é" * 40, None, "at most 72"),  # 40 characters but 80 bytes
+    ("fine-password-with-\x07-bell", None, "control characters"),
+])
+def test_a_password_that_cannot_be_used_is_refused_and_the_old_one_stays(client, _isolated_db, password, confirm, message):
+    _add_admin_made_account(_isolated_db)
+    before = _hash_of(_isolated_db)
+    resp = _set_password(client, _account_id(client), password, confirm)
+    assert resp.status_code == 400 and message in resp.text
+    assert _hash_of(_isolated_db) == before
+
+
+def test_a_password_of_exactly_the_limits_is_accepted(client, _isolated_db):
+    _add_admin_made_account(_isolated_db)
+    assert _set_password(client, _account_id(client), "x" * 12).status_code == 303
+    assert _set_password(client, _account_id(client), "y" * 72).status_code == 303
+    assert bcrypt.checkpw(b"y" * 72, _hash_of(_isolated_db).encode())
+    assert _set_password(client, _account_id(client), "é" * 36).status_code == 303  # 72 bytes
+
+
+def test_set_password_on_an_unknown_account_or_without_the_login_is_refused(client, _isolated_db):
+    assert "flash_kind=error" in client.get("/admin/ftp/nope/set-password", follow_redirects=False).headers["location"]
+    assert "flash_kind=error" in _set_password(client, "nope", "a-good-password-1").headers["location"]
+    _add_admin_made_account(_isolated_db)
+    anonymous = TestClient(app, base_url="https://testserver")
+    for resp in (anonymous.get("/admin/ftp/x/set-password", follow_redirects=False),
+                 anonymous.post("/admin/ftp/x/set-password", data={"password": "a-good-password-1"}, follow_redirects=False)):
+        assert resp.status_code == 303 and resp.headers["location"].startswith("/admin/login")
+
+
+def test_the_box_gets_the_new_hash_from_the_sync_endpoint(client, _isolated_db, monkeypatch):
+    _add_admin_made_account(_isolated_db)
+    _set_password(client, _account_id(client), "the password the provider gave me")
+    monkeypatch.setenv("LOADER_FTP_SYNC_KEY", "box-key")
+    synced = client.get("/admin/ftp-accounts-sync", headers={"X-Ftp-Sync-Key": "box-key"}).json()
+    assert bcrypt.checkpw(b"the password the provider gave me", synced[0]["password_hash"].encode())
+
+
+def test_rotating_still_works_and_shows_the_new_password_once(client, _isolated_db):
+    _add_admin_made_account(_isolated_db)
+    before = _hash_of(_isolated_db)
+    resp = client.post("/admin/ftp/%s/rotate-password" % _account_id(client))
+    assert resp.status_code == 200 and "shown once" in resp.text
+    shown = re.search(r'id="password-field" value="([^"]+)"', resp.text).group(1)
+    assert _hash_of(_isolated_db) != before and bcrypt.checkpw(shown.encode(), _hash_of(_isolated_db).encode())
 
 
 # -- allowed addresses (per-account login limit, enforced on the box) ----------------------

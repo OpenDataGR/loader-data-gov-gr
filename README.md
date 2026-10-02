@@ -153,6 +153,21 @@ limits"). The source is the single place the list is edited: the FTP box page
 shows a provider's account list read-only, and the JSON admin API refuses to
 change it (409). Admin-made accounts keep their manual "Allowed from" list.
 
+**Credentials a provider cannot recover.** An FTP/SFTP password is stored only as
+a bcrypt hash (`$2a$`, the prefix ProFTPD needs) and an HTTPS push key likewise, so
+neither can ever be displayed -- not even a password the provider chose at
+registration; making them viewable would mean storing them recoverably, and a
+leaked database would then hand over every provider's password. What an admin can
+do instead, from the account's (or source's) "..." menu: **Set a password**
+(`/admin/ftp/{id}/set-password`: one the provider gave you; at least 12 characters,
+at most 72 bytes -- bcrypt reads no more, so a longer one would silently match any
+ending -- typed twice, never echoed or put in a URL; the same rules now apply to a
+password chosen at registration), **Rotate** to a generated one (shown once; asks
+for confirmation, since it replaces the current password at once and breaks the
+provider's uploads until they switch), and for an HTTPS push source **Rotate API
+key** (`/provider/sources/{id}/rotate-key`: the old key stops working immediately;
+before this a lost key meant deleting and re-registering the source).
+
 **Whitelist and blacklist (the Security box's "Address control").** One panel
 holds three lists side by side -- *Banned now* (fail2ban, per FTP box),
 *Blacklist* and *Whitelist* -- and every entry can be moved to another list

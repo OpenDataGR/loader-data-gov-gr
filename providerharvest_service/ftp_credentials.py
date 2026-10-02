@@ -55,3 +55,21 @@ def hash_password(password: str) -> str:
 
 def generate_password() -> str:
     return secrets.token_urlsafe(24)
+
+
+MIN_CUSTOM_PASSWORD_LENGTH = 12
+# bcrypt only reads the first 72 bytes of a password: anything longer is cut off
+# (or, in newer versions, refused), so a longer one would be a password that
+# "works" with any ending. Refuse it up front instead.
+MAX_PASSWORD_BYTES = 72
+
+
+def password_problem(password: str) -> str | None:
+    """Why a password somebody typed cannot be used, or None if it can."""
+    if len(password) < MIN_CUSTOM_PASSWORD_LENGTH:
+        return "at least %d characters" % MIN_CUSTOM_PASSWORD_LENGTH
+    if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+        return "at most %d bytes (about %d characters) -- longer ones are cut short by the hashing" % (MAX_PASSWORD_BYTES, MAX_PASSWORD_BYTES)
+    if any(not ch.isprintable() for ch in password):
+        return "no control characters"
+    return None
