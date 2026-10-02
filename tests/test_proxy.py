@@ -132,6 +132,22 @@ def test_per_ip_rate_limit_returns_429_once_exceeded(client, _isolated_db, monke
     assert second.headers["retry-after"] == "60"
 
 
+def test_per_ip_rate_limit_tells_callers_apart_behind_the_gateway(client, _isolated_db, monkeypatch):
+    # Behind the gateway the socket peer is always the gateway; the real caller is
+    # in X-Forwarded-For (second-to-last entry). Two different consumers must not
+    # share one bucket, and the same consumer must still be limited.
+    _register_active_http_source(_isolated_db, proxy_rate_limit_per_ip="1")
+    monkeypatch.setattr(proxy.requests, "get", lambda url, **kwargs: FakeUpstreamResponse(content=b"{}"))
+    monkeypatch.setattr(proxy, "assert_safe_http_url", lambda url: None)
+
+    def get_as(address):
+        return client.get("/proxy/acme-open-data", headers={"X-Forwarded-For": "%s:4000, 10.0.0.4" % address})
+
+    assert get_as("203.0.113.1").status_code == 200
+    assert get_as("203.0.113.2").status_code == 200  # a different consumer: its own bucket
+    assert get_as("203.0.113.1").status_code == 429  # the first one, again: limited
+
+
 def test_per_ip_rate_limit_is_independent_per_source(_isolated_db):
     """Direct unit coverage (not via TestClient, which reuses one fake
     client IP for every request): two different sources must not share

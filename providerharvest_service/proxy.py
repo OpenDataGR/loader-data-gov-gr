@@ -71,6 +71,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from providerharvest_service import provider_sources
+from providerharvest_service.client_addr import sender_address
 from providerharvest_service.db import get_session
 from providerharvest_service.engine.auth_strategies import build_auth_strategy
 from providerharvest_service.engine.transport.rate_limit import TokenBucket
@@ -139,7 +140,10 @@ def proxy_call(
     source = _get_active_http_source_or_404(session, source_name)
     config = json.loads(source.config or "{}")
 
-    client_ip = request.client.host if request.client else "unknown"
+    # The real caller, not the socket peer: behind the gateway and nginx that
+    # is the gateway's own address, which would put every outside consumer in
+    # one shared bucket (see client_addr.py).
+    client_ip = sender_address(request) or "unknown"
     per_ip_bucket = _per_ip_rate_limiter_for(
         source.id, client_ip, config.get("proxy_rate_limit_per_ip", 30)
     )
