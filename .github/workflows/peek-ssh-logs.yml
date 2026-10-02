@@ -8,15 +8,14 @@ jobs:
   peek:
     runs-on: [self-hosted, loader-ftp]
     steps:
-      - name: Are the fail2ban firewall rules all in place?
+      - name: Why has the loader-ftp jail no firewall chain?
         run: |
-          echo "--- every INPUT rule that mentions f2b"
-          sudo -n iptables -S INPUT | grep -n -i f2b || echo "(none)"
-          echo "--- all fail2ban chains"
-          sudo -n iptables -S | grep -E '^-N f2b' || echo "(none)"
-          echo "--- loader-ftp jail"
-          sudo -n fail2ban-client status loader-ftp
-          echo "--- is it still the same fail2ban process since provisioning"
-          systemctl show fail2ban -p ActiveEnterTimestamp
-          echo "--- last fail2ban log lines about loader-ftp"
-          sudo -n grep -E 'loader-ftp\]' /var/log/fail2ban.log | tail -12
+          echo "--- fail2ban log since the restart (errors and loader-ftp lines)"
+          sudo -n awk '$1 == "2026-10-02" && $2 >= "07:06:50"' /var/log/fail2ban.log | grep -Ev 'Found|Ignore' | head -60
+          echo "--- jail loader-ftp actions"
+          sudo -n fail2ban-client get loader-ftp actions
+          echo "--- effective loader-ftp settings"
+          for k in maxretry findtime bantime logpath; do echo -n "$k: "; sudo -n fail2ban-client get loader-ftp $k; done
+          echo "--- jail files"
+          ls -l /etc/fail2ban/jail.d/
+          cat /etc/fail2ban/jail.d/loader-ftp.local
