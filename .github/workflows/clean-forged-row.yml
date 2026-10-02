@@ -12,10 +12,18 @@ jobs:
     steps:
       - name: Look, delete, look again
         run: |
-          DB=/opt/data-projects/loader-data-gov-gr/data/loader.db
-          test -f "$DB" || { echo "::error::no database at $DB"; exit 1; }
-          echo "--- rows matching, before"
-          sqlite3 "$DB" "SELECT id, hostname, at, ip, port, username, channel FROM ftp_login_attempt WHERE username = 'forged-entry' OR username = 'forged-again' OR ip IN ('9.9.9.9','8.8.8.8');"
-          sqlite3 "$DB" "DELETE FROM ftp_login_attempt WHERE username IN ('forged-entry','forged-again') AND ip IN ('9.9.9.9','8.8.8.8');"
-          echo "--- rows matching, after"
-          sqlite3 "$DB" "SELECT count(*) FROM ftp_login_attempt WHERE username IN ('forged-entry','forged-again');"
+          python3 - <<'PY'
+          import sqlite3, sys
+          db = "/opt/data-projects/loader-data-gov-gr/data/loader.db"
+          conn = sqlite3.connect(db)
+          where = "username IN ('forged-entry','forged-again') AND ip IN ('9.9.9.9','8.8.8.8')"
+          print("--- rows matching, before")
+          for row in conn.execute("SELECT id, hostname, at, ip, port, username, channel FROM ftp_login_attempt WHERE " + where):
+              print(row)
+          conn.execute("DELETE FROM ftp_login_attempt WHERE " + where)
+          conn.commit()
+          print("--- rows matching, after:", conn.execute("SELECT count(*) FROM ftp_login_attempt WHERE " + where).fetchone()[0])
+          print("--- the genuine probes are untouched:")
+          for row in conn.execute("SELECT at, ip, port, username, channel FROM ftp_login_attempt WHERE username LIKE 'zz-%' ORDER BY at DESC LIMIT 6"):
+              print(row)
+          PY
