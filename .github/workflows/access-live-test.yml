@@ -53,6 +53,9 @@ jobs:
               ip = mine()
               print("the tester's address as loader sees it:", ip)
               add("block", ip + "/32"); add("block", "203.0.113.0/24"); add("allow", "192.0.2.0/24")
+          elif mode == "harmless":
+              # Reserved documentation ranges: no real traffic comes from them, so nobody is affected.
+              add("block", "203.0.113.0/24"); add("allow", "192.0.2.0/24")
           elif mode == "allow-mine":
               add("allow", mine() + "/32")
           elif mode == "cleanup":
