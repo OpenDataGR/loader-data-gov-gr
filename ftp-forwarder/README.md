@@ -112,6 +112,12 @@ The same page shows whether fail2ban is running at all (a dead jail would
 otherwise fail silently). Run `provision-ftp-box.yml` with the address in
 its `unban_ip` input if the page itself is unavailable.
 
+A second jail, `loader-ftp-slow`, catches scanners that stay under the first
+one's radar by trying once every few minutes: 8 refused logins in 6 hours
+bans for a day (doubling for repeats, up to a week). It reads the same log
+through the same filter, and its bans appear in the same ban list and are
+lifted by the same Unban button.
+
 ### Report of failed logins
 
 The ban list says who is blocked *now*; the **Failed logins**
@@ -124,6 +130,10 @@ shape. The sync service ships the `PASS 530` lines to loader in batches of up
 to 2000 (`POST /admin/ftp-login-attempts`). Its read position is kept in
 `/var/lib/ftp-forwarder/attempts.state` and moves forward only once loader
 accepted the batch, so nothing is lost or repeated across a failure or restart.
+
+Port 2222 is shown as **SFTP/SCP**: both are one SSH login there, and a
+refusal happens before the client says which it wanted, so they cannot be
+told apart.
 
 Loader keeps them 90 days (`FtpLoginAttempt`) and shows a per-address
 summary (number of attempts, first/last, FTP vs SFTP, distinct usernames,
@@ -211,7 +221,7 @@ systemd unit under `deploy/` for the real, deployed invocation):
 --proftpd-unit proftpd             # optional
 --relay-unit loader-ftp-forwarder  # optional
 --fail2ban-unit fail2ban           # optional -- reported, so a dead jail shows on the admin page
---fail2ban-jail loader-ftp         # optional -- whose ban list is reported and unbanned from
+--fail2ban-jail loader-ftp         # optional, repeatable (default: loader-ftp and loader-ftp-slow) -- whose bans are reported and lifted
 --ftp-port 21                      # optional
 --sftp-port 2222                   # optional
 ```

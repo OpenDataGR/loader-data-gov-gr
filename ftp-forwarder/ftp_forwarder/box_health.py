@@ -78,6 +78,27 @@ def unban(address: str, jail: str = "loader-ftp", *, run: Runner = _default_run)
     return run(["fail2ban-client", "set", jail, "unbanip", str(parsed)]).returncode == 0
 
 
+DEFAULT_JAILS = ("loader-ftp", "loader-ftp-slow")
+
+
+def read_banned_in(jails: tuple[str, ...] | list[str], *, run: Runner = _default_run) -> list[str] | None:
+    """Everyone banned in any of ``jails`` (a fast burst jail and a slow-scanner
+    one, see provision-ftp-box.yml), as one list. A jail that can't be asked
+    -- e.g. the box was provisioned before it existed -- is skipped; None only
+    when none of them could be, so a missing jail doesn't hide the others."""
+    answers = [read_banned(jail, run=run) for jail in jails]
+    answered = [a for a in answers if a is not None]
+    if not answered:
+        return None
+    return sorted({address for bans in answered for address in bans})
+
+
+def unban_everywhere(address: str, jails: tuple[str, ...] | list[str], *, run: Runner = _default_run) -> bool:
+    """Lets ``address`` back in whichever jail holds it. True if at least one
+    jail accepted it (see ``unban`` for why the address is validated)."""
+    return any([unban(address, jail, run=run) for jail in jails])
+
+
 def collect_status(
     *,
     proftpd_unit: str = "proftpd",

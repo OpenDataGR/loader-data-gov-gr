@@ -89,6 +89,43 @@ def test_read_banned_parses_the_jail_status():
     assert calls == [["fail2ban-client", "status", "loader-ftp"]]
 
 
+def _status(*addresses):
+    return "Status for the jail: x\n`- Actions\n   |- Currently banned: %d\n   `- Banned IP list:\t%s\n" % (
+        len(addresses), " ".join(addresses))
+
+
+def test_read_banned_in_merges_the_jails_without_duplicates():
+    from ftp_forwarder.box_health import read_banned_in
+
+    answers = {"fast": _status("9.9.9.9", "10.0.0.2"), "slow": _status("10.0.0.2", "45.78.224.198")}
+    result = read_banned_in(["fast", "slow"], run=lambda cmd: _completed(stdout=answers[cmd[2]]))
+    assert result == ["10.0.0.2", "45.78.224.198", "9.9.9.9"]  # one list, each address once (sorted as text, like read_banned)
+
+
+def test_a_missing_jail_does_not_hide_the_others_and_all_missing_is_none():
+    from ftp_forwarder.box_health import read_banned_in
+
+    def run(cmd):
+        return _completed(stdout=_status("9.9.9.9")) if cmd[2] == "fast" else _completed(returncode=255)
+
+    assert read_banned_in(["fast", "slow"], run=run) == ["9.9.9.9"]
+    assert read_banned_in(["a", "b"], run=lambda cmd: _completed(returncode=255)) is None
+
+
+def test_unban_everywhere_tries_every_jail_and_succeeds_if_any_did():
+    from ftp_forwarder.box_health import unban_everywhere
+
+    calls = []
+
+    def run(cmd):
+        calls.append(cmd)
+        return _completed(returncode=0 if cmd[2] == "slow" else 1)
+
+    assert unban_everywhere("45.78.224.198", ["fast", "slow"], run=run) is True
+    assert [c[2] for c in calls] == ["fast", "slow"]
+    assert unban_everywhere("not-an-ip", ["fast", "slow"], run=run) is False
+
+
 def test_read_banned_with_nobody_banned_is_an_empty_list_not_none():
     from ftp_forwarder.box_health import read_banned
 

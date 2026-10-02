@@ -238,6 +238,26 @@ jobs:
           ignoreip = 127.0.0.1/8 ::1
           EOF
 
+          # A second jail on the same filter for scanners that stay under the
+          # first one's radar by trying once every few minutes (one such address
+          # made 8 attempts in 25 minutes, never 5 in 10). Eight refused logins in
+          # six hours bans for a day, doubling for repeats up to a week. Its bans
+          # are reported and lifted from the admin page like the first jail's.
+          sudo tee /etc/fail2ban/jail.d/loader-ftp-slow.local > /dev/null <<'EOF'
+          [loader-ftp-slow]
+          enabled = true
+          filter = loader-ftp
+          logpath = /var/log/proftpd/loader-auth.log
+          port = 21,2222
+          maxretry = 8
+          findtime = 6h
+          bantime = 1d
+          bantime.increment = true
+          bantime.factor = 2
+          bantime.maxtime = 1w
+          ignoreip = 127.0.0.1/8 ::1
+          EOF
+
           # Prove the filter matches what ProFTPD really writes, on a made-up log:
           # a refused login must count, a successful one and a bare USER must not.
           now=$(date +%s)
@@ -251,6 +271,7 @@ jobs:
           sleep 3
           sudo systemctl is-active --quiet fail2ban && echo "fail2ban running" || (sudo journalctl -u fail2ban -n 30 --no-pager; exit 1)
           sudo fail2ban-client status loader-ftp
+          sudo fail2ban-client status loader-ftp-slow
 
       - name: Install and (re)start the file-relay service
         run: |
@@ -277,6 +298,9 @@ jobs:
               echo "::error::'$UNBAN_IP' does not look like an IP address"
               exit 1
             fi
-            sudo fail2ban-client set loader-ftp unbanip "$UNBAN_IP"
+            for jail in loader-ftp loader-ftp-slow; do
+              sudo fail2ban-client set "$jail" unbanip "$UNBAN_IP" || true
+            done
           fi
           sudo fail2ban-client status loader-ftp
+          sudo fail2ban-client status loader-ftp-slow

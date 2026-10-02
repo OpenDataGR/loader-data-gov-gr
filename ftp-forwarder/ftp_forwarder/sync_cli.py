@@ -54,11 +54,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--proftpd-unit", default="proftpd")
     parser.add_argument("--relay-unit", default="loader-ftp-forwarder")
     parser.add_argument("--fail2ban-unit", default="fail2ban")
-    parser.add_argument("--fail2ban-jail", default="loader-ftp")
+    parser.add_argument(
+        "--fail2ban-jail", action="append", dest="fail2ban_jails",
+        help="A jail whose bans are reported and can be lifted; repeat for several "
+             "(default: %s)" % ", ".join(box_health.DEFAULT_JAILS),
+    )
     parser.add_argument("--ftp-port", type=int, default=21)
     parser.add_argument("--sftp-port", type=int, default=2222)
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args(argv)
+    jails = tuple(args.fail2ban_jails or box_health.DEFAULT_JAILS)
 
     logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(message)s")
     logger = logging.getLogger(__name__)
@@ -113,14 +118,14 @@ def main(argv: list[str] | None = None) -> int:
             sync_ok=sync_ok,
             sync_message=sync_message,
             clients=[{"username": login.username, "ip": login.ip} for login in pending_logins.values()],
-            banned_ips=box_health.read_banned(args.fail2ban_jail),
+            banned_ips=box_health.read_banned_in(jails),
         )
         if report.accepted:
             pending_logins.clear()
             # Addresses an admin asked loader to let back in; the next report
             # then shows them gone from the ban list, which closes the request.
             for address in report.unban:
-                if box_health.unban(address, args.fail2ban_jail):
+                if box_health.unban_everywhere(address, jails):
                     logger.info("lifted the ban on %s at an admin's request", address)
                 else:
                     logger.error("could not lift the ban on %r", address)

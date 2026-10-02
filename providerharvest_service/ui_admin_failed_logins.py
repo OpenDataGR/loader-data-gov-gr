@@ -26,10 +26,11 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import case, distinct, func, select
+from sqlalchemy import and_, case, distinct, func, or_, select
 from sqlalchemy.orm import Session
 
 from providerharvest_service import build_info, failed_auth
+from providerharvest_service.admin_ftp import SFTP_SCP
 from providerharvest_service.db import get_session
 from providerharvest_service.models import FtpBoxStatus, FtpLoginAttempt, FtpUnbanRequest
 
@@ -52,20 +53,30 @@ WINDOWS = (
     ("all", "Everything kept", None),
 )
 _WINDOW_HOURS = {key: hours for key, _, hours in WINDOWS}
-PORT_NAMES = {21: "FTP", 2222: "SFTP"}
 
 # How a row came in. Rows that predate the column have no channel and are
-# FTP/SFTP, told apart by the port they hit.
-METHOD = func.coalesce(
-    FtpLoginAttempt.channel,
-    case((FtpLoginAttempt.port == 21, "FTP"), (FtpLoginAttempt.port == 2222, "SFTP"), else_="Other"),
+# FTP or SFTP/SCP, told apart by the port they hit. Port 2222 is always shown
+# as SFTP/SCP -- including rows stored earlier under the plain name "SFTP" --
+# because both are one SSH login there: a refusal comes before the client says
+# which of the two it wanted, so they cannot be told apart.
+METHOD = case(
+    (
+        and_(FtpLoginAttempt.port == 2222, or_(FtpLoginAttempt.channel.is_(None), FtpLoginAttempt.channel == "SFTP")),
+        SFTP_SCP,
+    ),
+    else_=func.coalesce(
+        FtpLoginAttempt.channel,
+        case((FtpLoginAttempt.port == 21, "FTP"), else_="Other"),
+    ),
 )
-_KNOWN_METHODS = ("FTP", "SFTP", failed_auth.WEB_LOGIN, failed_auth.PUSH_KEY, failed_auth.ADMIN_KEY,
+_KNOWN_METHODS = ("FTP", SFTP_SCP, failed_auth.WEB_LOGIN, failed_auth.PUSH_KEY, failed_auth.ADMIN_KEY,
                   failed_auth.BOX_KEY, failed_auth.BEARER, failed_auth.OTHER_HTTP)
 
 
 def _method_of(attempt: FtpLoginAttempt) -> str:
-    return attempt.channel or PORT_NAMES.get(attempt.port, "Other")
+    if attempt.port == 2222 and attempt.channel in (None, "SFTP"):
+        return SFTP_SCP
+    return attempt.channel or ("FTP" if attempt.port == 21 else "Other")
 
 
 templates.env.filters["method"] = _method_of

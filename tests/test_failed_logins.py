@@ -153,7 +153,7 @@ def test_the_report_counts_attempts_per_address(machine, admin):
     assert csv_text[0].startswith("source_address,attempts")
     row = csv_text[1].split(",")
     assert row[0] == "188.166.1.1" and row[1] == "3"  # attempts
-    assert row[4] == "FTP; SFTP"  # methods
+    assert row[4] == "FTP; SFTP/SCP"  # methods
     assert row[5] == "2"  # distinct usernames: root, admin
     assert row[6] == "no"
 
@@ -164,18 +164,18 @@ def test_the_attempt_log_shows_port_protocol_and_username(admin, machine):
     assert csv_lines[0] == "time_utc,box,source_address,port,method,username_tried,refusal_code"
     assert len(csv_lines) == 5
     assert any(",45.9.9.9,21,FTP,ubuntu,530" in line for line in csv_lines)
-    assert any(",188.166.1.1,2222,SFTP,root,530" in line for line in csv_lines)
-    assert any(",188.166.1.1,2222,SFTP,admin,530" in line for line in csv_lines)
+    assert any(",188.166.1.1,2222,SFTP/SCP,root,530" in line for line in csv_lines)
+    assert any(",188.166.1.1,2222,SFTP/SCP,admin,530" in line for line in csv_lines)
 
 
 def test_filters_narrow_the_report(admin, machine):
     _seed(machine)
     assert len(admin.get("/admin/security/failed-logins.csv?method=FTP").text.splitlines()) == 3
-    assert len(admin.get("/admin/security/failed-logins.csv?method=SFTP").text.splitlines()) == 3
+    assert len(admin.get("/admin/security/failed-logins.csv?method=SFTP%2FSCP").text.splitlines()) == 3
     assert len(admin.get("/admin/security/failed-logins.csv?method=Web+login").text.splitlines()) == 1
     assert len(admin.get("/admin/security/failed-logins.csv?address=45.").text.splitlines()) == 2
     assert len(admin.get("/admin/security/failed-logins.csv?username=roo").text.splitlines()) == 3
-    assert len(admin.get("/admin/security/failed-logins.csv?address=188.166.1.1&method=SFTP").text.splitlines()) == 3
+    assert len(admin.get("/admin/security/failed-logins.csv?address=188.166.1.1&method=SFTP%2FSCP").text.splitlines()) == 3
 
 
 def test_the_time_window_filter(admin, machine):
@@ -437,5 +437,16 @@ def test_old_rows_without_a_channel_are_told_apart_by_port(admin, _isolated_db):
             ip="7.7.7.7", port=2222, username="old", code=530, channel=None,
         ))
         session.commit()
-    assert ",7.7.7.7,2222,SFTP,old,530" in admin.get("/admin/security/failed-logins.csv").text
-    assert len(admin.get("/admin/security/failed-logins.csv?method=SFTP").text.splitlines()) == 2
+    assert ",7.7.7.7,2222,SFTP/SCP,old,530" in admin.get("/admin/security/failed-logins.csv").text
+    assert len(admin.get("/admin/security/failed-logins.csv?method=SFTP%2FSCP").text.splitlines()) == 2
+
+
+def test_rows_stored_earlier_under_the_name_sftp_are_shown_as_sftp_scp(admin, _isolated_db):
+    with _isolated_db() as session:
+        session.add(FtpLoginAttempt(
+            hostname="box1", at=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None),
+            ip="8.8.8.8", port=2222, username="earlier", code=530, channel="SFTP",
+        ))
+        session.commit()
+    assert ",8.8.8.8,2222,SFTP/SCP,earlier,530" in admin.get("/admin/security/failed-logins.csv").text
+    assert len(admin.get("/admin/security/failed-logins.csv?method=SFTP%2FSCP").text.splitlines()) == 2
