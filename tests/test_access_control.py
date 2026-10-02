@@ -2,8 +2,10 @@
 per-request enforcement on loader, the page that manages them, and what the FTP
 box is told in its heartbeat reply."""
 
+import base64
 import datetime
 import json
+import os
 import re
 
 import bcrypt
@@ -31,6 +33,12 @@ def _env(monkeypatch):
         "LOADER_ADMIN_UI_PASSWORD_HASH", bcrypt.hashpw(ADMIN_PASSWORD.encode(), bcrypt.gensalt()).decode()
     )
     monkeypatch.setenv("LOADER_ADMIN_SESSION_SECRET", "test-session-secret")
+
+
+@pytest.fixture(autouse=True)
+def _master_key(monkeypatch):
+    # Registering a source touches envelope encryption (the tests below register push sources).
+    monkeypatch.setenv("CKAN_PROVIDERHARVEST_MASTER_KEY", base64.b64encode(os.urandom(32)).decode())
 
 
 @pytest.fixture(autouse=True)
@@ -236,6 +244,147 @@ def test_a_database_error_with_nothing_cached_blocks_and_admits_nobody(monkeypat
     monkeypatch.setattr(db, "SessionLocal", lambda: Broken())
     access_control.invalidate()
     assert access_control.cached_snapshot().verdict("203.0.113.9") is None
+
+
+# -- blocking an address a push source accepts data from ---------------------------------
+
+def _source(factory, name="acme-push", allowed="", transport="push", title=None, **extra):
+    from providerharvest_service import provider_sources
+
+    form = {"name": name, "title": title or name.title(), "transport_type": transport, "allowed_senders": allowed}
+    if transport != "push":
+        form.update({"endpoint_url": "https://provider.example.gr/api", "frequency": "DAILY", "auth_type": "api_key", "api_key": "k"})
+    form.update(extra)
+    with factory() as s:
+        return provider_sources.register(s, form).id
+
+
+def test_a_block_that_overlaps_a_sources_allowed_sender_names_that_source(session, _isolated_db):
+    _source(_isolated_db, "acme-push", "203.0.113.9")
+    _source(_isolated_db, "other-push", "198.51.100.0/24")
+    got = access_control.affected_sources(session, "203.0.113.0/24")
+    assert [(s.name, s.entries) for s in got] == [("acme-push", ("203.0.113.9/32",))]
+
+
+def test_overlap_works_both_ways_and_across_several_sources(session, _isolated_db):
+    _source(_isolated_db, "wide-source", "203.0.113.0/24")
+    _source(_isolated_db, "narrow-source", "203.0.113.9, 203.0.113.77")
+    got = access_control.affected_sources(session, "203.0.113.9")  # inside the wide one, equal to one of the narrow ones
+    assert [s.name for s in got] == ["narrow-source", "wide-source"]
+    assert dict((s.name, s.entries) for s in got)["narrow-source"] == ("203.0.113.9/32",)
+
+
+def test_sources_with_no_allowed_senders_other_ranges_or_other_kinds_are_not_affected(session, _isolated_db):
+    _source(_isolated_db, "open-push", "")  # accepts from anywhere: nothing to cut off
+    _source(_isolated_db, "far-push", "192.0.2.0/24")
+    _source(_isolated_db, "pull-source", "", transport="http")
+    assert access_control.affected_sources(session, "203.0.113.0/24") == []
+
+
+def test_an_allowed_sender_wholly_inside_a_whitelisted_range_is_not_affected(session, _isolated_db):
+    _source(_isolated_db, "acme-push", "203.0.113.9")
+    access_control.add_rule(session, ALLOW, "203.0.113.0/24")
+    assert access_control.affected_sources(session, "203.0.0.0/16") == []  # the whitelist wins: it stays in
+
+
+def test_every_status_counts_a_pending_source_will_be_approved_later(session, _isolated_db):
+    _source(_isolated_db, "acme-push", "203.0.113.9")  # registered: pending
+    assert access_control.affected_sources(session, "203.0.113.9")[0].status == "pending"
+
+
+def _post_block(admin, **extra):
+    data = {"kind": "block", "cidr": "203.0.113.0/24"}
+    data.update(extra)
+    return admin.post("/admin/security/rules", data=data, follow_redirects=False)
+
+
+def test_blacklisting_an_allowed_sender_asks_first_and_saves_nothing(admin, session, _isolated_db):
+    _source(_isolated_db, "acme-push", "203.0.113.9", title="Acme Ltd")
+    resp = _post_block(admin, note="scanner", duration="24h")
+    assert resp.status_code == 200  # a page, not a redirect
+    assert "would cut off a provider" in resp.text and "Acme Ltd" in resp.text and "acme-push" in resp.text
+    assert "<code>203.0.113.9/32</code>" in resp.text
+    assert session.scalar(select(AccessRule)) is None  # nothing was saved
+    # The confirm form carries everything that was typed, plus the confirmation.
+    assert 'name="cidr" value="203.0.113.0/24"' in resp.text and 'name="note" value="scanner"' in resp.text
+    assert 'name="duration" value="24h"' in resp.text and 'name="confirm" value="1"' in resp.text
+    assert 'action="/admin/security/rules"' in resp.text
+
+
+def test_confirming_saves_the_block_with_the_original_note_and_duration(admin, session, _isolated_db):
+    _source(_isolated_db, "acme-push", "203.0.113.9")
+    resp = _post_block(admin, note="scanner", duration="24h", confirm="1")
+    assert resp.status_code == 303 and "flash_kind=error" not in resp.headers["location"]
+    rule = session.scalar(select(AccessRule))
+    assert (rule.kind, rule.cidr, rule.note) == ("block", "203.0.113.0/24", "scanner") and rule.expires_at is not None
+
+
+def test_a_block_that_affects_nobody_is_saved_straight_away(admin, session, _isolated_db):
+    _source(_isolated_db, "acme-push", "198.51.100.9")
+    assert _post_block(admin).status_code == 303
+    assert session.scalar(select(AccessRule)) is not None
+
+
+def test_the_whitelist_is_never_asked_about(admin, session, _isolated_db):
+    _source(_isolated_db, "acme-push", "203.0.113.9")
+    resp = admin.post("/admin/security/rules", data={"kind": "allow", "cidr": "203.0.113.0/24"}, follow_redirects=False)
+    assert resp.status_code == 303 and session.scalar(select(AccessRule)).kind == "allow"
+
+
+def test_several_affected_sources_are_all_listed(admin, session, _isolated_db):
+    _source(_isolated_db, "first-push", "203.0.113.9")
+    _source(_isolated_db, "second-push", "203.0.113.200")
+    text = _post_block(admin).text
+    assert "would cut off 2 providers" in text and "first-push" in text and "second-push" in text
+
+
+def test_moving_a_whitelisted_provider_to_the_blacklist_asks_because_the_move_takes_its_protection_away(admin, session, _isolated_db):
+    _source(_isolated_db, "acme-push", "203.0.113.9")
+    access_control.add_rule(session, ALLOW, "203.0.113.9")
+    # Whitelisted, the address would stay in even if blocked -- but the move removes that whitelist entry.
+    assert [s.name for s in access_control.affected_sources(session, "203.0.113.9")] == ["acme-push"]
+    resp = admin.post("/admin/security/rules/move", data={"cidr": "203.0.113.9", "to": "block"}, follow_redirects=False)
+    assert resp.status_code == 200 and "acme-push" in resp.text
+    assert [(r.kind, r.cidr) for r in access_control.rules(session)] == [("allow", "203.0.113.9/32")]  # untouched so far
+
+    done = admin.post("/admin/security/rules/move", data={"cidr": "203.0.113.9", "to": "block", "confirm": "1"}, follow_redirects=False)
+    assert done.status_code == 303
+    assert [(r.kind, r.cidr) for r in access_control.rules(session)] == [("block", "203.0.113.9/32")]
+
+
+def test_a_wider_whitelist_range_still_protects_a_provider_so_blocking_inside_it_asks_nothing(admin, session, _isolated_db):
+    _source(_isolated_db, "acme-push", "203.0.113.9")
+    access_control.add_rule(session, ALLOW, "203.0.113.0/24")  # a different, wider entry: it stays
+    assert _post_block(admin, cidr="203.0.113.9").status_code == 303  # saved without a question
+
+
+def test_the_confirmation_for_a_move_goes_back_to_the_move_route(admin, session, _isolated_db):
+    _source(_isolated_db, "acme-push", "198.51.100.9")
+    resp = admin.post("/admin/security/rules/move", data={"cidr": "198.51.100.0/24", "to": "block"}, follow_redirects=False)
+    assert resp.status_code == 200 and 'action="/admin/security/rules/move"' in resp.text
+    assert 'name="to" value="block"' in resp.text and session.scalar(select(AccessRule)) is None
+    done = admin.post("/admin/security/rules/move", data={"cidr": "198.51.100.0/24", "to": "block", "confirm": "1"}, follow_redirects=False)
+    assert done.status_code == 303 and session.scalar(select(AccessRule)).cidr == "198.51.100.0/24"
+
+
+def test_an_invalid_entry_is_not_asked_about_it_just_gets_the_normal_error(admin, session, _isolated_db):
+    _source(_isolated_db, "acme-push", "203.0.113.9")
+    resp = _post_block(admin, cidr="not-an-ip")
+    assert resp.status_code == 303 and "flash_kind=error" in resp.headers["location"]
+
+
+def test_the_confirmation_page_escapes_what_it_shows_and_cancel_returns_to_the_page(admin, _isolated_db):
+    _source(_isolated_db, "acme-push", "203.0.113.9", title="<script>alert(1)</script>")
+    resp = admin.post("/admin/security/rules", data={"kind": "block", "cidr": "203.0.113.9", "note": '"><script>x</script>'},
+                      headers={"referer": "https://loader.data.gov.gr%s?view=attempts" % PAGE}, follow_redirects=False)
+    assert "<script>alert(1)</script>" not in resp.text and "&lt;script&gt;" in resp.text
+    assert '"><script>x</script>' not in resp.text
+    assert 'href="%s?view=attempts"' % PAGE in resp.text  # Cancel goes back to where you were
+
+
+def test_the_confirmation_needs_the_login(machine):
+    resp = machine.post("/admin/security/rules", data={"kind": "block", "cidr": "203.0.113.0/24"}, follow_redirects=False)
+    assert resp.status_code == 303 and resp.headers["location"].startswith("/admin/login")
 
 
 # -- enforcement on loader ---------------------------------------------------------------

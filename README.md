@@ -167,7 +167,16 @@ address inside a blocked range gets through; on the box it goes into fail2ban's
 `ignoreip` and any current ban on it is lifted. IPv4 addresses and ranges only,
 nothing wider than a /8, and the guards that matter: you cannot blacklist your
 own address or the FTP box's (unless whitelisted first), since locking yourself or
-the relay out cannot be undone from the page. Each worker process caches the
+the relay out cannot be undone from the page. How they combine with a push
+source's own allowed senders: the blacklist is checked first and beats them (a
+blacklisted provider address is refused even though the source lists it); the
+whitelist never grants access to a source (an address not in a source's list is
+still refused there) -- it only protects from bans and blocks. Because that
+makes blacklisting a provider's address a way to cut them off silently,
+blacklisting (adding, or moving from another list) an address or range that
+overlaps any push source's allowed senders first shows a confirmation page
+naming those sources (`access_control.affected_sources`; a sender wholly inside
+a different whitelist entry is not counted, since that stays in). Each worker process caches the
 rules for 5 seconds (at once on the one that made the change). The box learns the
 rules from the reply to its heartbeat (`access`, with a `version`) and reports
 the version it has applied, shown per box as *rules applied* / *waiting*.

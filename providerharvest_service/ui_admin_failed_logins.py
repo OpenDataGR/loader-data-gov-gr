@@ -38,6 +38,7 @@ from sqlalchemy.orm import Session
 from providerharvest_service import access_control, admin_session, build_info, failed_auth, nav
 from providerharvest_service.admin_ftp import SFTP_SCP
 from providerharvest_service.client_addr import sender_address
+from providerharvest_service.sender_allowlist import normalize_cidr
 from providerharvest_service.db import get_session
 from providerharvest_service.models import FtpBoxStatus, FtpLoginAttempt, FtpUnbanRequest
 
@@ -271,13 +272,46 @@ def _back(flash: str, kind: str = "success", request: Request | None = None) -> 
     (the Referer, which is only believed if it is this page's own path) the
     filters, tab and sort in its query string are kept, so acting on a row does
     not throw away what you were looking at."""
+    return RedirectResponse(_page_url(request, flash=flash, flash_kind=kind), status_code=303)
+
+
+def _page_url(request: Request | None, **extra) -> str:
     params: dict = {}
     if request is not None:
         referer = urlsplit(request.headers.get("referer") or "")
         if referer.path == PAGE:
             params = {k: v for k, v in parse_qsl(referer.query) if k not in ("flash", "flash_kind")}
-    params.update({"flash": flash, "flash_kind": kind})
-    return RedirectResponse("%s?%s" % (PAGE, urlencode(params)), status_code=303)
+    params.update(extra)
+    return "%s?%s" % (PAGE, urlencode(params)) if params else PAGE
+
+
+def _confirm_block(request: Request, session: Session, form, action: str):
+    """Blocking an address a push source lists as an allowed sender would cut that
+    provider off (the blacklist beats a source's own allowed list). Before
+    saving such a block, say which providers and ask. Returns the confirmation page,
+    or None when there is nothing to confirm (nobody affected, or already confirmed);
+    an entry that is not a valid address falls through to the normal validation, which
+    says what is wrong with it."""
+    if form.get("confirm") == "1":
+        return None
+    try:
+        cidr = normalize_cidr(str(form.get("cidr") or ""))
+    except ValueError:
+        return None
+    affected = access_control.affected_sources(session, cidr)
+    if not affected:
+        return None
+    return templates.TemplateResponse(
+        request,
+        "admin/access_confirm.html",
+        {
+            "cidr": cidr,
+            "affected": affected,
+            "action": action,
+            "fields": {k: str(v) for k, v in form.items() if k != "confirm"},
+            "cancel_url": _page_url(request),
+        },
+    )
 
 
 def _who(request: Request) -> str:
@@ -293,6 +327,10 @@ async def add_rule(request: Request, session: Session = Depends(get_session)):
     """Add an address or range to the blacklist or whitelist by hand."""
     form = await request.form()
     kind = str(form.get("kind") or "")
+    if kind == access_control.BLOCK:
+        confirm = _confirm_block(request, session, form, "/admin/security/rules")
+        if confirm is not None:
+            return confirm
     try:
         rule = access_control.add_rule(
             session, kind, str(form.get("cidr") or ""), note=str(form.get("note") or ""),
@@ -311,6 +349,10 @@ async def move_rule(request: Request, session: Session = Depends(get_session)):
     ban list to the blacklist or whitelist, and between those two."""
     form = await request.form()
     to = str(form.get("to") or "")
+    if to == access_control.BLOCK:
+        confirm = _confirm_block(request, session, form, "/admin/security/rules/move")
+        if confirm is not None:
+            return confirm
     try:
         rule = access_control.move(
             session, str(form.get("cidr") or ""), to, created_by=_who(request),

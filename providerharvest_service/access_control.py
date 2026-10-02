@@ -24,6 +24,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import ipaddress
+import json
 import logging
 import threading
 import time
@@ -33,7 +34,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from providerharvest_service import db
-from providerharvest_service.models import AccessRule, FtpBoxStatus
+from providerharvest_service.models import AccessRule, FtpBoxStatus, ProviderSource
 from providerharvest_service.sender_allowlist import normalize_cidr
 
 logger = logging.getLogger(__name__)
@@ -156,6 +157,46 @@ def box_payload(session: Session) -> dict:
 
 
 # -- changing them ------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class AffectedSource:
+    """A push source whose allowed senders a block would cut off."""
+
+    name: str
+    title: str
+    status: str
+    entries: tuple[str, ...]  # the source's allowed-sender entries the block overlaps
+
+
+def affected_sources(session: Session, cidr: str) -> list[AffectedSource]:
+    """The push sources a block on ``cidr`` would lock out: those with an allowed
+    sender (see sender_allowlist.py) that overlaps it. The blacklist beats a
+    source's own allowed list, so blocking a provider's address cuts that
+    provider off -- the one thing worth stopping to confirm. An entry that lies
+    wholly inside a whitelisted range is left out: the whitelist wins over the
+    blacklist, so that address stays in and the block does not affect it -- except
+    a whitelist entry for exactly ``cidr`` itself: blocking it means *moving* it
+    off the whitelist, so it protects nothing once the block is in."""
+    network = ipaddress.ip_network(normalize_cidr(cidr))
+    trusted = [ipaddress.ip_network(c) for c in snapshot(session).allow if c != str(network)]
+    found: list[AffectedSource] = []
+    for source in session.scalars(select(ProviderSource).where(ProviderSource.transport_type == "push")).all():
+        try:
+            entries = json.loads(source.config or "{}").get("allowed_senders") or []
+        except ValueError:
+            continue
+        hit = []
+        for entry in entries:
+            try:
+                net = ipaddress.ip_network(entry, strict=False)
+            except ValueError:
+                continue
+            if net.version == 4 and net.overlaps(network) and not any(net.subnet_of(t) for t in trusted):
+                hit.append(str(net))
+        if hit:
+            found.append(AffectedSource(name=source.name, title=source.title, status=source.status, entries=tuple(sorted(hit))))
+    return sorted(found, key=lambda s: s.name)
+
 
 def rules(session: Session) -> list[AccessRule]:
     """The active (not expired) rules, newest first, for the page."""
