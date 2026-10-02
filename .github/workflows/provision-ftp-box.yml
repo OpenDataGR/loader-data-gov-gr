@@ -297,7 +297,13 @@ jobs:
           sudo fail2ban-client status loader-ftp
           sudo fail2ban-client status loader-ftp-slow
           sudo fail2ban-client status sshd
-          # Both ports must be in the sshd ban rule, not just 22.
+          # Both ports must be in the sshd ban rule, not just 22. A reload re-reads the
+          # jail but does not re-create its firewall rule, so when the rule is still the
+          # old one restart just that jail (its unexpired bans are restored).
+          if ! sudo iptables -S INPUT | grep f2b-sshd | grep -q -- '--dports 22,7002'; then
+            sudo fail2ban-client restart sshd
+            sleep 3
+          fi
           sudo iptables -S INPUT | grep f2b-sshd | tee /tmp/f2b-sshd-rule.out
           grep -q -- '--dports 22,7002' /tmp/f2b-sshd-rule.out || { echo "::error::the sshd ban does not cover port 7002"; exit 1; }
           rm -f /tmp/f2b-sshd-rule.out
