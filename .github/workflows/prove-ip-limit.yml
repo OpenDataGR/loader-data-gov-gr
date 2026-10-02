@@ -32,6 +32,7 @@ jobs:
             INSERT INTO ftp_account VALUES ('t-open','$HASH','/tmp/iplimit/home');"
           mkdir -p home
           cat > proftpd.conf <<EOF
+          Include /etc/proftpd/modules.conf
           ServerName "iplimit-proof"
           ServerType standalone
           DefaultServer on
