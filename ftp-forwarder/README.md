@@ -123,10 +123,17 @@ lifted by the same Unban button.
 The ban list says who is blocked *now*; the **Security box**
 report (`/admin/security/failed-logins`, the same page as the ban list) says who
 has been knocking and how often. ProFTPD writes a second log,
-`/var/log/proftpd/loader-attempts.log` (`%{%s}t %a %p %m %s %U`: time,
-client address, server port -- 21 FTP / 2222 SFTP --, command, reply code,
-username as typed), kept apart from the fail2ban log so that filter keeps its
-shape. The sync service ships the `PASS 530` lines to loader in batches of up
+`/var/log/proftpd/loader-attempts.log` (`%{%s}t %a %p %m %s <token> %U`: time,
+client address, server port -- 21 FTP / 2222 SFTP --, command, reply code, a
+secret token, username as typed), kept apart from the fail2ban log so that
+filter keeps its shape. **The token matters:** ProFTPD writes the typed username
+into the log unescaped (confirmed on this box: an SFTP username containing a
+newline split one line into two, the second entirely the sender's), so a
+stranger could forge report rows -- any address, any username. Only lines
+carrying the token (generated at provisioning into
+`/etc/ftp-forwarder/secrets/attempts.token`, root-only, never leaving the box)
+are believed; with no readable token nothing from this log is shipped. The
+fail2ban log is unaffected, as it records the authenticated user, not the typed one. The sync service ships the `PASS 530` lines to loader in batches of up
 to 2000 (`POST /admin/ftp-login-attempts`). Its read position is kept in
 `/var/lib/ftp-forwarder/attempts.state` and moves forward only once loader
 accepted the batch, so nothing is lost or repeated across a failure or restart.

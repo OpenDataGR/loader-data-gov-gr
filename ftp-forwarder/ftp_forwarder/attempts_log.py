@@ -5,13 +5,22 @@ login log ProFTPD writes (``ExtendedLog ... AUTH loader_attempt``, see
 username as typed, and the fail2ban filter reads that other file and
 must not change shape.
 
-One line per attempt, in ``LogFormat "%{%s}t %a %p %m %s %U"``::
+One line per attempt, in ``LogFormat "%{%s}t %a %p %m %s <token> %U"``::
 
-    1790764941 188.166.1.1 2222 PASS 530 admin
+    1790764941 188.166.1.1 2222 PASS 530 3f9c2a7e5b1d4c68 admin
 
 epoch seconds, client address, the server port it hit (21 FTP / 2222
-SFTP), command, reply code, and the username as typed -- last, because
-it is the one field a stranger controls and may contain spaces.
+SFTP), command, reply code, a secret token, and the username as typed --
+last, because it is the one field a stranger controls and may contain spaces.
+
+The token exists because ProFTPD writes the typed username into the log
+unescaped (its own docs warn of it; confirmed on this box 2026-10-02): an SFTP
+username containing a newline split one log line into two, the second one
+entirely the attacker's -- any address, any username -- and would have shown up
+as a forged row in the failed-login report. A line is only believed if it
+carries the token, which is generated at provisioning, never leaves the box and
+so cannot appear in anything a stranger sends. (The fail2ban log is not
+affected: it records the authenticated user, not the typed one.)
 
 Unlike the last-login tail this must not lose or repeat anything: each
 refused login is one row in loader's report. So the read position lives in
@@ -23,6 +32,7 @@ committed position; nothing is dropped.
 from __future__ import annotations
 
 import dataclasses
+import hmac
 import json
 import os
 
@@ -42,12 +52,16 @@ class Attempt:
         return {k: v for k, v in dataclasses.asdict(self).items() if v is not None}
 
 
-def parse_line(line: str) -> Attempt | None:
-    parts = line.split(None, 5)
-    if len(parts) < 5:
+def parse_line(line: str, token: str) -> Attempt | None:
+    if not token:
+        return None  # nothing to vouch for a line with: believe nothing
+    parts = line.split(None, 6)
+    if len(parts) < 6:
         return None
-    epoch, ip, port, command, code = parts[:5]
-    username = parts[5].strip() if len(parts) == 6 else ""
+    epoch, ip, port, command, code, presented = parts[:6]
+    if not hmac.compare_digest(presented, token):
+        return None  # not written by ProFTPD: a forgery, or a line from before the token existed
+    username = parts[6].strip() if len(parts) == 7 else ""
     if command != "PASS" or code != "530":
         return None
     if username == "-":
@@ -65,9 +79,10 @@ class Position:
 
 
 class AttemptsLogTail:
-    def __init__(self, log_path: str, state_path: str):
+    def __init__(self, log_path: str, state_path: str, token: str):
         self._log_path = log_path
         self._state_path = state_path
+        self._token = token
 
     def _load(self) -> Position | None:
         try:
@@ -105,7 +120,7 @@ class AttemptsLogTail:
             if len(attempts) >= limit:
                 break
             consumed += len(line)
-            attempt = parse_line(line.decode("utf-8", errors="replace"))
+            attempt = parse_line(line.decode("utf-8", errors="replace"), self._token)
             if attempt:
                 attempts.append(attempt)
         return attempts, Position(inode=stat.st_ino, offset=start + consumed)

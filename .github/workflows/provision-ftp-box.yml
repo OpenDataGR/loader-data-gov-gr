@@ -95,6 +95,17 @@ jobs:
         run: |
           VUID=$(id -u virtualftp)
           VGID=$(id -g virtualftp)
+          # A secret that marks genuine lines in the attempts log. ProFTPD logs the typed
+          # username unescaped, so a newline in one can forge whole log lines (proven on
+          # this box); only lines carrying this token are believed. Created once and
+          # kept, root-only -- it never leaves the box.
+          sudo mkdir -p /etc/ftp-forwarder/secrets
+          if [ ! -s /etc/ftp-forwarder/secrets/attempts.token ]; then
+            openssl rand -hex 16 | sudo tee /etc/ftp-forwarder/secrets/attempts.token > /dev/null
+          fi
+          sudo chown root:root /etc/ftp-forwarder/secrets/attempts.token
+          sudo chmod 600 /etc/ftp-forwarder/secrets/attempts.token
+          ATTEMPT_TOKEN=$(sudo cat /etc/ftp-forwarder/secrets/attempts.token)
           sudo tee /etc/proftpd/conf.d/loader-virtual-users.conf > /dev/null <<EOF
           SQLBackend sqlite3
           SQLConnectInfo /etc/proftpd/ftp-accounts.db
@@ -114,8 +125,9 @@ jobs:
           # The same attempts again for loader's failed-login report, which also needs
           # the server port (21 FTP / 2222 SFTP) and the username as typed. A separate
           # file so the fail2ban filter above keeps its shape. Username last: it may
-          # contain spaces.
-          LogFormat loader_attempt "%{%s}t %a %p %m %s %U"
+          # contain spaces. The token marks a genuine line (see ftp-forwarder
+          # attempts_log.py): %U is unescaped, so without it a username could forge lines.
+          LogFormat loader_attempt "%{%s}t %a %p %m %s $ATTEMPT_TOKEN %U"
           ExtendedLog /var/log/proftpd/loader-attempts.log AUTH loader_attempt
           EOF
 

@@ -49,6 +49,10 @@ def main(argv: list[str] | None = None) -> int:
         help="ProFTPD's log of every login attempt (see attempts_log.py); refused ones feed loader's failed-login report",
     )
     parser.add_argument(
+        "--attempts-token-file", default="/etc/ftp-forwarder/secrets/attempts.token",
+        help="The secret every genuine line of --attempts-log carries; lines without it are ignored as forgeries",
+    )
+    parser.add_argument(
         "--attempts-state", default="/var/lib/ftp-forwarder/attempts.state",
         help="Where the delivered-up-to position in --attempts-log is kept",
     )
@@ -98,7 +102,17 @@ def main(argv: list[str] | None = None) -> int:
     # Logins seen but not yet accepted by loader -- kept across cycles so a
     # failed report doesn't lose them (only the latest per user matters).
     pending_logins: dict = {}
-    attempts_tail = AttemptsLogTail(args.attempts_log, args.attempts_state)
+    # The secret that marks a genuine line in the attempts log (see attempts_log.py:
+    # the typed username is logged unescaped, so a stranger can forge lines). No
+    # token readable means no way to tell real lines from forged ones, so that log
+    # is not shipped at all -- the rest of the sync carries on.
+    attempts_token = ""
+    try:
+        with open(args.attempts_token_file, encoding="utf-8") as fh:
+            attempts_token = fh.read().strip()
+    except OSError as exc:
+        logger.error("cannot read %s (%s): failed FTP/SFTP logins will not be reported", args.attempts_token_file, exc)
+    attempts_tail = AttemptsLogTail(args.attempts_log, args.attempts_state, attempts_token)
     ssh_tail = JournalSshTail(args.ssh_state, unit=args.ssh_unit)
 
     while True:
