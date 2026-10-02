@@ -1,0 +1,22 @@
+name: Peek at the access rules on the FTP box (one-off)
+
+# Read-only one-off; deleted again once looked at.
+on:
+  workflow_dispatch:
+
+jobs:
+  peek:
+    runs-on: [self-hosted, loader-ftp]
+    steps:
+      - name: Chain, hook, fail2ban file, service log
+        run: |
+          echo "--- LOADER-ACCESS chain"
+          sudo -n iptables -S LOADER-ACCESS || echo "(no chain)"
+          echo "--- hooked into INPUT"
+          sudo -n iptables -S INPUT | grep -n LOADER-ACCESS || echo "(not hooked)"
+          echo "--- fail2ban access file"
+          cat /etc/fail2ban/jail.d/zz-loader-access.local 2>&1 | head -20
+          echo "--- jails still up"
+          sudo -n fail2ban-client status | tail -2
+          echo "--- sync service log"
+          sudo -n journalctl -u loader-ftp-forwarder-sync --no-pager --since "-6 min" | grep -Ei 'access|rules|error|failed' | tail -8
