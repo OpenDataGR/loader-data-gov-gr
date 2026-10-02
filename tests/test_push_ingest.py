@@ -242,3 +242,223 @@ def test_a_rejected_upload_records_nothing(client, _isolated_db):
     )
     source = _source(_isolated_db)
     assert source.last_received_at is None and source.last_sender is None
+
+
+# -- allowed sender addresses -----------------------------------------------------------------
+
+def _from(address):
+    # Behind the gateway the real client is the second-to-last entry.
+    return {"X-Forwarded-For": "%s:5555, 10.0.0.4" % address}
+
+
+def _upload(client, api_key, **headers):
+    return client.post(
+        "/push/acme-push/upload",
+        files={"file": ("data.csv", b"a,b\n1,2\n", "text/csv")},
+        headers={"X-Api-Key": api_key, **headers},
+    )
+
+
+def _config(_isolated_db):
+    import json
+
+    return json.loads(_source(_isolated_db).config)
+
+
+def test_a_source_with_no_sender_list_accepts_from_anywhere(client, _isolated_db):
+    _, api_key = _register_and_activate_push_source(client, _isolated_db)
+    assert _config(_isolated_db)["allowed_senders"] == []
+    assert _upload(client, api_key, **_from("198.51.100.1")).status_code == 200
+
+
+def test_registering_with_senders_stores_them_canonical_and_shows_them(client, _isolated_db):
+    resp = client.post(
+        "/provider/sources/new",
+        data={"name": "acme-push", "title": "t", "transport_type": "push", "allowed_senders": "203.0.113.9, 198.51.100.0/24"},
+    )
+    assert resp.status_code == 200
+    assert _config(_isolated_db)["allowed_senders"] == ["198.51.100.0/24", "203.0.113.9/32"]
+    assert "Accepted only from" in resp.text and "<code>203.0.113.9/32</code>" in resp.text
+
+
+def test_an_upload_from_a_listed_address_works(client, _isolated_db):
+    _, api_key = _register_and_activate_push_source(client, _isolated_db, allowed_senders="203.0.113.9\n198.51.100.0/24")
+    assert _upload(client, api_key, **_from("203.0.113.9")).status_code == 200
+    assert _upload(client, api_key, **_from("198.51.100.200")).status_code == 200
+
+
+def test_an_upload_from_any_other_address_is_refused_even_with_the_right_key(client, _isolated_db):
+    _, api_key = _register_and_activate_push_source(client, _isolated_db, allowed_senders="203.0.113.9")
+    resp = _upload(client, api_key, **_from("8.8.8.8"))
+    assert resp.status_code == 403
+    assert _source(_isolated_db).last_received_at is None  # nothing was received
+
+
+def test_an_address_that_cannot_be_determined_is_refused_when_there_is_a_list(client, _isolated_db):
+    _, api_key = _register_and_activate_push_source(client, _isolated_db, allowed_senders="203.0.113.9")
+    assert _upload(client, api_key).status_code == 403  # no proxy header, peer is not an IP
+
+
+def test_a_forged_forwarded_for_cannot_get_a_foreign_sender_in(client, _isolated_db):
+    _, api_key = _register_and_activate_push_source(client, _isolated_db, allowed_senders="203.0.113.9")
+    # The attacker prepends the allowed address; the trusted entry is still the real one.
+    resp = _upload(client, api_key, **{"X-Forwarded-For": "203.0.113.9, 8.8.8.8:5555, 10.0.0.4"})
+    assert resp.status_code == 403
+
+
+def test_the_address_is_checked_before_the_key(client, _isolated_db):
+    _register_and_activate_push_source(client, _isolated_db, allowed_senders="203.0.113.9")
+    # A wrong key from a wrong address is a 403 (not the 401 that would say the key is wrong).
+    assert _upload(client, "wrong-key", **_from("8.8.8.8")).status_code == 403
+    # A wrong key from a right address is the ordinary 401.
+    assert _upload(client, "wrong-key", **_from("203.0.113.9")).status_code == 401
+
+
+def test_a_refused_address_is_recorded_in_the_security_report(client, _isolated_db):
+    from providerharvest_service import db
+    from providerharvest_service.models import FtpLoginAttempt
+
+    _, api_key = _register_and_activate_push_source(client, _isolated_db, allowed_senders="203.0.113.9")
+    _upload(client, api_key, **_from("8.8.8.8"))
+    with db.SessionLocal() as session:  # patched to a throwaway database by conftest
+        rows = [(r.channel, r.ip, r.username, r.code) for r in session.query(FtpLoginAttempt).all()]
+    assert rows == [("Push: address not allowed", "8.8.8.8", "acme-push", 403)]
+
+
+def test_an_invalid_sender_list_is_a_form_error_and_registers_nothing(client, _isolated_db):
+    resp = client.post(
+        "/provider/sources/new",
+        data={"name": "acme-push", "title": "t", "transport_type": "push", "allowed_senders": "not-an-address, 2001:db8::1"},
+    )
+    assert resp.status_code == 400
+    assert "Allowed sender addresses" in resp.text
+    with _isolated_db() as session:
+        assert provider_sources.list_all(session) == []
+
+
+def test_a_hostname_is_resolved_when_registering_and_its_addresses_stored(client, _isolated_db, monkeypatch):
+    from providerharvest_service import sender_allowlist
+
+    monkeypatch.setattr(sender_allowlist, "_resolve_ipv4", lambda host: ["203.0.113.9"] if host == "sender.example.gr" else [])
+    _, api_key = _register_and_activate_push_source(client, _isolated_db, allowed_senders="https://sender.example.gr/upload")
+    assert _config(_isolated_db)["allowed_senders"] == ["203.0.113.9/32"]
+    assert _upload(client, api_key, **_from("203.0.113.9")).status_code == 200
+    assert _upload(client, api_key, **_from("203.0.113.10")).status_code == 403
+
+
+def _edit(client, source_id, **fields):
+    data = {"title": "Acme push", "transport_type": "push"}
+    data.update(fields)
+    return client.post("/provider/sources/%s/edit" % source_id, data=data, follow_redirects=False)
+
+
+def test_editing_changes_the_list_and_blank_clears_it(client, _isolated_db):
+    source_id, api_key = _register_and_activate_push_source(client, _isolated_db, allowed_senders="203.0.113.9")
+    assert _upload(client, api_key, **_from("8.8.8.8")).status_code == 403
+
+    assert _edit(client, source_id, allowed_senders="8.8.8.8").status_code == 303
+    assert _upload(client, api_key, **_from("8.8.8.8")).status_code == 200
+    assert _upload(client, api_key, **_from("203.0.113.9")).status_code == 403
+
+    assert _edit(client, source_id, allowed_senders="").status_code == 303  # present but blank: anywhere
+    assert _config(_isolated_db)["allowed_senders"] == []
+    assert _upload(client, api_key, **_from("203.0.113.9")).status_code == 200
+
+
+def test_an_edit_that_does_not_mention_the_list_leaves_it_alone(client, _isolated_db):
+    source_id, _ = _register_and_activate_push_source(client, _isolated_db, allowed_senders="203.0.113.9")
+    _edit(client, source_id, title="Renamed")
+    assert _config(_isolated_db)["allowed_senders"] == ["203.0.113.9/32"]
+
+
+def test_the_edit_form_shows_the_current_list(client, _isolated_db):
+    source_id, _ = _register_and_activate_push_source(client, _isolated_db, allowed_senders="203.0.113.9\n198.51.100.0/24")
+    text = client.get("/provider/sources/%s/edit" % source_id).text
+    assert "198.51.100.0/24\n203.0.113.9/32" in text
+
+
+def test_a_bad_list_on_edit_is_refused_and_the_old_one_stays(client, _isolated_db):
+    source_id, _ = _register_and_activate_push_source(client, _isolated_db, allowed_senders="203.0.113.9")
+    assert _edit(client, source_id, allowed_senders="nonsense").status_code == 400
+    assert _config(_isolated_db)["allowed_senders"] == ["203.0.113.9/32"]
+
+
+# -- FTP/SFTP push: the list becomes the account's login limit --------------------------------
+
+def _ftp_account(_isolated_db):
+    from sqlalchemy import select
+
+    from providerharvest_service.models import FtpAccount
+
+    with _isolated_db() as session:
+        account = session.scalar(select(FtpAccount))
+        return account.username, sorted(a.cidr for a in account.allowed_ips), account.managed_source_id
+
+
+def _register_ftp(client, **fields):
+    data = {"name": "acme-push", "title": "t", "transport_type": "push", "push_method": "ftp"}
+    data.update(fields)
+    return client.post("/provider/sources/new", data=data)
+
+
+def test_an_ftp_push_source_limits_its_account_to_the_listed_senders(client, _isolated_db):
+    resp = _register_ftp(client, allowed_senders="203.0.113.9, 198.51.100.0/24")
+    assert resp.status_code == 200 and "Logins accepted only from" in resp.text
+    assert _ftp_account(_isolated_db)[1] == ["198.51.100.0/24", "203.0.113.9/32"]
+
+
+def test_an_ftp_push_source_with_no_list_leaves_its_account_unrestricted(client, _isolated_db):
+    _register_ftp(client)
+    assert _ftp_account(_isolated_db)[1] == []
+
+
+def test_editing_the_source_rewrites_its_accounts_limit(client, _isolated_db):
+    _register_ftp(client, allowed_senders="203.0.113.9")
+    with _isolated_db() as session:
+        source_id = provider_sources.list_all(session)[0].id
+
+    _edit(client, source_id, allowed_senders="198.51.100.7, 192.0.2.0/24")
+    assert _ftp_account(_isolated_db)[1] == ["192.0.2.0/24", "198.51.100.7/32"]  # old one gone, new ones in
+    _edit(client, source_id, allowed_senders="")
+    assert _ftp_account(_isolated_db)[1] == []
+
+
+def test_the_box_receives_the_limit_via_the_sync_endpoint(client, _isolated_db, monkeypatch):
+    monkeypatch.setenv("LOADER_FTP_SYNC_KEY", "box-key")
+    _register_ftp(client, allowed_senders="203.0.113.9")
+    with _isolated_db() as session:
+        provider_sources.activate(session, provider_sources.list_all(session)[0].id)  # accounts sync only once approved
+    synced = client.get("/admin/ftp-accounts-sync", headers={"X-Ftp-Sync-Key": "box-key"}).json()
+    assert [(a["username"], a["allowed_ips"]) for a in synced] == [("acme-push", ["203.0.113.9/32"])]
+
+
+def test_the_ftp_box_page_shows_a_provider_accounts_list_read_only_and_refuses_edits(client, _isolated_db):
+    _register_ftp(client, allowed_senders="203.0.113.9")
+    username, _, managed = _ftp_account(_isolated_db)
+    assert managed  # a provider's own account
+    page = client.get("/admin/ftp").text
+    assert "<code>203.0.113.9/32</code>" in page and "set on the source" in page
+    assert 'action="/admin/ftp/%s/allowed-ips"' % _extract_ftp_account_id(page) not in page  # no form to change it here
+
+    account_id = _extract_ftp_account_id(page)
+    resp = client.post("/admin/ftp/%s/allowed-ips" % account_id, data={"cidr": "8.8.8.8"}, follow_redirects=False)
+    assert "flash_kind=error" in resp.headers["location"]
+    assert _ftp_account(_isolated_db)[1] == ["203.0.113.9/32"]
+
+
+def _extract_ftp_account_id(html):
+    end = html.index("/rotate-password")
+    start = html.rindex("/admin/ftp/", 0, end) + len("/admin/ftp/")
+    return html[start:end]
+
+
+def test_deleting_the_source_takes_its_limit_with_it(client, _isolated_db):
+    _register_ftp(client, allowed_senders="203.0.113.9")
+    with _isolated_db() as session:
+        provider_sources.delete(session, provider_sources.list_all(session)[0].id)
+    from sqlalchemy import select
+
+    from providerharvest_service.models import FtpAllowedIp
+
+    with _isolated_db() as session:
+        assert session.scalar(select(FtpAllowedIp)) is None

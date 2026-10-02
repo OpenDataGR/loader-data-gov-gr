@@ -67,6 +67,7 @@
       list any, it works <em>only</em> from those (IPv4 addresses or ranges, FTP and SFTP alike) --
       everyone else is refused even with the right password. The box applies a change within about
       a minute. Only list addresses you are sure of: a provider on a changing address will be locked out.
+      A provider's own account takes its list from the sender addresses on its push source (shown here, edited there).
     </p>
 
     {% if not accounts %}
@@ -90,6 +91,15 @@
               {% if not a.managed_source_id %}<div class="muted">created by an admin, not a provider</div>{% endif %}
             </td>
             <td>
+              {% if a.managed_source_id %}
+                {# A provider's own account: the list is the push source's "allowed senders", edited there. #}
+                {% if a.allowed_ips %}
+                  {% for ip in a.allowed_ips %}<span class="chip"><code>{{ ip.cidr }}</code></span> {% endfor %}
+                {% else %}
+                  <span class="muted">anywhere</span>
+                {% endif %}
+                <div class="muted">set on the source</div>
+              {% else %}
               {% if a.allowed_ips %}
                 {% for ip in a.allowed_ips %}
                   <form class="inline" method="post" action="/admin/ftp/{{ a.id }}/allowed-ips/{{ ip.id }}/delete" onsubmit="return confirm('Stop allowing {{ ip.cidr }} for {{ a.username }}?{% if a.allowed_ips|length == 1 %} The account will then work from anywhere.{% endif %}');">
@@ -103,6 +113,7 @@
                 <input type="text" name="cidr" class="small" placeholder="203.0.113.0/24" aria-label="Allow an address or range for {{ a.username }}" style="width:9.5rem;">
                 <button type="submit" class="btn-sm btn-secondary">Allow</button>
               </form>
+              {% endif %}
             </td>
             <td style="white-space:nowrap;">
               <form class="inline" method="post" action="/admin/ftp/{{ a.id }}/rotate-password">

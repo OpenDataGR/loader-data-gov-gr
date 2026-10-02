@@ -37,7 +37,8 @@ from providerharvest_service.ftp_credentials import (
     generate_password,
     hash_password,
 )
-from providerharvest_service.models import FtpAccount, ProviderSource, _new_id
+from providerharvest_service import sender_allowlist
+from providerharvest_service.models import FtpAccount, FtpAllowedIp, ProviderSource, _new_id
 
 TRANSPORT_TYPES = ("http", "sftp", "scp", "ftp", "push")
 SSH_TRANSPORT_TYPES = ("sftp", "scp")
@@ -334,6 +335,16 @@ def _ftp_fields(form: dict, endpoint_url: str, errors: dict) -> tuple[dict, dict
     return credential_fields, config_extra
 
 
+def _parse_allowed_senders(form: dict, errors: dict) -> list[str]:
+    """The addresses a push source accepts data from (see sender_allowlist.py);
+    empty means anyone. Hostnames typed here are looked up now."""
+    try:
+        return sender_allowlist.parse(form.get("allowed_senders"))
+    except sender_allowlist.AllowlistError as exc:
+        errors["allowed_senders"] = str(exc)
+        return []
+
+
 def _push_fields(session: Session, form: dict, source_name: str, errors: dict) -> tuple[dict, dict, dict]:
     """Returns (credential_fields, config_extra, reveal) for a push-mode
     source -- one that never connects anywhere; the provider sends us
@@ -367,6 +378,7 @@ def _push_fields(session: Session, form: dict, source_name: str, errors: dict) -
         errors["push_method"] = "must be one of %s" % (PUSH_METHODS,)
         method = "https"
     config_extra["push_method"] = method
+    config_extra["allowed_senders"] = _parse_allowed_senders(form, errors)
 
     if method == "ftp":
         typed_username = (form.get("push_ftp_username") or "").strip()
@@ -511,7 +523,7 @@ def register(session: Session, form: dict) -> ProviderSource:
         # not be able to log in -- or even be synced to the FTP box --
         # until an admin approves the source. activate()/pause()/etc.
         # flip it via _sync_managed_ftp_accounts.
-        session.add(FtpAccount(
+        account = FtpAccount(
             username=spec["username"],
             password_hash=hash_password(spec["password"]),
             home_directory=home_directory,
@@ -519,7 +531,10 @@ def register(session: Session, form: dict) -> ProviderSource:
             enabled=False,
             push_target_source_name=row.name,
             managed_source_id=row.id,
-        ))
+        )
+        session.add(account)
+        session.flush()
+        _sync_managed_allowed_ips(session, row)  # the box enforces the source's sender list on this login
         session.commit()
         # Same one-time, never-persisted-in-plaintext rule as the API
         # key above. `password` stays None when the provider chose their
@@ -577,6 +592,7 @@ def config_to_form_fields(source: ProviderSource) -> dict:
         data["ftp_connect_timeout_s"] = str(config.get("connect_timeout_s", 30))
     elif source.transport_type == "push":
         data["push_method"] = config.get("push_method", "https")
+        data["allowed_senders"] = "\n".join(config.get("allowed_senders") or [])
     return data
 
 
@@ -704,6 +720,11 @@ def update(session: Session, source_id: str, form: dict) -> ProviderSource:
         # A per-source size from before the cap became system-wide is dropped.
         credential_fields = {}
         config = {k: v for k, v in existing_config.items() if k != "max_file_size_bytes"}
+        if "allowed_senders" in form:
+            # The one thing the edit form does change for a push source. Present-but-blank
+            # means "accept from anywhere" (clear the list); absent (a caller that never
+            # mentions it) leaves it alone.
+            config["allowed_senders"] = _parse_allowed_senders(form, errors)
         auth_type = source.auth_type if source.transport_type == "push" else "push_api_key"
     else:
         auth_type, credential_fields, config = _http_fields(working_form, errors)
@@ -720,6 +741,7 @@ def update(session: Session, source_id: str, form: dict) -> ProviderSource:
     source.notification_email = notification_email
     source.proxy_enabled = proxy_enabled
     session.flush()
+    _sync_managed_allowed_ips(session, source)
     _secrets_backend(session).rotate(source.id, credential_fields)
     session.refresh(source)
     return source
@@ -776,6 +798,27 @@ def status_counts(session: Session) -> dict[str, int]:
 
 def _managed_ftp_accounts(session: Session, source: ProviderSource) -> list[FtpAccount]:
     return list(session.scalars(select(FtpAccount).where(FtpAccount.managed_source_id == source.id)).all())
+
+
+def allowed_senders(source: ProviderSource) -> list[str]:
+    """The addresses this (push) source accepts data from; empty means anyone."""
+    return list(json.loads(source.config or "{}").get("allowed_senders") or [])
+
+
+def _sync_managed_allowed_ips(session: Session, source: ProviderSource) -> None:
+    """Makes each FTP account this source manages accept logins from exactly the
+    source's sender list (the box turns ``FtpAllowedIp`` rows into ProFTPD
+    rules). The source is the single place the list is edited -- the FTP box
+    page shows a managed account's list read-only -- so this overwrites. An
+    admin-made account (no ``managed_source_id``) is never touched."""
+    wanted = set(allowed_senders(source)) if source.transport_type == "push" else set()
+    for account in _managed_ftp_accounts(session, source):
+        have = {a.cidr: a for a in account.allowed_ips}
+        for cidr, row in have.items():
+            if cidr not in wanted:
+                account.allowed_ips.remove(row)
+        for cidr in sorted(wanted - set(have)):
+            account.allowed_ips.append(FtpAllowedIp(cidr=cidr))
 
 
 def _sync_managed_ftp_accounts(session: Session, source: ProviderSource) -> None:

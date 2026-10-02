@@ -133,6 +133,26 @@ client, not anything the client claims); for FTP/SFTP, the address the FTP
 box last saw that provider log in from, carried in its heartbeat (loader
 never talks to the provider directly on that path).
 
+**Allowed senders.** A push source may be limited to its provider's own
+machine(s): the registration (and edit) form takes an optional list of IPv4
+addresses, ranges (CIDR) or hostnames/URLs, stored in
+`config.allowed_senders` as canonical CIDRs (`sender_allowlist.py`).
+Everything else is refused, even with the right key or password; blank means
+anyone. A hostname is looked up once, when the form is saved, and the
+addresses it points to are stored (not the name: checking a name per request
+would put DNS on the upload path and hand the decision to whoever controls
+that record) -- so a sender whose address changes must update the source.
+Enforced where the data arrives: the HTTPS push endpoint checks the sender
+address (the trusted `X-Forwarded-For` entry, as above; an address that cannot
+be determined is refused) *before* it looks at the API key, answers 403, and
+records the refusal in the Security box report as *Push: address not allowed*;
+for an FTP/SFTP source the list is copied onto its account
+(`FtpAllowedIp`, rewritten whenever the source is saved) and the FTP box turns
+it into ProFTPD login rules (see `ftp-forwarder/README.md`, "Per-account login
+limits"). The source is the single place the list is edited: the FTP box page
+shows a provider's account list read-only, and the JSON admin API refuses to
+change it (409). Admin-made accounts keep their manual "Allowed from" list.
+
 `ui_admin_ftp.py`
 puts an actual HTML page on this (`/admin/ftp`, in the masthead nav)
 -- the account list plus live status for every remote FTP/SFTP-

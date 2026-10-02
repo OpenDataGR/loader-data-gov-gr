@@ -301,6 +301,18 @@
             {% endif %}
           </div>
 
+          <label for="allowed_senders" style="margin-top:1rem;">Allowed sender addresses (optional)</label>
+          <textarea id="allowed_senders" name="allowed_senders" rows="3" spellcheck="false"
+                    placeholder="203.0.113.9&#10;198.51.100.0/24&#10;sender.example.gr">{{ data.get('allowed_senders', '') }}</textarea>
+          {% if errors.allowed_senders %}<div class="error">{{ errors.allowed_senders }}</div>{% endif %}
+          <p class="muted" style="margin-top:0.3rem;">
+            The IP address(es), IP range(s) (like <code>198.51.100.0/24</code>) or hostname / URL of the machine
+            that will send. One per line or comma-separated. <strong>Anything else is refused</strong>, even with
+            the right key or password. Leave blank to accept from anywhere. IPv4 only.
+            A hostname is looked up <em>once, when you save</em>, and the addresses it points to are stored -- if
+            the sender's address changes later, update it here or its uploads will be refused.
+          </p>
+
           <p class="muted" style="margin-top:1rem;">Maximum file size: <strong>{{ max_file_size_human }}</strong> -- a system-wide limit (upload gateway and server), not set per source.</p>
         </fieldset>
       </div>

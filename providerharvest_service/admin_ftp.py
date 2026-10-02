@@ -31,6 +31,7 @@ from providerharvest_service.ftp_credentials import (
     hash_password,
     validate_home_directory,
 )
+from providerharvest_service.sender_allowlist import normalize_cidr
 from providerharvest_service.models import FtpAccount, FtpAllowedIp, FtpBoxStatus, FtpLoginAttempt, FtpUnbanRequest, ProviderSource
 
 
@@ -87,19 +88,12 @@ class ForwardTargetUpdate(BaseModel):
     push_target_source_name: str | None
 
 
-def normalize_allowed_cidr(value: str) -> str:
-    """An address or range an account may log in from, in canonical form
-    ("203.0.113.9" -> "203.0.113.9/32"). IPv4 only, deliberately: the box
-    enforces the list with ProFTPD ``Allow`` rules, and an account whose whole
-    list the box could not express would be locked out entirely. Raises
-    ValueError with a message fit to show an admin."""
-    try:
-        network = ipaddress.ip_network((value or "").strip(), strict=False)
-    except ValueError as exc:
-        raise ValueError("not a valid IP address or CIDR range: %r" % value) from exc
-    if network.version != 4:
-        raise ValueError("only IPv4 addresses and ranges are supported for now: %r" % value)
-    return str(network)
+#: An address or range an account may log in from, in canonical form. IPv4 only,
+#: deliberately: the box enforces the list with ProFTPD ``Allow`` rules, and an
+#: account whose whole list the box could not express would be locked out
+#: entirely. Raises ValueError with a message fit to show an admin. (Defined in
+#: sender_allowlist, which the push-source registration shares.)
+normalize_allowed_cidr = normalize_cidr
 
 
 class AllowedIpCreate(BaseModel):
@@ -167,6 +161,17 @@ def _get_account_or_404(session: Session, account_id: str) -> FtpAccount:
     if account is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such account")
     return account
+
+
+def _refuse_if_managed(account: FtpAccount) -> None:
+    """A provider's own account takes its allowed addresses from its push source
+    (the single place they are edited); changing them here would be silently
+    undone the next time the source is saved."""
+    if account.managed_source_id:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "this account belongs to a push source -- set its allowed senders on the source instead",
+        )
 
 
 def validate_push_target(session: Session, source_name: str | None) -> None:
@@ -272,6 +277,7 @@ def add_allowed_ip(
     account_id: str, payload: AllowedIpCreate, session: Session = Depends(get_session)
 ) -> FtpAllowedIp:
     account = _get_account_or_404(session, account_id)
+    _refuse_if_managed(account)
     existing = next((a for a in account.allowed_ips if a.cidr == payload.cidr), None)
     if existing is not None:
         return existing  # already there: adding it twice changes nothing
@@ -289,6 +295,7 @@ def remove_allowed_ip(
     allowed = session.get(FtpAllowedIp, ip_id)
     if allowed is None or allowed.ftp_account_id != account_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such allowed IP")
+    _refuse_if_managed(allowed.account)
     session.delete(allowed)
     session.commit()
 

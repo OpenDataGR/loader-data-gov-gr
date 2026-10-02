@@ -199,6 +199,11 @@ The limits are applied *before* the account database is updated, so an account
 is never loginable from anywhere for a moment ahead of its limit. IPv4 only for
 now (loader refuses IPv6, which the box could not express).
 
+For a provider's own account the list comes from the **allowed senders** of
+its push source (set when the provider registers or edits it) and is shown
+read-only on the FTP box page; only admin-made accounts are edited by hand
+there.
+
 Take care with a provider on a changing address: once listed addresses are
 the only way in, they are locked out until it is updated here.
 

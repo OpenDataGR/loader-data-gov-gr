@@ -70,7 +70,7 @@ METHOD = case(
     ),
 )
 _KNOWN_METHODS = ("FTP", SFTP_SCP, "SSH", failed_auth.WEB_LOGIN, failed_auth.PUSH_KEY, failed_auth.ADMIN_KEY,
-                  failed_auth.BOX_KEY, failed_auth.BEARER, failed_auth.OTHER_HTTP)
+                  failed_auth.BOX_KEY, failed_auth.BEARER, failed_auth.PUSH_ADDRESS, failed_auth.OTHER_HTTP)
 
 
 def _method_of(attempt: FtpLoginAttempt) -> str:

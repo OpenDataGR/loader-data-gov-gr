@@ -42,6 +42,7 @@ PUSH_KEY = "Push API key"
 ADMIN_KEY = "Admin API key"
 BOX_KEY = "FTP box key"
 BEARER = "Bearer token"
+PUSH_ADDRESS = "Push: address not allowed"  # a push source limited to its provider's addresses, hit from elsewhere
 OTHER_HTTP = "HTTP"
 
 # Longest prefix wins, so the box's endpoints are not taken for the admin API

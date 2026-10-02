@@ -31,8 +31,9 @@ import bcrypt
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
-from providerharvest_service import harvest_db, harvest_runner
+from providerharvest_service import failed_auth, harvest_db, harvest_runner, provider_sources, sender_allowlist
 from providerharvest_service.client_addr import sender_address
 from providerharvest_service.db import get_session
 from providerharvest_service.models import ProviderSource, _utcnow
@@ -94,6 +95,14 @@ async def push_upload(
     hsession: Session = Depends(harvest_db.get_session),
 ) -> dict:
     source = _get_active_push_source_or_404(session, source_name)
+    # Before the key is even looked at (no bcrypt for an address that is out anyway):
+    # a provider may limit a source to its own machine(s) when registering it. An
+    # address that cannot be determined is not "in the list" either.
+    sender = sender_address(request)
+    allowed = provider_sources.allowed_senders(source)
+    if not sender_allowlist.permits(allowed, sender):
+        await run_in_threadpool(failed_auth.record, request, failed_auth.PUSH_ADDRESS, source_name, 403)
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "this source does not accept uploads from your address")
     _check_api_key(source, x_api_key)
 
     try:
@@ -103,7 +112,6 @@ async def push_upload(
 
     run = harvest_runner.record_pushed_file(hsession, source, file.filename or "upload.bin", content)
     source.last_received_at = _utcnow()
-    sender = sender_address(request)
     if sender:
         source.last_sender = sender
     session.commit()

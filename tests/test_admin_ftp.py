@@ -218,6 +218,19 @@ def test_allowed_ips_crud_and_validation(client):
     assert fetched_again.json()["allowed_ips"] == []
 
 
+def test_a_provider_account_refuses_manual_allowed_ip_changes_through_the_api(client, _isolated_db):
+    account_id = _create(client).json()["id"]
+    with _isolated_db() as session:
+        from providerharvest_service.models import FtpAccount
+
+        session.get(FtpAccount, account_id).managed_source_id = "some-source-id"
+        session.commit()
+    resp = client.post(
+        "/admin/ftp-accounts/%s/allowed-ips" % account_id, json={"cidr": "203.0.113.9"}, headers=AUTH_HEADERS
+    )
+    assert resp.status_code == 409
+
+
 def test_allowed_ip_on_missing_account_is_404(client):
     resp = client.post(
         "/admin/ftp-accounts/does-not-exist/allowed-ips",

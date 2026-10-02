@@ -83,6 +83,7 @@ async def new_source_submit(request: Request, session: Session = Depends(get_ses
                 "source": source,
                 "api_key": generated_api_key,
                 "upload_url": _push_upload_url(request, source.name),
+                "allowed_senders": provider_sources.allowed_senders(source),
             },
         )
     generated_ftp = getattr(source, "generated_ftp", None)
@@ -93,7 +94,10 @@ async def new_source_submit(request: Request, session: Session = Depends(get_ses
         return templates.TemplateResponse(
             request,
             "provider/push_ftp_credentials.html",
-            {"source": source, "ftp": generated_ftp, "server": _ftp_public_endpoint()},
+            {
+                "source": source, "ftp": generated_ftp, "server": _ftp_public_endpoint(),
+                "allowed_senders": provider_sources.allowed_senders(source),
+            },
         )
     return RedirectResponse(
         _redirect_with_flash("Source %r registered and awaiting admin approval." % source.name),

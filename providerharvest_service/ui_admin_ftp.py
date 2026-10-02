@@ -61,6 +61,11 @@ _STALE_AFTER = datetime.timedelta(minutes=5)
 
 _ALLOWED_REDIRECT_PATHS = ("/admin/ftp",)
 
+_MANAGED_NOTE = (
+    "%r belongs to a push source -- its allowed addresses are set on the source "
+    "(Provider portal, edit the source), not here."
+)
+
 
 def _came_from(request: Request, flash: str, kind: str = "success") -> str:
     referer_path = urlparse(request.headers.get("referer") or "").path
@@ -102,6 +107,8 @@ async def add_allowed_address(request: Request, account_id: str, session: Sessio
     account = session.get(FtpAccount, account_id)
     if account is None:
         return RedirectResponse(_came_from(request, "No such account.", kind="error"), status_code=303)
+    if account.managed_source_id:
+        return RedirectResponse(_came_from(request, _MANAGED_NOTE % account.username, kind="error"), status_code=303)
     form = await request.form()
     try:
         cidr = normalize_allowed_cidr(str(form.get("cidr") or ""))
@@ -123,6 +130,8 @@ def remove_allowed_address(request: Request, account_id: str, ip_id: str, sessio
     if allowed is None or allowed.ftp_account_id != account_id:
         return RedirectResponse(_came_from(request, "No such address.", kind="error"), status_code=303)
     account = allowed.account
+    if account.managed_source_id:
+        return RedirectResponse(_came_from(request, _MANAGED_NOTE % account.username, kind="error"), status_code=303)
     session.delete(allowed)
     session.commit()
     session.refresh(account)
