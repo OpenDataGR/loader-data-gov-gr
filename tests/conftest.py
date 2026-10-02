@@ -7,6 +7,25 @@ from providerharvest_service.app import app
 ADMIN_USERNAME = "test-admin"
 ADMIN_PASSWORD = "test-password"
 
+# bcrypt is deliberately slow: at its production strength (cost 12, ~0.25 s a
+# hash) the suite spent most of its 7 minutes hashing the same admin password
+# in every test's setup, then again at login. Tests get bcrypt's *minimum* cost
+# (4) instead. Everything else about the hashing is real -- the same library,
+# the same $2a$/$2b$ formats, the same checkpw path -- and a hash's cost is
+# stored inside it, so verification is cheap too. Production is untouched: this
+# only replaces the default of ``bcrypt.gensalt`` inside the test process, and
+# test_bcrypt_cost.py guards that nothing in the service lowers it for real.
+_REAL_GENSALT = bcrypt.gensalt
+TEST_BCRYPT_ROUNDS = 4
+
+
+@pytest.fixture(autouse=True)
+def _cheap_bcrypt(monkeypatch):
+    def gensalt(rounds=TEST_BCRYPT_ROUNDS, prefix=b"2b"):
+        return _REAL_GENSALT(rounds=rounds, prefix=prefix)
+
+    monkeypatch.setattr(bcrypt, "gensalt", gensalt)
+
 
 @pytest.fixture(autouse=True)
 def _failed_auth_goes_to_a_throwaway_db(tmp_path, monkeypatch):
@@ -16,7 +35,20 @@ def _failed_auth_goes_to_a_throwaway_db(tmp_path, monkeypatch):
     default database file."""
     from providerharvest_service import db
 
-    monkeypatch.setattr(db, "SessionLocal", db.make_session_factory(db.make_engine("sqlite:///%s" % (tmp_path / "failed-auth.db"))))
+    class LazySessionLocal:
+        """Same thing as ``db.SessionLocal``, but the database is only built the first
+        time something opens a session -- most tests never record a refusal, and
+        creating a database for every one of them was a large part of per-test setup."""
+
+        def __init__(self):
+            self._factory = None
+
+        def __call__(self, *args, **kwargs):
+            if self._factory is None:
+                self._factory = db.make_session_factory(db.make_engine("sqlite:///%s" % (tmp_path / "failed-auth.db")))
+            return self._factory(*args, **kwargs)
+
+    monkeypatch.setattr(db, "SessionLocal", LazySessionLocal())
 
 
 @pytest.fixture

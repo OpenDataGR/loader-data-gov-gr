@@ -37,6 +37,7 @@ jobs:
           CI="$HOME/ci/loader-data-gov-gr"
           source /opt/data-projects/loader-data-gov-gr/venv/bin/activate
           cd "$CI"
+          echo "runner: $(nproc) CPU(s), $(free -m | awk '/^Mem:/ {print $2}') MB RAM"  # for judging whether parallel tests would pay
           # Guard: the tests must be exercising THIS checkout, not the live code (an
           # installed copy of the package could shadow it and give a false green).
           where=$(python -c "import os, providerharvest_service as p; print(os.path.dirname(os.path.dirname(os.path.abspath(p.__file__))))")

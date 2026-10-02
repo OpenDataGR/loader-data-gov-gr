@@ -67,6 +67,12 @@ things are, and what to check before assuming something is broken.
   the real HTTP contract; JWT tests sign real tokens with a real
   self-signed keypair and exercise the actual signature-verification
   code path, not a stubbed-out approximation of it.
+- **The suite runs bcrypt at its minimum cost** (`tests/conftest.py`):
+  production-strength hashing in every test's setup was most of a 7-minute
+  run. Everything else about the hashing is real, a hash carries its own cost
+  so verification works either way, and `test_bcrypt_cost.py` guards that
+  production code never sets a cost of its own. Don't hash with a hard-coded
+  `rounds=` in the service.
 - **Run CI after every unit of work.** Push triggers `deploy.yml`
   automatically (self-hosted runner on `MIN01RG96PVM02`) -- watch it
   land before considering a change done.
