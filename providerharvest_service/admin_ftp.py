@@ -87,17 +87,28 @@ class ForwardTargetUpdate(BaseModel):
     push_target_source_name: str | None
 
 
+def normalize_allowed_cidr(value: str) -> str:
+    """An address or range an account may log in from, in canonical form
+    ("203.0.113.9" -> "203.0.113.9/32"). IPv4 only, deliberately: the box
+    enforces the list with ProFTPD ``Allow`` rules, and an account whose whole
+    list the box could not express would be locked out entirely. Raises
+    ValueError with a message fit to show an admin."""
+    try:
+        network = ipaddress.ip_network((value or "").strip(), strict=False)
+    except ValueError as exc:
+        raise ValueError("not a valid IP address or CIDR range: %r" % value) from exc
+    if network.version != 4:
+        raise ValueError("only IPv4 addresses and ranges are supported for now: %r" % value)
+    return str(network)
+
+
 class AllowedIpCreate(BaseModel):
     cidr: str
 
     @field_validator("cidr")
     @classmethod
     def _valid_cidr(cls, value: str) -> str:
-        try:
-            ipaddress.ip_network(value, strict=False)
-        except ValueError as exc:
-            raise ValueError("not a valid IP address or CIDR range: %r" % value) from exc
-        return value
+        return normalize_allowed_cidr(value)
 
 
 class AllowedIpOut(BaseModel):
@@ -260,7 +271,10 @@ def delete_ftp_account(account_id: str, session: Session = Depends(get_session))
 def add_allowed_ip(
     account_id: str, payload: AllowedIpCreate, session: Session = Depends(get_session)
 ) -> FtpAllowedIp:
-    _get_account_or_404(session, account_id)
+    account = _get_account_or_404(session, account_id)
+    existing = next((a for a in account.allowed_ips if a.cidr == payload.cidr), None)
+    if existing is not None:
+        return existing  # already there: adding it twice changes nothing
     allowed = FtpAllowedIp(ftp_account_id=account_id, cidr=payload.cidr)
     session.add(allowed)
     session.commit()

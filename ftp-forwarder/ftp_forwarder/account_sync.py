@@ -23,6 +23,8 @@ import sqlite3
 
 import requests
 
+from ftp_forwarder import ip_limits
+
 logger = logging.getLogger(__name__)
 
 # Includes the empty ``groups`` table for the same reason it exists on
@@ -149,12 +151,21 @@ def sync_once(
     upload_root: str | None = None,
     uid: int | None = None,
     gid: int | None = None,
+    ip_limits_conf: str | None = None,
+    ip_limits_run: ip_limits.Runner = ip_limits._default_run,
 ) -> None:
     accounts = fetch_accounts(session, base_url, sync_key)
     if upload_root:
         # Before reconcile, so an account never becomes loginable
         # (present in the ProFTPD database) before its directory exists.
         ensure_home_directories(accounts, upload_root, uid=uid, gid=gid)
+    if ip_limits_conf:
+        # Also before reconcile, for the same reason: an account must never be
+        # loginable from anywhere for a moment before its address limit is in force.
+        try:
+            ip_limits.apply(accounts, ip_limits_conf, run=ip_limits_run)
+        except (ip_limits.IpLimitError, OSError) as exc:
+            raise SyncError("could not apply per-account login limits: %s" % exc) from exc
     reconcile(db_path, accounts)
 
 

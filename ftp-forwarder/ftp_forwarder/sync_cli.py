@@ -15,7 +15,7 @@ import time
 
 import requests
 
-from ftp_forwarder import account_sync, box_health
+from ftp_forwarder import account_sync, box_health, ip_limits
 from ftp_forwarder.attempts_log import AttemptsLogTail
 from ftp_forwarder.auth_log import AuthLogTail
 from ftp_forwarder.ssh_log import JournalSshTail
@@ -57,6 +57,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Where the delivered-up-to position in the sshd journal is kept (see ssh_log.py)",
     )
     parser.add_argument("--ssh-unit", default="ssh", help="The systemd unit sshd runs as (journal source)")
+    parser.add_argument(
+        "--ip-limits-conf", default=ip_limits.DEFAULT_CONF_PATH,
+        help="ProFTPD config file generated from each account's allowed addresses (see ip_limits.py); "
+             "empty string turns the feature off",
+    )
     parser.add_argument("--proftpd-unit", default="proftpd")
     parser.add_argument("--relay-unit", default="loader-ftp-forwarder")
     parser.add_argument("--fail2ban-unit", default="fail2ban")
@@ -104,6 +109,7 @@ def main(argv: list[str] | None = None) -> int:
             account_sync.sync_once(
                 session, args.loader_base_url, sync_key, args.db_path,
                 upload_root=args.upload_root, uid=uid, gid=gid,
+                ip_limits_conf=args.ip_limits_conf,
             )
         except (account_sync.SyncError, OSError) as exc:
             logger.error("sync failed: %s", exc)

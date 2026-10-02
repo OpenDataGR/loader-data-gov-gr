@@ -164,9 +164,38 @@ the ban rule doesn't cover 7002. The sshd jail's bans appear in the Security
 box ban list and are lifted by the same Unban button. fail2ban is reloaded,
 not restarted, on re-provisioning, because a restart flushes every current ban.
 
-Not covered, deliberately left for later: enforcing each account's
-per-account allowed-IP list on the box (stored in loader, not yet
-applied), and whether plain FTP (unencrypted) should stay open at all.
+### Per-account login limits (allowed addresses)
+
+On loader's **FTP box** page each account has an *Allowed from* list. Empty
+(the default) means the account works from anywhere. Once any IPv4 address or
+range is listed, the account works **only** from those -- over FTP and SFTP/SCP
+alike -- and is refused from everywhere else even with the right password. A
+change takes effect within about a minute of the box's next sync.
+
+Enforced by ProFTPD, not the firewall: `ip_limits.py` renders
+`/etc/proftpd/conf.d/loader-ip-limits.conf` -- `<IfUser name>` +
+`<Limit LOGIN>` with `Allow ...` / `DenyAll`, inside `<Global>` -- from the
+account list the sync already fetches. This was proven on the box before being
+built (a throwaway server on spare ports with three accounts: limited to the
+connecting address, limited to another address, unlimited; each tried over FTP
+and SFTP): the first and last got in, the second was refused with the right
+password -- on both protocols. (`mod_wrap2_sql` is not an option; it doesn't
+cover SFTP.) A refused login simply drops the connection rather than answering 530.
+
+The file is config that a root process reads and its source crossed the
+network, so it is built defensively: usernames and addresses are re-validated
+on the box (loader validates too), any bad value fails the whole apply and
+leaves the previous file in force, the new file is kept only if `proftpd -t`
+accepts the whole configuration, and ProFTPD is reloaded only when the rules
+actually changed. A failure shows as the box's *Sync: failing* with the reason.
+The limits are applied *before* the account database is updated, so an account
+is never loginable from anywhere for a moment ahead of its limit. IPv4 only for
+now (loader refuses IPv6, which the box could not express).
+
+Take care with a provider on a changing address: once listed addresses are
+the only way in, they are locked out until it is updated here.
+
+Plain FTP (port 21, unencrypted) stays open for now: a provider depends on it.
 
 ## One-time setup on the box itself
 
@@ -231,6 +260,7 @@ systemd unit under `deploy/` for the real, deployed invocation):
 --auth-log /var/log/proftpd/loader-auth.log   # optional -- ProFTPD's login log, tailed for provider addresses
 --attempts-log /var/log/proftpd/loader-attempts.log   # optional -- refused logins, shipped to loader's report
 --attempts-state /var/lib/ftp-forwarder/attempts.state  # optional -- how far that log has been delivered
+--ip-limits-conf /etc/proftpd/conf.d/loader-ip-limits.conf  # optional -- generated per-account login limits ("" = off)
 --proftpd-unit proftpd             # optional
 --relay-unit loader-ftp-forwarder  # optional
 --fail2ban-unit fail2ban           # optional -- reported, so a dead jail shows on the admin page

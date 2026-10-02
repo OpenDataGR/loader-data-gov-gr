@@ -62,6 +62,12 @@
       exactly once, right after the action -- it is never stored in a recoverable form,
       so if a provider loses it the only way back is rotating again.
     </p>
+    <p class="subtitle" style="margin-top:0;">
+      <strong>Allowed from:</strong> with no address listed an account works from anywhere. Once you
+      list any, it works <em>only</em> from those (IPv4 addresses or ranges, FTP and SFTP alike) --
+      everyone else is refused even with the right password. The box applies a change within about
+      a minute. Only list addresses you are sure of: a provider on a changing address will be locked out.
+    </p>
 
     {% if not accounts %}
       <div class="empty-state">
@@ -71,7 +77,7 @@
     {% else %}
       <table>
         <thead>
-          <tr><th>Username</th><th>Home directory</th><th>Status</th><th>Forwards to</th><th></th></tr>
+          <tr><th>Username</th><th>Home directory</th><th>Status</th><th>Forwards to</th><th>Allowed from</th><th></th></tr>
         </thead>
         <tbody>
           {% for a in accounts %}
@@ -82,6 +88,21 @@
             <td>
               {% if a.push_target_source_name %}<span class="name-slug">{{ a.push_target_source_name }}</span>{% else %}<span class="muted">none</span>{% endif %}
               {% if not a.managed_source_id %}<div class="muted">created by an admin, not a provider</div>{% endif %}
+            </td>
+            <td>
+              {% if a.allowed_ips %}
+                {% for ip in a.allowed_ips %}
+                  <form class="inline" method="post" action="/admin/ftp/{{ a.id }}/allowed-ips/{{ ip.id }}/delete" onsubmit="return confirm('Stop allowing {{ ip.cidr }} for {{ a.username }}?{% if a.allowed_ips|length == 1 %} The account will then work from anywhere.{% endif %}');">
+                    <span class="chip"><code>{{ ip.cidr }}</code> <button type="submit" class="btn-sm btn-secondary" title="Remove" style="padding:0 0.35rem;">&times;</button></span>
+                  </form>
+                {% endfor %}
+              {% else %}
+                <span class="muted">anywhere</span>
+              {% endif %}
+              <form class="inline" method="post" action="/admin/ftp/{{ a.id }}/allowed-ips" style="margin-top:0.3rem; display:flex; gap:0.3rem;">
+                <input type="text" name="cidr" class="small" placeholder="203.0.113.0/24" aria-label="Allow an address or range for {{ a.username }}" style="width:9.5rem;">
+                <button type="submit" class="btn-sm btn-secondary">Allow</button>
+              </form>
             </td>
             <td style="white-space:nowrap;">
               <form class="inline" method="post" action="/admin/ftp/{{ a.id }}/rotate-password">

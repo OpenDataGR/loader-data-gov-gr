@@ -43,9 +43,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from providerharvest_service import build_info
-from providerharvest_service.admin_ftp import generate_password, hash_password
+from providerharvest_service.admin_ftp import generate_password, hash_password, normalize_allowed_cidr
 from providerharvest_service.db import get_session
-from providerharvest_service.models import FtpAccount, FtpBoxStatus
+from providerharvest_service.models import FtpAccount, FtpAllowedIp, FtpBoxStatus
 
 router = APIRouter(prefix="/admin/ftp", tags=["ftp-ui"])
 templates = Jinja2Templates(directory="providerharvest_service/templates")
@@ -92,6 +92,42 @@ def ftp_overview(request: Request, session: Session = Depends(get_session)) -> H
             "flash_kind": request.query_params.get("flash_kind", "success"),
         },
     )
+
+
+@router.post("/{account_id}/allowed-ips")
+async def add_allowed_address(request: Request, account_id: str, session: Session = Depends(get_session)):
+    """Limit an account to log in from this address or range (and any others
+    already listed). With none listed the account works from anywhere. The box
+    applies it within about a minute, to FTP and SFTP alike."""
+    account = session.get(FtpAccount, account_id)
+    if account is None:
+        return RedirectResponse(_came_from(request, "No such account.", kind="error"), status_code=303)
+    form = await request.form()
+    try:
+        cidr = normalize_allowed_cidr(str(form.get("cidr") or ""))
+    except ValueError as exc:
+        return RedirectResponse(_came_from(request, str(exc), kind="error"), status_code=303)
+    if any(a.cidr == cidr for a in account.allowed_ips):
+        return RedirectResponse(_came_from(request, "%s is already allowed for %r." % (cidr, account.username)), status_code=303)
+    session.add(FtpAllowedIp(ftp_account_id=account.id, cidr=cidr))
+    session.commit()
+    return RedirectResponse(
+        _came_from(request, "%r can now only log in from the listed addresses (including %s)." % (account.username, cidr)),
+        status_code=303,
+    )
+
+
+@router.post("/{account_id}/allowed-ips/{ip_id}/delete")
+def remove_allowed_address(request: Request, account_id: str, ip_id: str, session: Session = Depends(get_session)):
+    allowed = session.get(FtpAllowedIp, ip_id)
+    if allowed is None or allowed.ftp_account_id != account_id:
+        return RedirectResponse(_came_from(request, "No such address.", kind="error"), status_code=303)
+    account = allowed.account
+    session.delete(allowed)
+    session.commit()
+    session.refresh(account)
+    note = "" if account.allowed_ips else " -- the account can now log in from anywhere"
+    return RedirectResponse(_came_from(request, "Removed %s for %r%s." % (allowed.cidr, account.username, note)), status_code=303)
 
 
 @router.post("/{account_id}/rotate-password", response_class=HTMLResponse)

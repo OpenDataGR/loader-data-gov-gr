@@ -253,6 +253,9 @@ before relying on it.
    of SFTP, which needs no certificate at all (SSH host keys, not a
    TLS cert -- see the SFTP section below). Still not done: generating
    and applying nftables rules from each account's `allowed_ips`.
+   (Superseded on the dedicated FTP box, where each account's allowed
+   addresses are enforced by ProFTPD itself -- see ftp-forwarder/README.md,
+   "Per-account login limits".)
 
 7. **SFTP-push receiving**, confirmed working end-to-end (real
    password login + real upload, tested from this VM, same account

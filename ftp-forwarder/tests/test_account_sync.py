@@ -325,6 +325,43 @@ def test_a_refused_report_asks_for_nothing_to_be_unbanned():
     assert report.accepted is False and report.unban == ()
 
 
+# -- per-account login limits during a sync ---------------------------------------
+
+def test_sync_applies_the_limits_before_the_accounts_become_loginable(tmp_path):
+    order = []
+    db = str(tmp_path / "accounts.db")
+    conf = str(tmp_path / "limits.conf")
+    accounts = [dict(ACCOUNTS[0], allowed_ips=["203.0.113.9"]), dict(ACCOUNTS[1], allowed_ips=[])]
+
+    import subprocess
+
+    def run(cmd):
+        order.append(("limits", _read_accounts(db) if (tmp_path / "accounts.db").exists() else []))
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    sync_once(FakeSession(FakeResponse(200, json_body=accounts)), "https://x", "k", db,
+              ip_limits_conf=conf, ip_limits_run=run)
+    assert order and all(seen == [] for _, seen in order)  # nobody was in the database yet
+    assert "<IfUser acme>" in open(conf).read()
+    assert len(_read_accounts(db)) == 2
+
+
+def test_a_limit_that_cannot_be_applied_fails_the_sync_loudly(tmp_path):
+    import subprocess
+
+    accounts = [dict(ACCOUNTS[0], allowed_ips=["203.0.113.9"])]
+    with pytest.raises(SyncError, match="login limits"):
+        sync_once(FakeSession(FakeResponse(200, json_body=accounts)), "https://x", "k", str(tmp_path / "a.db"),
+                  ip_limits_conf=str(tmp_path / "limits.conf"),
+                  ip_limits_run=lambda c: subprocess.CompletedProcess([], 1, "", "nope"))
+
+
+def test_without_a_limits_file_configured_nothing_is_generated(tmp_path):
+    sync_once(FakeSession(FakeResponse(200, json_body=[dict(ACCOUNTS[0], allowed_ips=["203.0.113.9"])])),
+              "https://x", "k", str(tmp_path / "a.db"))
+    assert list(tmp_path.glob("*.conf")) == []
+
+
 # -- shipping refused logins ------------------------------------------------------
 
 class PostSession:
