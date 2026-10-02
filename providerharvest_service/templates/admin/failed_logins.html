@@ -2,76 +2,98 @@
 {% import "_macros.html" as macros %}
 {% block title %}Security box -- loader.data.gov.gr{% endblock %}
 {% block content %}
-  <div class="panel">
-    <h1>Security box</h1>
-    <p class="subtitle">
-      Every refused login or credential, on any way in -- FTP and SFTP (reported by the box),
-      the web login and the API/sync keys (seen by loader itself) -- kept for {{ retention_note }}
-      {% if oldest %}(the oldest on record is {{ oldest|utc }} UTC){% endif %}.
-      FTP/SFTP addresses that keep failing are banned automatically (see below); the boxes themselves
-      are on the <a href="/admin/ftp">FTP box</a> page.
-    </p>
+  <style>
+    .sec-head { display:flex; flex-wrap:wrap; align-items:baseline; gap:0.2rem 1rem; }
+    .sec-head h1 { margin:0; }
+    .sec-filters { display:flex; flex-wrap:wrap; gap:0.45rem; align-items:center; margin-top:0.7rem; }
+    .sec-filters select, .sec-filters input[type=text] { width:auto; margin:0; padding:0.35rem 0.55rem; font-size:0.85rem; }
+    .sec-filters input[type=text] { width:9.5rem; }
+    .sec-filters label.check { display:inline-flex; align-items:center; gap:0.3rem; margin:0; font-size:0.85rem; white-space:nowrap; }
+    .sec-filters label.check input { width:auto; margin:0; }
+    .sec-summary { display:flex; flex-wrap:wrap; gap:0.4rem 0.5rem; align-items:center; margin-top:0.7rem; font-size:0.9rem; }
+    .sec-summary .sep { color:var(--color-gray-700); }
+    a.chip { text-decoration:none; }
+    a.chip b { font-weight:700; margin-left:0.2rem; }
+    .chip.active { background:var(--color-primary-light); color:#fff; }
+    details.banned { margin-top:0.8rem; border-top:1px solid #e3e7ee; padding-top:0.6rem; }
+    details.banned > summary { cursor:pointer; font-weight:600; color:var(--color-primary); }
+    .count { display:inline-block; min-width:1.4rem; text-align:center; padding:0 0.35rem; border-radius:0.7rem; background:#e8edf5; font-size:0.78rem; font-weight:600; color:var(--color-primary); }
+    .ban-items { display:flex; flex-wrap:wrap; gap:0.35rem 0.9rem; margin:0.3rem 0 0.6rem; }
+    .ban-item { display:inline-flex; align-items:center; gap:0.4rem; }
+    .tabs { display:flex; flex-wrap:wrap; align-items:center; gap:0.2rem; border-bottom:2px solid #e3e7ee; margin-bottom:0.5rem; }
+    .tabs a.tab { padding:0.5rem 0.9rem; text-decoration:none; color:var(--color-gray-700); font-weight:600; border-bottom:3px solid transparent; margin-bottom:-2px; }
+    .tabs a.tab.active { color:var(--color-primary); border-bottom-color:var(--color-primary-light); }
+    .tabs .exports { margin-left:auto; display:flex; gap:0.4rem; padding-bottom:0.3rem; }
+    table.compact th, table.compact td { padding:0.32rem 0.6rem; font-size:0.85rem; }
+    table.compact th a.sort { color:inherit; text-decoration:none; white-space:nowrap; }
+    table.compact th a.sort:hover { text-decoration:underline; }
+    table.compact td a.cell { color:inherit; text-decoration:none; border-bottom:1px dotted #9aa5b5; }
+    table.compact td a.cell:hover { color:var(--color-primary); border-bottom-style:solid; }
+    .pager { display:flex; flex-wrap:wrap; gap:0.5rem; align-items:center; margin-top:0.7rem; }
+  </style>
 
-    <form method="get" action="/admin/security/failed-logins" style="display:flex; flex-wrap:wrap; gap:0.8rem; align-items:flex-end;">
-      <div>
-        <label for="window" style="margin-top:0;">Period</label>
-        <select id="window" name="window" style="width:auto;">
-          {% for key, label, _ in windows %}
-            <option value="{{ key }}" {% if f.window == key %}selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div>
-        <label for="address" style="margin-top:0;">Address starts with</label>
-        <input type="text" id="address" name="address" value="{{ f.address }}" class="small" placeholder="e.g. 188.166.">
-      </div>
-      <div>
-        <label for="method" style="margin-top:0;">Method</label>
-        <select id="method" name="method" style="width:auto;">
-          <option value="">any</option>
-          {% for m in methods %}
-            <option value="{{ m }}" {% if f.method == m %}selected{% endif %}>{{ m }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div>
-        <label for="username" style="margin-top:0;">Username contains</label>
-        <input type="text" id="username" name="username" value="{{ f.username }}" class="small" placeholder="e.g. root">
-      </div>
-      <button type="submit">Apply</button>
-      <a class="btn btn-secondary" href="/admin/security/failed-logins">Reset</a>
+  {% macro th(label, key) -%}
+    <th aria-sort="{{ sort_aria(key) }}"><a class="sort" href="{{ sort_href(key) }}">{{ label }}{% if sort_mark(key) %} {{ sort_mark(key) }}{% endif %}</a></th>
+  {%- endmacro %}
+
+  <div class="panel">
+    <div class="sec-head">
+      <h1>Security box</h1>
+      <span class="muted">
+        Refused logins and credentials on every way in, kept {{ retention_note }}
+        {% if oldest %}(oldest on record {{ oldest|utc }} UTC){% endif %}. The boxes themselves are on the <a href="/admin/ftp">FTP box</a> page.
+      </span>
+    </div>
+
+    <form class="sec-filters" method="get" action="/admin/security/failed-logins">
+      {% for key, value in f.params().items() %}{% if key in ('view', 'sort', 'dir') %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endif %}{% endfor %}
+      <select name="window" aria-label="Period" onchange="this.form.submit()">
+        {% for key, label, _ in windows %}
+          <option value="{{ key }}" {% if f.window == key %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <select name="method" aria-label="Method" onchange="this.form.submit()">
+        <option value="">All methods</option>
+        {% for m in methods %}
+          <option value="{{ m }}" {% if f.method == m %}selected{% endif %}>{{ m }}</option>
+        {% endfor %}
+      </select>
+      <input type="text" name="address" value="{{ f.address }}" placeholder="Address (prefix)" aria-label="Address starts with">
+      <input type="text" name="username" value="{{ f.username }}" placeholder="Username contains" aria-label="Username contains">
+      <label class="check"><input type="checkbox" name="banned" value="1" {% if f.banned_only %}checked{% endif %} onchange="this.form.submit()"> Banned now only</label>
+      <button type="submit" class="btn-sm">Apply</button>
+      {% if filtered or f.window != '24' %}<a class="btn btn-secondary btn-sm" href="{{ link(window=None, address=None, method=None, username=None, banned=None, page=None) }}">Reset</a>{% endif %}
     </form>
-  </div>
 
-  <div class="stats" style="margin-top:1.2rem;">
-    {{ macros.stat_tile("attempts", total, "rejected") }}
-    {{ macros.stat_tile("different addresses", addresses, "pending") }}
-    {% for row in by_method[:3] %}
-      {{ macros.stat_tile("via " ~ row.method, row.n, "paused") }}
-    {% endfor %}
-  </div>
+    <div class="sec-summary">
+      <span><strong>{{ counts.attempts }}</strong> attempts</span><span class="sep">&middot;</span>
+      <span><strong>{{ counts.addresses }}</strong> addresses</span>
+      {% if by_method %}<span class="sep">&middot;</span>{% endif %}
+      {% for row in by_method %}
+        <a class="chip {% if f.method == row.method %}active{% endif %}"
+           href="{{ link(method=(None if f.method == row.method else row.method), page=None) }}"
+           title="{{ 'Show all methods' if f.method == row.method else 'Only ' ~ row.method }}">{{ row.method }}<b>{{ row.n }}</b></a>
+      {% endfor %}
+    </div>
 
-  <div class="panel">
-    <h1>Banned addresses</h1>
-    <p class="subtitle">
-      FTP/SFTP addresses blocked after repeated refused logins (5 in 10 minutes bans for an hour; 8 in 6 hours
-      -- a slow scanner -- bans for a day; longer for repeat offenders). If a provider has locked themselves out, let them back in here -- the box
-      applies it within about a minute. Shown as last reported by each box.
-    </p>
-    {% if not boxes %}
-      <div class="empty-state"><p>No FTP box has reported in yet.</p></div>
-    {% endif %}
-    {% for box in boxes %}
-      <div class="name-title" style="margin-top:0.8rem;">{{ box.hostname }}
-        {% if box.fail2ban_active is false %}<span class="badge badge-error" title="fail2ban is not running: failed logins are not being banned">{{ macros.icon("rejected", 13) }}<span>fail2ban off</span></span>{% endif %}
-      </div>
-      {% if box.banned %}
-        <table>
-          <tbody>
+    <details class="banned" {% if banned_total %}open{% endif %}>
+      <summary>Banned addresses <span class="count">{{ banned_total }}</span></summary>
+      <p class="muted" style="margin:0.3rem 0 0;">
+        FTP/SFTP/SSH addresses blocked after repeated refused logins (5 in 10 minutes bans for an hour; 8 in 6 hours
+        -- a slow scanner -- bans for a day; longer for repeat offenders). If a provider has locked themselves out,
+        let them back in here -- the box applies it within about a minute. Shown as last reported by each box.
+      </p>
+      {% if not boxes %}
+        <p class="muted">No FTP box has reported in yet.</p>
+      {% endif %}
+      {% for box in boxes %}
+        <div class="name-title" style="margin-top:0.6rem;">{{ box.hostname }}
+          {% if box.fail2ban_active is false %}<span class="badge badge-error" title="fail2ban is not running: failed logins are not being banned">{{ macros.icon("rejected", 13) }}<span>fail2ban off</span></span>{% endif %}
+        </div>
+        {% if box.banned %}
+          <div class="ban-items">
             {% for ip in box.banned %}
-            <tr>
-              <td style="width:14rem;"><code>{{ ip }}</code></td>
-              <td>
+              <span class="ban-item"><code>{{ ip }}</code>
                 {% if ip in box.pending_unban %}
                   <span class="muted">unban requested -- waiting for the box</span>
                 {% else %}
@@ -81,104 +103,91 @@
                     <button type="submit" class="btn-sm btn-secondary">Unban</button>
                   </form>
                 {% endif %}
-              </td>
-            </tr>
+              </span>
             {% endfor %}
-          </tbody>
-        </table>
-      {% else %}
-        <p class="muted" style="margin:0.3rem 0 0;">No addresses banned right now.</p>
-      {% endif %}
-    {% endfor %}
+          </div>
+        {% else %}
+          <p class="muted" style="margin:0.3rem 0 0;">No addresses banned right now.</p>
+        {% endif %}
+      {% endfor %}
+    </details>
   </div>
 
-  <div class="panel" style="margin-top:1.2rem;">
-    <div class="top-actions">
-      <h1 style="margin:0;">By source address</h1>
-      <a class="btn btn-secondary btn-sm" href="/admin/security/failed-logins-by-address.csv?{{ export_query }}">Download CSV</a>
+  <div class="panel" style="margin-top:0.9rem;">
+    <div class="tabs" role="tablist">
+      {% for key, label in views %}
+        <a class="tab {% if f.view == key %}active{% endif %}" role="tab" aria-selected="{{ 'true' if f.view == key else 'false' }}"
+           href="{{ link(view=key, page=None) }}">{{ label }} <span class="count">{{ counts[key] }}</span></a>
+      {% endfor %}
+      <span class="exports">
+        <a class="btn btn-secondary btn-sm" href="/admin/security/failed-logins-by-address.csv?{{ export_query }}" title="One row per address, for the current filters">{{ macros.icon("download", 13) }} CSV by address</a>
+        <a class="btn btn-secondary btn-sm" href="/admin/security/failed-logins.csv?{{ export_query }}" title="Every attempt (up to 50,000), for the current filters">{{ macros.icon("download", 13) }} CSV all attempts</a>
+      </span>
     </div>
-    <p class="subtitle">Most attempts first{% if by_address|length >= 25 %} (top 25 here; the CSV has every address){% endif %}.</p>
-    {% if not by_address %}
+
+    {% if not rows %}
       <div class="empty-state"><p>No refused logins in this selection.</p></div>
-    {% else %}
-      <table>
+
+    {% elif f.view == 'addresses' %}
+      <table class="compact">
         <thead>
-          <tr>
-            <th>Address</th><th>Attempts</th><th>First attempt (UTC)</th><th>Last attempt (UTC)</th>
-            <th>Methods</th><th>Usernames tried</th><th></th>
-          </tr>
+          <tr>{{ th("Address", "ip") }}{{ th("Attempts", "attempts") }}{{ th("First (UTC)", "first") }}{{ th("Last (UTC)", "last") }}<th>Methods</th>{{ th("Usernames", "usernames") }}<th></th></tr>
         </thead>
         <tbody>
-          {% for row in by_address %}
+          {% for row in rows %}
           <tr>
-            <td><code>{{ row.ip }}</code></td>
+            <td><a class="cell" href="{{ link(address=row.ip, view='attempts', page=None) }}" title="Show this address's attempts"><code>{{ row.ip }}</code></a></td>
             <td class="name-title">{{ row.attempts }}</td>
-            <td class="muted">{{ row.first_at|utc }}</td>
-            <td class="muted">{{ row.last_at|utc }}</td>
-            <td>{% for m in (row.methods or "").split(",")|sort %}<span class="chip">{{ m }}</span> {% endfor %}</td>
+            <td class="muted" title="{{ row.first_at|utc }} UTC">{{ row.first_at|short_utc }}</td>
+            <td class="muted" title="{{ row.last_at|utc }} UTC">{{ row.last_at|short_utc }}</td>
+            <td>{% for m in (row.methods or "").split(",")|sort %}<a class="chip" href="{{ link(method=m, page=None) }}">{{ m }}</a> {% endfor %}</td>
             <td>{{ row.usernames }}</td>
-            <td>{% if row.ip in banned %}<span class="badge badge-error" title="Currently banned by fail2ban">{{ macros.icon("rejected", 13) }}<span>banned now</span></span>{% endif %}</td>
+            <td>{% if row.ip in banned %}<span class="badge badge-error" title="Currently banned by fail2ban"><span>banned now</span></span>{% endif %}</td>
           </tr>
           {% endfor %}
         </tbody>
       </table>
-    {% endif %}
-  </div>
 
-  <div class="panel" style="margin-top:1.2rem;">
-    <h1>Usernames tried</h1>
-    <p class="subtitle">The ten most common in this selection -- as typed by whoever was knocking.</p>
-    {% if not top_usernames %}
-      <div class="empty-state"><p>None.</p></div>
-    {% else %}
-      <table>
-        <thead><tr><th>Username</th><th>Attempts</th></tr></thead>
-        <tbody>
-          {% for name, n in top_usernames %}
-            <tr><td>{% if name %}<code>{{ name }}</code>{% else %}<span class="muted">(none)</span>{% endif %}</td><td>{{ n }}</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    {% endif %}
-  </div>
-
-  <div class="panel" style="margin-top:1.2rem;">
-    <div class="top-actions">
-      <h1 style="margin:0;">Every attempt</h1>
-      <a class="btn btn-secondary btn-sm" href="/admin/security/failed-logins.csv?{{ export_query }}">Download CSV</a>
-    </div>
-    <p class="subtitle">
-      Newest first. {% if total > page_size %}Page {{ page }} of {{ pages }}.{% endif %}
-      The CSV is capped at 50,000 rows -- narrow the selection if you need to stay under that.
-    </p>
-    {% if not events %}
-      <div class="empty-state"><p>No refused logins in this selection.</p></div>
-    {% else %}
-      <table>
+    {% elif f.view == 'attempts' %}
+      <table class="compact">
         <thead>
-          <tr><th>Time (UTC)</th><th>Address</th><th>Port</th><th>Method</th><th>Username tried</th><th>Refused</th><th></th></tr>
+          <tr>{{ th("Time (UTC)", "time") }}{{ th("Address", "ip") }}{{ th("Port", "port") }}{{ th("Method", "method") }}{{ th("Username tried", "username") }}<th>Code</th><th></th></tr>
         </thead>
         <tbody>
-          {% for e in events %}
+          {% for e in rows %}
           <tr>
-            <td class="muted">{{ e.at|utc }}</td>
-            <td><code>{{ e.ip }}</code></td>
+            <td class="muted" title="{{ e.at|utc }} UTC">{{ e.at|utc }}</td>
+            <td><a class="cell" href="{{ link(address=e.ip, page=None) }}" title="Only this address"><code>{{ e.ip }}</code></a></td>
             <td>{{ e.port }}</td>
-            <td><span class="chip">{{ e|method }}</span></td>
-            <td>{% if e.username %}<code>{{ e.username }}</code>{% else %}<span class="muted">(none)</span>{% endif %}</td>
+            <td><a class="chip" href="{{ link(method=(e|method), page=None) }}">{{ e|method }}</a></td>
+            <td>{% if e.username %}<a class="cell" href="{{ link(username=e.username, page=None) }}" title="Only this username"><code>{{ e.username }}</code></a>{% else %}<span class="muted">(none)</span>{% endif %}</td>
             <td class="muted">{{ e.code }}</td>
             <td>{% if e.ip in banned %}<span class="badge badge-error" title="Currently banned by fail2ban"><span>banned now</span></span>{% endif %}</td>
           </tr>
           {% endfor %}
         </tbody>
       </table>
-      {% if pages > 1 %}
-        <p style="margin-top:1rem; display:flex; gap:0.5rem; align-items:center;">
-          {% if page > 1 %}<a class="btn btn-secondary btn-sm" href="/admin/security/failed-logins?{{ page_query }}&page={{ page - 1 }}">&larr; Newer</a>{% endif %}
-          <span class="muted">Page {{ page }} of {{ pages }}</span>
-          {% if page < pages %}<a class="btn btn-secondary btn-sm" href="/admin/security/failed-logins?{{ page_query }}&page={{ page + 1 }}">Older &rarr;</a>{% endif %}
-        </p>
-      {% endif %}
+
+    {% else %}
+      <table class="compact">
+        <thead><tr>{{ th("Username", "username") }}{{ th("Attempts", "attempts") }}</tr></thead>
+        <tbody>
+          {% for name, n in rows %}
+            <tr>
+              <td>{% if name %}<a class="cell" href="{{ link(username=name, view='attempts', page=None) }}" title="Show these attempts"><code>{{ name }}</code></a>{% else %}<span class="muted">(none)</span>{% endif %}</td>
+              <td>{{ n }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+
+    {% if rows %}
+      <div class="pager">
+        <span class="muted">{{ row_total }} {{ 'row' if row_total == 1 else 'rows' }}{% if pages > 1 %} -- Page {{ page }} of {{ pages }}{% endif %}</span>
+        {% if page > 1 %}<a class="btn btn-secondary btn-sm" href="{{ link(page=page - 1) }}">&larr; Previous</a>{% endif %}
+        {% if page < pages %}<a class="btn btn-secondary btn-sm" href="{{ link(page=page + 1) }}">Next &rarr;</a>{% endif %}
+      </div>
     {% endif %}
   </div>
 {% endblock %}

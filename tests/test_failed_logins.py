@@ -198,9 +198,10 @@ def test_junk_filter_values_do_not_break_the_page(admin):
 
 def test_a_hostile_username_is_escaped_in_the_page(admin, machine):
     _send(machine, [_attempt(username="<script>alert(1)</script>")])
-    html = admin.get("/admin/security/failed-logins").text
-    assert "<script>alert(1)</script>" not in html
-    assert "&lt;script&gt;" in html
+    for view in ("attempts", "usernames"):  # the two places a username is drawn
+        html = admin.get("/admin/security/failed-logins?view=" + view).text
+        assert "<script>alert(1)</script>" not in html, view
+        assert "&lt;script&gt;" in html, view
 
 
 def test_csv_defuses_spreadsheet_formulas(admin, machine):
@@ -212,10 +213,137 @@ def test_csv_defuses_spreadsheet_formulas(admin, machine):
 
 def test_the_page_paginates(admin, machine):
     _send(machine, [_attempt(ip="3.3.3.%d" % (i % 250), ago_s=i + 1) for i in range(150)])
-    page1 = admin.get("/admin/security/failed-logins").text
+    page1 = admin.get("/admin/security/failed-logins?view=attempts").text
     assert "Page 1 of 2" in page1
-    assert "Page 2 of 2" in admin.get("/admin/security/failed-logins?page=2").text
-    assert "Page 2 of 2" in admin.get("/admin/security/failed-logins?page=99").text  # clamped
+    assert "Page 2 of 2" in admin.get("/admin/security/failed-logins?view=attempts&page=2").text
+    assert "Page 2 of 2" in admin.get("/admin/security/failed-logins?view=attempts&page=99").text  # clamped
+
+
+def test_the_addresses_tab_pages_too_and_keeps_its_sort_across_pages(admin, machine):
+    _send(machine, [_attempt(ip="3.3.%d.%d" % (i // 250, i % 250 + 1), ago_s=i + 1) for i in range(120)])
+    page1 = admin.get("/admin/security/failed-logins?sort=ip&dir=asc").text
+    assert "Page 1 of 3" in page1  # 120 addresses, 50 to a page
+    assert "sort=ip" in page1.split("Next")[0].rsplit("href=", 1)[-1]  # the Next link carries the sort
+
+
+def _first_column(html, ips=True):
+    """The addresses (or, with ips=False, the usernames) in the order the table lists them."""
+    import re
+
+    pattern = r"\d+\.\d+\.\d+\.\d+" if ips else r"[^<]*"
+    return re.findall(r'<td><a class="cell"[^>]*><code>(%s)</code>' % pattern, html)
+
+
+def _methods_column(html):
+    """The Method cell of each attempt row, in table order."""
+    import re
+
+    return re.findall(r'<td><a class="chip"[^>]*>([^<]*)</a></td>', html)
+
+
+def test_the_addresses_tab_sorts_by_each_column_and_toggles_direction(admin, machine):
+    _send(machine, [
+        _attempt(ip="9.9.9.9", username="a", ago_s=900), _attempt(ip="9.9.9.9", username="b", ago_s=100),
+        _attempt(ip="1.1.1.1", username="a", ago_s=500),
+        _attempt(ip="5.5.5.5", username="a", ago_s=50), _attempt(ip="5.5.5.5", username="b", ago_s=60),
+        _attempt(ip="5.5.5.5", username="c", ago_s=70),
+    ])
+    get = lambda q: _first_column(admin.get("/admin/security/failed-logins?" + q).text)
+    assert get("") == ["5.5.5.5", "9.9.9.9", "1.1.1.1"]  # default: most attempts first
+    assert get("sort=attempts&dir=asc") == ["1.1.1.1", "9.9.9.9", "5.5.5.5"]
+    assert get("sort=ip&dir=asc") == ["1.1.1.1", "5.5.5.5", "9.9.9.9"]
+    assert get("sort=ip&dir=desc") == ["9.9.9.9", "5.5.5.5", "1.1.1.1"]
+    assert get("sort=last") == ["5.5.5.5", "9.9.9.9", "1.1.1.1"]  # newest last-attempt first
+    assert get("sort=first") == ["5.5.5.5", "1.1.1.1", "9.9.9.9"]  # first seen, newest first
+    assert get("sort=first&dir=asc") == ["9.9.9.9", "1.1.1.1", "5.5.5.5"]
+    assert get("sort=usernames") == ["5.5.5.5", "9.9.9.9", "1.1.1.1"]  # 3, 2, 1 different usernames
+    # The header link for the current column flips the direction; another column starts at its natural one.
+    html = admin.get("/admin/security/failed-logins?sort=ip&dir=asc").text
+    assert 'aria-sort="ascending"' in html and "sort=ip&amp;dir=desc" in html
+
+
+def test_the_attempts_tab_sorts_by_time_address_method_and_username(admin, machine):
+    _send(machine, [_attempt(ip="2.2.2.2", username="zed", ago_s=30), _attempt(ip="1.1.1.1", username="amy", ago_s=60),
+                    dict(_attempt(ip="3.3.3.3", username="bob", ago_s=90, port=22), channel="SSH")])
+    base = "/admin/security/failed-logins?view=attempts"
+    get = lambda q: _first_column(admin.get(base + q).text)
+    assert get("") == ["2.2.2.2", "1.1.1.1", "3.3.3.3"]  # newest first
+    assert get("&sort=time&dir=asc") == ["3.3.3.3", "1.1.1.1", "2.2.2.2"]
+    assert get("&sort=ip&dir=asc") == ["1.1.1.1", "2.2.2.2", "3.3.3.3"]
+    html = admin.get(base + "&sort=username&dir=asc").text
+    assert html.index(">amy<") < html.index(">bob<") < html.index(">zed<")
+    assert _methods_column(admin.get(base + "&sort=method&dir=asc").text) == ["SFTP/SCP", "SFTP/SCP", "SSH"]
+    assert _methods_column(admin.get(base + "&sort=method&dir=desc").text) == ["SSH", "SFTP/SCP", "SFTP/SCP"]
+
+
+def test_the_usernames_tab_counts_and_sorts(admin, machine):
+    _send(machine, [_attempt(username="root"), _attempt(username="root"), _attempt(username="root"),
+                    _attempt(username="admin"), _attempt(username="zed")])
+    names = lambda q: _first_column(admin.get("/admin/security/failed-logins?view=usernames" + q).text, ips=False)
+    assert names("")[0] == "root" and set(names("")) == {"root", "admin", "zed"}
+    assert names("&sort=username&dir=asc") == ["admin", "root", "zed"]
+    assert names("&sort=username&dir=desc") == ["zed", "root", "admin"]
+
+
+def test_an_unknown_sort_or_view_falls_back_to_the_default_instead_of_failing(admin, machine):
+    _seed(machine)
+    for query in ("sort=nonsense", "dir=sideways", "view=nope", "view=usernames&sort=ip", "sort=; DROP TABLE x"):
+        assert admin.get("/admin/security/failed-logins?" + query).status_code == 200, query
+
+
+def test_the_tabs_show_counts_and_link_with_the_filters_kept(admin, machine):
+    _seed(machine)
+    html = admin.get("/admin/security/failed-logins?method=FTP&window=168").text
+    assert ">Addresses <span class=\"count\">2</span>" in html  # 188.166.1.1 and 45.9.9.9 both tried FTP
+    assert ">Attempts <span class=\"count\">2</span>" in html
+    assert "view=attempts" in html and "method=FTP" in html and "window=168" in html
+
+
+def test_a_whole_address_filter_matches_only_that_address(admin, machine):
+    _send(machine, [_attempt(ip="1.2.3.4"), _attempt(ip="1.2.3.45"), _attempt(ip="1.2.3.9")])
+    lines = lambda q: len(admin.get("/admin/security/failed-logins.csv?" + q).text.splitlines()) - 1
+    assert lines("address=1.2.3.4") == 1  # not 1.2.3.45 as well
+    assert lines("address=1.2.3.") == 3  # a prefix still works
+    assert lines("address=1.2.") == 3
+
+
+def test_banned_only_shows_just_the_currently_banned_addresses(admin, machine, _isolated_db):
+    _seed(machine)
+    _add_ban_box(_isolated_db, banned=["45.9.9.9"])
+    rows = lambda q: _first_column(admin.get("/admin/security/failed-logins?" + q).text)
+    assert rows("banned=1") == ["45.9.9.9"]
+    assert set(rows("")) == {"188.166.1.1", "45.9.9.9"}
+    assert len(admin.get("/admin/security/failed-logins.csv?banned=1").text.splitlines()) == 2  # header + its one attempt
+
+
+def test_banned_only_with_nobody_banned_shows_nothing_not_everything(admin, machine, _isolated_db):
+    _seed(machine)
+    _add_ban_box(_isolated_db, banned=[])
+    assert "No refused logins" in admin.get("/admin/security/failed-logins?banned=1").text
+    assert len(admin.get("/admin/security/failed-logins.csv?banned=1").text.splitlines()) == 1
+
+
+def test_clicking_a_summary_chip_filters_by_that_method_and_clicking_again_clears_it(admin, machine):
+    _send(machine, [_attempt(port=21), dict(_attempt(port=22), channel="SSH")])
+    import re
+
+    html = admin.get("/admin/security/failed-logins").text
+    assert re.search(r'<a class="chip "\s+href="[^"]*method=SSH"', html)  # not active yet; clicking filters by it
+    active = admin.get("/admin/security/failed-logins?method=SSH").text
+    chip = re.search(r'<a class="chip active"\s+href="([^"]*)"', active)
+    assert chip  # the chosen method is highlighted...
+    assert "method=" not in chip.group(1)  # ...and its link drops the filter again
+
+
+def test_the_ban_list_is_a_collapsible_strip_open_only_when_someone_is_banned(admin, _isolated_db):
+    _add_ban_box(_isolated_db, banned=[])
+    assert '<details class="banned" >' in admin.get("/admin/security/failed-logins").text  # closed: nobody to act on
+    with _isolated_db() as session:
+        box = session.get(FtpBoxStatus, "snf-899358")
+        box.banned_ips = '["1.2.3.4"]'
+        session.commit()
+    html = admin.get("/admin/security/failed-logins").text
+    assert '<details class="banned" open>' in html and 'Banned addresses <span class="count">1</span>' in html
 
 
 def test_an_empty_report_renders(admin):
