@@ -1,8 +1,6 @@
 name: Peek at the FTP box SSH logs (one-off)
 
-# Read-only. Shows how sshd is set up on the FTP box and what its failed
-# logins really look like, so a parser can be written against the real format
-# and not a guessed one. Deleted again once that is done.
+# Read-only one-off. Deleted again once the question it asks is answered.
 on:
   workflow_dispatch:
 
@@ -10,24 +8,15 @@ jobs:
   peek:
     runs-on: [self-hosted, loader-ftp]
     steps:
-      - name: Which ports does the sshd ban actually block?
+      - name: Are the fail2ban firewall rules all in place?
         run: |
-          echo "--- effective sshd jail settings"
-          sudo -n fail2ban-client get sshd bantime
-          sudo -n fail2ban-client get sshd maxretry
-          sudo -n fail2ban-client get sshd findtime
-          sudo -n fail2ban-client get sshd actions
-          echo "--- jail definition for sshd (port line)"
-          sudo -n fail2ban-client --dump 2>/dev/null | grep -Ei "sshd.*(port|multiport)|set sshd action" | head -20 || true
-          echo "--- INPUT chain rules that send traffic to the fail2ban chains"
-          sudo -n iptables -S INPUT | grep -i f2b || true
-          echo "--- the sshd chain itself (first lines)"
-          sudo -n iptables -S f2b-sshd | head -8 || true
-          echo "--- debian defaults file"
-          cat /etc/fail2ban/jail.d/defaults-debian.conf
-
-      - name: Counts of failure kinds, last 2 days
-        run: |
-          sudo -n journalctl -u ssh --no-pager --since "-2 days" 2>/dev/null | grep -Eoi 'failed password|invalid user|connection closed by authenticating user|maximum authentication attempts exceeded|disconnected from authenticating user' | sort | uniq -c | sort -rn || true
-          echo "--- which port were they on (sshd logs the client's port, not the server's)"
-          sudo -n journalctl -u ssh --no-pager --since "-2 days" 2>/dev/null | grep -c 'Failed password' || true
+          echo "--- every INPUT rule that mentions f2b"
+          sudo -n iptables -S INPUT | grep -n -i f2b || echo "(none)"
+          echo "--- all fail2ban chains"
+          sudo -n iptables -S | grep -E '^-N f2b' || echo "(none)"
+          echo "--- loader-ftp jail"
+          sudo -n fail2ban-client status loader-ftp
+          echo "--- is it still the same fail2ban process since provisioning"
+          systemctl show fail2ban -p ActiveEnterTimestamp
+          echo "--- last fail2ban log lines about loader-ftp"
+          sudo -n grep -E 'loader-ftp\]' /var/log/fail2ban.log | tail -12
