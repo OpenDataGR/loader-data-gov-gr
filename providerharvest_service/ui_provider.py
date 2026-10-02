@@ -20,7 +20,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from providerharvest_service import build_info, connection_check, harvest_db, harvest_runner, provider_sources
+from providerharvest_service import build_info, connection_check, harvest_db, harvest_runner, nav, provider_sources
 from providerharvest_service.db import get_session
 
 router = APIRouter(prefix="/provider", tags=["provider-ui"])
@@ -28,6 +28,7 @@ templates = Jinja2Templates(directory="providerharvest_service/templates")
 templates.env.globals["build_info"] = build_info.get_build_info()
 templates.env.globals["changelog"] = build_info.get_changelog()
 templates.env.globals["now"] = datetime.datetime.now
+templates.env.globals["pending_approvals"] = nav.pending_approvals
 
 FIELD_TYPES = provider_sources.TRANSPORT_TYPES
 FREQUENCIES = provider_sources.FREQUENCIES

@@ -9,7 +9,39 @@
     {{ macros.stat_tile("rejected", counts.rejected, "rejected") }}
   </div>
 
-  <div class="panel">
+  {% if pending_sources %}
+  <div class="panel" id="pending" style="border-left:4px solid #e0a100;">
+    <h1>Awaiting approval <span class="nav-count" style="vertical-align:middle;">{{ pending_sources|length }}</span></h1>
+    <p class="subtitle">New registrations land here first -- activate to let them run, or reject with a reason.</p>
+    <table>
+      <thead>
+        <tr><th>Source</th><th>Type</th><th>Endpoint / sender</th><th>Notification e-mail</th><th>Registered</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for s in pending_sources %}
+        <tr>
+          <td><div class="name-title">{{ s.title }}</div><div class="name-slug">{{ s.name }}</div></td>
+          <td>{{ macros.type_badges(s) }}</td>
+          <td class="muted">{% if s.kind == "push" %}{{ macros.push_origin(s) }}{% else %}{{ s.endpoint_url }}{% endif %}</td>
+          <td class="muted">{{ s.notification_email or "--" }}</td>
+          <td class="muted">{{ s.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+          <td>
+            <form class="inline" method="post" action="/admin/sources/{{ s.id }}/activate">
+              <button type="submit" class="btn-sm">{{ macros.icon("check", 14) }} Activate</button>
+            </form>
+            <form class="inline" method="post" action="/admin/sources/{{ s.id }}/reject">
+              <input type="text" name="reason" class="small" placeholder="reason (optional)">
+              <button type="submit" class="btn-danger btn-sm">{{ macros.icon("x", 14) }} Reject</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <div class="panel" {% if pending_sources %}style="margin-top:1.2rem;"{% endif %}>
     <h1>All registered sources</h1>
     <p class="subtitle">Every provider source across every organization, regardless of status.</p>
 

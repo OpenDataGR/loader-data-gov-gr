@@ -99,6 +99,13 @@
       color: var(--color-primary);
       font-weight: 600;
     }
+    /* The number of sources awaiting approval, on the Admin dashboard tab. */
+    .nav-count {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 1.25rem; height: 1.25rem; padding: 0 0.35rem;
+      border-radius: 999px; background: #e0a100; color: #1d1d1d;
+      font-size: 0.72rem; font-weight: 700; line-height: 1;
+    }
 
     main {
       flex: 1;
@@ -339,8 +346,10 @@
     </div>
     <nav class="masthead-nav">
       <a href="/provider/sources" class="{{ 'active' if request.url.path.startswith('/provider') else '' }}">{{ macros.icon("provider", 16) }} Provider portal</a>
-      <a href="/admin/sources/pending" class="{{ 'active' if request.url.path == '/admin/sources/pending' else '' }}">{{ macros.icon("queue", 16) }} Pending approval</a>
-      <a href="/admin/sources" class="{{ 'active' if request.url.path == '/admin/sources' else '' }}">{{ macros.icon("admin", 16) }} Admin dashboard</a>
+      {# Sources waiting for approval, as a number on the dashboard tab. Not on the login page: nothing about the
+         queue is for someone who has not logged in. #}
+      {% set pending_n = pending_approvals() if (pending_approvals is defined and request.url.path != '/admin/login') else 0 %}
+      <a href="/admin/sources" class="{{ 'active' if request.url.path == '/admin/sources' else '' }}">{{ macros.icon("admin", 16) }} Admin dashboard{% if pending_n %}<span class="nav-count" title="{{ pending_n }} source{{ '' if pending_n == 1 else 's' }} awaiting approval" aria-label="{{ pending_n }} awaiting approval">{{ pending_n }}</span>{% endif %}</a>
       <a href="/admin/ftp" class="{{ 'active' if request.url.path == '/admin/ftp' else '' }}">{{ macros.icon("push", 16) }} FTP box</a>
       <a href="/admin/security/failed-logins" class="{{ 'active' if request.url.path.startswith('/admin/security') else '' }}">{{ macros.icon("rejected", 16) }} Security box</a>
       {% if request.url.path != '/admin/login' %}

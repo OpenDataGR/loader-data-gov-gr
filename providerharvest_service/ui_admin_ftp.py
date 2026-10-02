@@ -42,7 +42,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from providerharvest_service import build_info
+from providerharvest_service import build_info, nav
 from providerharvest_service.admin_ftp import generate_password, hash_password, normalize_allowed_cidr
 from providerharvest_service.db import get_session
 from providerharvest_service.models import FtpAccount, FtpAllowedIp, FtpBoxStatus
@@ -52,6 +52,7 @@ templates = Jinja2Templates(directory="providerharvest_service/templates")
 templates.env.globals["build_info"] = build_info.get_build_info()
 templates.env.globals["changelog"] = build_info.get_changelog()
 templates.env.globals["now"] = datetime.datetime.now
+templates.env.globals["pending_approvals"] = nav.pending_approvals
 
 # A box that hasn't reported in this long is shown as stale rather than
 # trusted at face value -- the account-sync cycle this relies on runs

@@ -30,9 +30,10 @@ def _admin_session_env(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _isolated_db(tmp_path):
+def _isolated_db(tmp_path, monkeypatch):
     engine = db.make_engine("sqlite:///%s" % (tmp_path / "test.db"))
     session_factory = db.make_session_factory(engine)
+    monkeypatch.setattr(db, "SessionLocal", session_factory)  # what the masthead's pending count reads
 
     def _override():
         session = session_factory()
@@ -69,11 +70,107 @@ def _register(session_factory, **overrides):
         return source.id
 
 
-def test_pending_queue_lists_only_pending_sources(client, _isolated_db):
+def _approval_panel(html):
+    """The 'Awaiting approval' panel's markup, or '' when the dashboard has none."""
+    if 'id="pending"' not in html:
+        return ""
+    return html.split('id="pending"', 1)[1].split("All registered sources", 1)[0]
+
+
+def test_the_dashboard_has_an_approval_panel_listing_pending_sources(client, _isolated_db):
     _register(_isolated_db)
-    resp = client.get("/admin/sources/pending")
-    assert resp.status_code == 200
-    assert "acme-open-data" in resp.text
+    panel = _approval_panel(client.get("/admin/sources").text)
+    assert "Awaiting approval" in client.get("/admin/sources").text
+    assert "acme-open-data" in panel
+    assert "/activate" in panel and "/reject" in panel  # the buttons moved with it
+
+
+def test_there_is_no_approval_panel_when_nothing_is_pending(client, _isolated_db):
+    source_id = _register(_isolated_db)
+    client.post("/admin/sources/%s/activate" % source_id)
+    text = client.get("/admin/sources").text
+    assert 'id="pending"' not in text and "Awaiting approval" not in text
+
+
+def test_only_pending_sources_are_in_the_approval_panel(client, _isolated_db):
+    first = _register(_isolated_db)
+    _register(_isolated_db, name="second-source")
+    client.post("/admin/sources/%s/activate" % first)
+    panel = _approval_panel(client.get("/admin/sources").text)
+    assert "second-source" in panel and "acme-open-data" not in panel
+
+
+def test_the_old_pending_page_redirects_to_the_dashboard_panel(client):
+    resp = client.get("/admin/sources/pending", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/admin/sources#pending"
+
+
+def test_the_old_pending_page_still_needs_the_login(_isolated_db):
+    anonymous = TestClient(app, base_url="https://testserver")
+    resp = anonymous.get("/admin/sources/pending", follow_redirects=False)
+    assert resp.status_code == 303 and resp.headers["location"].startswith("/admin/login")
+
+
+def test_there_is_no_pending_approval_tab_any_more(client, _isolated_db):
+    _register(_isolated_db)
+    nav_html = client.get("/admin/sources").text.split('<nav class="masthead-nav">', 1)[1].split("</nav>", 1)[0]
+    assert "Pending approval" not in nav_html and 'href="/admin/sources/pending"' not in nav_html
+    assert "Admin dashboard" in nav_html
+
+
+def _nav(html):
+    return html.split('<nav class="masthead-nav">', 1)[1].split("</nav>", 1)[0]
+
+
+def test_the_dashboard_tab_shows_how_many_sources_await_approval(client, _isolated_db):
+    _register(_isolated_db)
+    _register(_isolated_db, name="second-source")
+    _register(_isolated_db, name="third-source")
+    nav_html = _nav(client.get("/admin/sources").text)
+    assert '<span class="nav-count"' in nav_html and ">3</span>" in nav_html
+    assert "3 sources awaiting approval" in nav_html
+
+
+def test_the_count_is_singular_for_one_and_absent_for_none(client, _isolated_db):
+    source_id = _register(_isolated_db)
+    assert "1 source awaiting approval" in _nav(client.get("/admin/sources").text)
+    client.post("/admin/sources/%s/activate" % source_id)
+    assert "nav-count" not in _nav(client.get("/admin/sources").text)
+
+
+def test_the_count_appears_on_every_page_not_just_the_dashboard(client, _isolated_db):
+    _register(_isolated_db)
+    for path in ("/provider/sources", "/admin/ftp", "/admin/security/failed-logins"):
+        assert ">1</span>" in _nav(client.get(path).text), path
+
+
+def test_rejecting_a_source_lowers_the_count(client, _isolated_db):
+    source_id = _register(_isolated_db)
+    _register(_isolated_db, name="second-source")
+    client.post("/admin/sources/%s/reject" % source_id, data={"reason": "no"})
+    assert "1 source awaiting approval" in _nav(client.get("/admin/sources").text)
+
+
+def test_the_login_page_does_not_show_the_queue_count(_isolated_db):
+    _register(_isolated_db)
+    anonymous = TestClient(app, base_url="https://testserver")
+    assert "nav-count" not in _nav(anonymous.get("/admin/login").text)
+
+
+def test_a_failing_count_costs_the_badge_not_the_page(client, monkeypatch, _isolated_db):
+    from providerharvest_service import nav
+
+    class Broken:
+        def __enter__(self):
+            raise RuntimeError("database is locked")
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(db, "SessionLocal", lambda: Broken())
+    assert nav.pending_approvals() == 0
+    assert client.get("/admin/sources").status_code == 200
 
 
 def test_activate_moves_source_out_of_pending_queue(client, _isolated_db):
@@ -81,9 +178,9 @@ def test_activate_moves_source_out_of_pending_queue(client, _isolated_db):
 
     resp = client.post("/admin/sources/%s/activate" % source_id, follow_redirects=False)
     assert resp.status_code == 303
+    assert resp.headers["location"].startswith("/admin/sources?")  # back to the dashboard
 
-    pending = client.get("/admin/sources/pending")
-    assert "acme-open-data" not in pending.text
+    assert 'id="pending"' not in client.get("/admin/sources").text
 
     all_sources = client.get("/admin/sources")
     assert "active" in all_sources.text
@@ -197,8 +294,10 @@ def test_admin_lists_badge_pull_and_push_sources(client, _isolated_db):
     with _isolated_db() as session:
         provider_sources.register(session, {"name": "acme-push", "title": "Push", "transport_type": "push"})
 
-    for path in ("/admin/sources", "/admin/sources/pending"):
-        text = client.get(path).text
-        assert '<span class="badge badge-pull"' in text, path
-        assert '<span class="badge badge-push"' in text, path
-        assert "<span>https</span>" in text, path
+    text = client.get("/admin/sources").text
+    assert '<span class="badge badge-pull"' in text
+    assert '<span class="badge badge-push"' in text
+    assert "<span>https</span>" in text
+    # ...and in the approval panel too, where pending sources are also listed.
+    panel = _approval_panel(text)
+    assert '<span class="badge badge-pull"' in panel and '<span class="badge badge-push"' in panel

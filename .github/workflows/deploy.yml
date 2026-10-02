@@ -9,22 +9,39 @@ jobs:
   test:
     runs-on: [self-hosted, loader]
     steps:
-      - name: Pull latest code
+      # The tests take minutes, so they must NOT run in the live directory after a
+      # `git pull`: the running server (old code, already in memory) would then serve
+      # the new templates straight off disk for the whole run, and any template that
+      # needs something the old code lacks would 500 until the restart in the deploy
+      # job -- seen live as an Internal Server Error on a freshly redesigned page. The
+      # commit under test gets its own scratch checkout; the live directory is only
+      # touched by the deploy job, right before the restart.
+      - name: Check out this commit in its own scratch directory
         run: |
           cd /opt/data-projects/loader-data-gov-gr
-          git pull
+          git fetch origin master
+          CI="$HOME/ci/loader-data-gov-gr"
+          mkdir -p "$HOME/ci"
+          git worktree prune
+          if [ -d "$CI" ]; then git worktree remove --force "$CI"; fi
+          git worktree add --detach "$CI" "${{ github.sha }}"
+          git -C "$CI" log --oneline -1
 
       - name: Install dependencies
         run: |
-          cd /opt/data-projects/loader-data-gov-gr
-          source venv/bin/activate
-          pip install -r requirements.txt
+          source /opt/data-projects/loader-data-gov-gr/venv/bin/activate
+          pip install -r "$HOME/ci/loader-data-gov-gr/requirements.txt"
 
       - name: Run tests
         run: |
-          cd /opt/data-projects/loader-data-gov-gr
-          source venv/bin/activate
-          pytest tests -q
+          CI="$HOME/ci/loader-data-gov-gr"
+          source /opt/data-projects/loader-data-gov-gr/venv/bin/activate
+          cd "$CI"
+          # Guard: the tests must be exercising THIS checkout, not the live code (an
+          # installed copy of the package could shadow it and give a false green).
+          where=$(python -c "import os, providerharvest_service as p; print(os.path.dirname(os.path.dirname(os.path.abspath(p.__file__))))")
+          test "$where" = "$CI" || { echo "::error::tests would import $where, not $CI"; exit 1; }
+          python -m pytest tests -q
 
   deploy:
     needs: test

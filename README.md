@@ -412,9 +412,11 @@ inline `<script>` just toggles which fieldset is visible for the
 selected transport/auth type, matching the old blueprint's own
 "works without JS, nicer with it" convention). `/provider/sources` +
 `/provider/sources/new` are the provider-facing register/list/pause/
-resume flow; `/admin/sources/pending` + `/admin/sources` are the
-admin approval queue and the "every source, any status" dashboard.
-Both link to the same shared `/provider/sources/{id}/edit` (any field,
+resume flow; `/admin/sources` is the admin dashboard: the approval
+queue (only when something is waiting -- the number of waiting sources is
+also shown on the dashboard's tab in the masthead, see `nav.py`) above the
+"every source, any status" list. (`/admin/sources/pending`, the queue's old
+page, redirects there.) Both link to the same shared `/provider/sources/{id}/edit` (any field,
 any status, admin or provider -- one implementation, matching the
 single-stand-in-user model) and a `/{id}/delete` with a confirm
 prompt. Editing reuses the registration form itself, pre-filled from

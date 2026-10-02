@@ -35,7 +35,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import and_, case, distinct, func, or_, select
 from sqlalchemy.orm import Session
 
-from providerharvest_service import build_info, failed_auth
+from providerharvest_service import build_info, failed_auth, nav
 from providerharvest_service.admin_ftp import SFTP_SCP
 from providerharvest_service.db import get_session
 from providerharvest_service.models import FtpBoxStatus, FtpLoginAttempt, FtpUnbanRequest
@@ -45,8 +45,9 @@ templates = Jinja2Templates(directory="providerharvest_service/templates")
 templates.env.globals["build_info"] = build_info.get_build_info()
 templates.env.globals["changelog"] = build_info.get_changelog()
 templates.env.globals["now"] = datetime.datetime.now
+templates.env.globals["pending_approvals"] = nav.pending_approvals
 
-PAGE = "/admin/security/failed-logins"
+PAGE ="/admin/security/failed-logins"
 CSV_ROW_CAP = 50_000
 
 # (key in the URL, label, hours back -- None = everything that is kept)

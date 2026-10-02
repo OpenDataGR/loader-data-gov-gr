@@ -15,13 +15,14 @@ from fastapi.templating import Jinja2Templates
 
 from starlette.concurrency import run_in_threadpool
 
-from providerharvest_service import admin_session, build_info, failed_auth
+from providerharvest_service import admin_session, build_info, failed_auth, nav
 
 router = APIRouter(prefix="/admin", tags=["admin-login"])
 templates = Jinja2Templates(directory="providerharvest_service/templates")
 templates.env.globals["build_info"] = build_info.get_build_info()
 templates.env.globals["changelog"] = build_info.get_changelog()
 templates.env.globals["now"] = datetime.datetime.now
+templates.env.globals["pending_approvals"] = nav.pending_approvals
 
 _DEFAULT_NEXT = "/provider/sources"
 
