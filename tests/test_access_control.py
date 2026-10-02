@@ -307,7 +307,7 @@ def test_adding_by_hand_records_who_and_shows_it_in_its_list(admin, session):
     assert rule.expires_at is not None
     html = admin.get(PAGE).text
     blacklist = html.split('id="blacklist"', 1)[1].split("</section>", 1)[0]
-    assert "<code>203.0.113.9/32</code>" in blacklist and "port scanner" in blacklist and "by test-admin" in blacklist
+    assert "<code>203.0.113.9/32</code>" in blacklist and "port scanner" in blacklist and "test-admin" in blacklist
 
 
 @pytest.mark.parametrize("data", [
@@ -400,6 +400,29 @@ def test_the_page_shows_three_lists_and_buttons_to_move_between_them(admin, sess
     assert 'name="to" value="allow"' in black and "Remove" in black
     white = html.split('id="whitelist"', 1)[1].split("</section>", 1)[0]
     assert 'name="to" value="block"' in white and "Remove" in white
+
+
+def test_long_lists_show_the_first_few_and_fold_the_rest_behind_show_more(admin, session, _isolated_db):
+    ips = ["198.51.100.%d" % i for i in range(1, 21)]
+    _add_box(_isolated_db, banned=ips)
+    for i in range(1, 9):
+        access_control.add_rule(session, BLOCK, "203.0.113.%d" % i)
+    html = admin.get(PAGE).text
+    banned = html.split('id="banned-list"', 1)[1].split("</section>", 1)[0]
+    visible, folded = banned.split('<details class="more">', 1)
+    assert visible.count("<code>") == 6 and "Show 14 more" in folded and folded.count("<code>") == 14  # all 20 are there
+    black = html.split('id="blacklist"', 1)[1].split("</section>", 1)[0]
+    assert "Show 2 more" in black and black.count("<code>") == 8
+
+
+def test_each_entry_has_one_actions_menu_not_a_row_of_buttons(admin, session, _isolated_db):
+    _add_box(_isolated_db, banned=["198.51.100.4"])
+    access_control.add_rule(session, BLOCK, "203.0.113.9")
+    html = admin.get(PAGE).text
+    banned = html.split('id="banned-list"', 1)[1].split("</section>", 1)[0]
+    assert banned.count('class="actions-menu"') == 1 and "Move to blacklist" in banned and "Move to whitelist" in banned
+    black = html.split('id="blacklist"', 1)[1].split("</section>", 1)[0]
+    assert black.count('class="actions-menu"') == 1 and "Move to whitelist" in black and "Remove from the blacklist" in black
 
 
 def test_empty_lists_say_so(admin):

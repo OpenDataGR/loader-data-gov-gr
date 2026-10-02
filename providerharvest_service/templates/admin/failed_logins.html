@@ -23,11 +23,13 @@
     .listcol { border:1px solid #e3e7ee; border-radius:8px; padding:0.6rem 0.8rem 0.7rem; background:#fbfcfe; }
     .listcol h3 { margin:0 0 0.15rem; font-size:0.95rem; color:var(--color-primary); display:flex; align-items:center; gap:0.4rem; }
     .listcol > p.muted { margin:0 0 0.45rem; }
-    .listcol .boxname { margin-top:0.5rem; font-size:0.85rem; }
-    .entry { display:flex; flex-wrap:wrap; align-items:center; gap:0.25rem 0.5rem; padding:0.28rem 0; border-top:1px dashed #e3e7ee; font-size:0.85rem; }
-    .entry:first-of-type { border-top:none; }
-    .entry .what { min-width:7.5rem; }
-    .entry .acts { margin-left:auto; display:inline-flex; gap:0.3rem; flex-wrap:wrap; }
+    .listcol .boxname { margin-top:0.4rem; font-size:0.85rem; }
+    .entry { display:flex; align-items:center; gap:0.5rem; padding:0.18rem 0; border-top:1px dashed #e3e7ee; font-size:0.85rem; }
+    .entry.first { border-top:none; }
+    .entry .info { flex:1; min-width:0; overflow-wrap:anywhere; }
+    .entry .info .muted { margin-left:0.35rem; font-size:0.78rem; }
+    .entry .actions-menu-toggle, td.acts .actions-menu-toggle { padding:0.12rem 0.5rem; line-height:1.2; }
+    details.more > summary { cursor:pointer; font-size:0.8rem; color:var(--color-primary); padding:0.25rem 0 0.1rem; }
     .add-rule { display:flex; flex-wrap:wrap; gap:0.45rem; align-items:center; margin-top:0.9rem; padding-top:0.7rem; border-top:1px solid #e3e7ee; }
     .add-rule select, .add-rule input[type=text] { width:auto; margin:0; padding:0.35rem 0.55rem; font-size:0.85rem; }
     .add-rule input[name=cidr] { width:10.5rem; }
@@ -43,8 +45,9 @@
     table.compact th a.sort:hover { text-decoration:underline; }
     table.compact td a.cell { color:inherit; text-decoration:none; border-bottom:1px dotted #9aa5b5; }
     table.compact td a.cell:hover { color:var(--color-primary); border-bottom-style:solid; }
-    table.compact td.acts { white-space:nowrap; }
-    table.compact td.acts form { margin-left:0.2rem; }
+    table.compact td.acts { white-space:nowrap; text-align:right; }
+    table.compact td.acts .actions-menu { margin-left:0.3rem; vertical-align:middle; }
+    table.compact td.acts .badge { vertical-align:middle; }
     .pager { display:flex; flex-wrap:wrap; gap:0.5rem; align-items:center; margin-top:0.7rem; }
   </style>
 
@@ -52,12 +55,47 @@
     <th aria-sort="{{ sort_aria(key) }}"><a class="sort" href="{{ sort_href(key) }}">{{ label }}{% if sort_mark(key) %} {{ sort_mark(key) }}{% endif %}</a></th>
   {%- endmacro %}
 
-  {# One button that moves an address to a list (taking it off the other). to = block | allow | none. #}
-  {% macro move_btn(cidr, to, label, confirm_text="", title="") -%}
-    <form class="inline" method="post" action="/admin/security/rules/move"{% if confirm_text %} onsubmit="return confirm('{{ confirm_text }}');"{% endif %}>
-      <input type="hidden" name="cidr" value="{{ cidr }}"><input type="hidden" name="to" value="{{ to }}">
-      <button type="submit" class="btn-sm btn-secondary"{% if title %} title="{{ title }}"{% endif %}>{{ label }}</button>
+  {# A "..." dropdown, the same one the sources list uses (base.html). Its items are given by the caller. #}
+  {% macro menu() -%}
+    <div class="actions-menu">
+      <button type="button" class="btn-secondary btn-sm actions-menu-toggle" onclick="toggleActionsMenu(this)" aria-label="Actions" aria-haspopup="true" title="Actions">&#8943;</button>
+      <div class="actions-menu-list">{{ caller() }}</div>
+    </div>
+  {%- endmacro %}
+
+  {# One item of such a menu: a form with a single button. #}
+  {% macro item(action, label, fields, confirm_text="", danger=False) -%}
+    <form method="post" action="{{ action }}"{% if confirm_text %} onsubmit="return confirm('{{ confirm_text }}');"{% endif %}>
+      {% for k, v in fields.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+      <button type="submit"{% if danger %} class="danger"{% endif %}>{{ label }}</button>
     </form>
+  {%- endmacro %}
+
+  {# One banned address: its menu has Unban and the two moves. #}
+  {% macro ban_entry(box, ip, first) -%}
+    <div class="entry{% if first %} first{% endif %}">
+      <span class="info"><code>{{ ip }}</code>{% if ip in box.pending_unban %}<span class="muted">unban requested -- waiting for the box</span>{% endif %}</span>
+      {% call menu() %}
+        {% if ip not in box.pending_unban %}{{ item("/admin/security/boxes/" ~ box.hostname ~ "/unban", "Unban", {"ip": ip}, "Let " ~ ip ~ " back in?") }}{% endif %}
+        {{ item("/admin/security/rules/move", "Move to blacklist", {"cidr": ip, "to": "block"}, "Blacklist " ~ ip ~ " for good? Everything from it will be refused.") }}
+        {{ item("/admin/security/rules/move", "Move to whitelist", {"cidr": ip, "to": "allow"}) }}
+      {% endcall %}
+    </div>
+  {%- endmacro %}
+
+  {# One blacklist (kind = block) or whitelist (kind = allow) rule. #}
+  {% macro rule_entry(rule, kind, first) -%}
+    <div class="entry{% if first %} first{% endif %}">
+      <span class="info"><code>{{ rule.cidr }}</code><span class="muted">{% if rule.note %}{{ rule.note }} &middot; {% endif %}{% if rule.expires_at %}until {{ rule.expires_at|short_utc }} UTC{% else %}no expiry{% endif %}{% if rule.created_by %} &middot; {{ rule.created_by }}{% endif %}</span></span>
+      {% call menu() %}
+        {% if kind == 'block' %}
+          {{ item("/admin/security/rules/move", "Move to whitelist", {"cidr": rule.cidr, "to": "allow"}) }}
+        {% else %}
+          {{ item("/admin/security/rules/move", "Move to blacklist", {"cidr": rule.cidr, "to": "block"}, "Blacklist " ~ rule.cidr ~ "? Everything from it will be refused.") }}
+        {% endif %}
+        {{ item("/admin/security/rules/" ~ rule.id ~ "/delete", "Remove from the " ~ ("blacklist" if kind == 'block' else "whitelist"), {}, "Remove " ~ rule.cidr ~ " from the " ~ ("blacklist" if kind == 'block' else "whitelist") ~ "?", True) }}
+      {% endcall %}
+    </div>
   {%- endmacro %}
 
   <div class="panel">
@@ -110,34 +148,22 @@
       </summary>
 
       <div class="lists3">
+        {% set shown = 6 %}
         <section class="listcol" id="banned-list">
           <h3>Banned now <span class="count">{{ banned_total }}</span></h3>
-          <p class="muted">Blocked automatically after repeated refused logins (5 in 10 minutes bans for an hour; 8 in 6 hours
-            -- a slow scanner -- for a day; longer for repeat offenders). Shown as last reported by each FTP box.</p>
+          <p class="muted">Banned automatically after repeated refused logins (5 in 10 minutes: an hour; 8 in 6 hours: a day; repeat offenders longer). As last reported by each FTP box.</p>
           {% if not boxes %}<p class="muted">No FTP box has reported in yet.</p>{% endif %}
           {% for box in boxes %}
             <div class="boxname name-title">{{ box.hostname }}
               {% if box.fail2ban_active is false %}<span class="badge badge-error" title="fail2ban is not running: failed logins are not being banned">{{ macros.icon("rejected", 13) }}<span>fail2ban off</span></span>{% endif %}
             </div>
             {% if box.banned %}
-              {% for ip in box.banned %}
-                <div class="entry">
-                  <span class="what"><code>{{ ip }}</code></span>
-                  <span class="acts">
-                    {% if ip in box.pending_unban %}
-                      <span class="muted">unban requested -- waiting for the box</span>
-                    {% else %}
-                      <form class="inline" method="post" action="/admin/security/boxes/{{ box.hostname }}/unban"
-                            onsubmit="return confirm('Let {{ ip }} back in?');">
-                        <input type="hidden" name="ip" value="{{ ip }}">
-                        <button type="submit" class="btn-sm btn-secondary">Unban</button>
-                      </form>
-                    {% endif %}
-                    {{ move_btn(ip, 'block', '&rarr; Blacklist'|safe, 'Blacklist ' ~ ip ~ ' for good? Everything from it will be refused.', 'Keep it out permanently') }}
-                    {{ move_btn(ip, 'allow', '&rarr; Whitelist'|safe, '', 'Trust it: lifts the ban and never bans it again') }}
-                  </span>
-                </div>
-              {% endfor %}
+              {% for ip in box.banned[:shown] %}{{ ban_entry(box, ip, loop.first) }}{% endfor %}
+              {% if box.banned|length > shown %}
+                <details class="more"><summary>Show {{ box.banned|length - shown }} more</summary>
+                  {% for ip in box.banned[shown:] %}{{ ban_entry(box, ip, false) }}{% endfor %}
+                </details>
+              {% endif %}
             {% else %}
               <p class="muted" style="margin:0.3rem 0 0;">No addresses banned right now.</p>
             {% endif %}
@@ -146,40 +172,30 @@
 
         <section class="listcol" id="blacklist">
           <h3>Blacklist <span class="count">{{ blacklist|length }}</span></h3>
-          <p class="muted">Always refused: every request to loader gets a 403, and the FTP box drops its packets.</p>
-          {% for rule in blacklist %}
-            <div class="entry">
-              <span class="what"><code>{{ rule.cidr }}</code></span>
-              <span class="muted">{% if rule.note %}{{ rule.note }} &middot; {% endif %}{% if rule.expires_at %}until {{ rule.expires_at|short_utc }} UTC{% else %}no expiry{% endif %}{% if rule.created_by %} &middot; by {{ rule.created_by }}{% endif %}</span>
-              <span class="acts">
-                {{ move_btn(rule.cidr, 'allow', '&rarr; Whitelist'|safe, '', 'Trust it instead') }}
-                <form class="inline" method="post" action="/admin/security/rules/{{ rule.id }}/delete" onsubmit="return confirm('Remove {{ rule.cidr }} from the blacklist?');">
-                  <button type="submit" class="btn-sm btn-secondary">Remove</button>
-                </form>
-              </span>
-            </div>
+          <p class="muted">Always refused: loader answers 403 and the FTP box drops the packets.</p>
+          {% for rule in blacklist[:shown] %}{{ rule_entry(rule, 'block', loop.first) }}
           {% else %}
             <p class="muted">Nothing blacklisted.</p>
           {% endfor %}
+          {% if blacklist|length > shown %}
+            <details class="more"><summary>Show {{ blacklist|length - shown }} more</summary>
+              {% for rule in blacklist[shown:] %}{{ rule_entry(rule, 'block', false) }}{% endfor %}
+            </details>
+          {% endif %}
         </section>
 
         <section class="listcol" id="whitelist">
           <h3>Whitelist <span class="count">{{ whitelist|length }}</span></h3>
-          <p class="muted">Trusted: never banned, and wins over the blacklist (one trusted address inside a blocked range stays in).</p>
-          {% for rule in whitelist %}
-            <div class="entry">
-              <span class="what"><code>{{ rule.cidr }}</code></span>
-              <span class="muted">{% if rule.note %}{{ rule.note }} &middot; {% endif %}{% if rule.expires_at %}until {{ rule.expires_at|short_utc }} UTC{% else %}no expiry{% endif %}{% if rule.created_by %} &middot; by {{ rule.created_by }}{% endif %}</span>
-              <span class="acts">
-                {{ move_btn(rule.cidr, 'block', '&rarr; Blacklist'|safe, 'Blacklist ' ~ rule.cidr ~ '? Everything from it will be refused.', 'Block it instead') }}
-                <form class="inline" method="post" action="/admin/security/rules/{{ rule.id }}/delete" onsubmit="return confirm('Remove {{ rule.cidr }} from the whitelist?');">
-                  <button type="submit" class="btn-sm btn-secondary">Remove</button>
-                </form>
-              </span>
-            </div>
+          <p class="muted">Trusted: never banned, and wins over the blacklist.</p>
+          {% for rule in whitelist[:shown] %}{{ rule_entry(rule, 'allow', loop.first) }}
           {% else %}
             <p class="muted">Nothing whitelisted.</p>
           {% endfor %}
+          {% if whitelist|length > shown %}
+            <details class="more"><summary>Show {{ whitelist|length - shown }} more</summary>
+              {% for rule in whitelist[shown:] %}{{ rule_entry(rule, 'allow', false) }}{% endfor %}
+            </details>
+          {% endif %}
         </section>
       </div>
 
@@ -246,8 +262,10 @@
               {% if st == 'block' %}<span class="badge badge-error" title="On the blacklist"><span>blacklisted</span></span>{% endif %}
               {% if st == 'allow' %}<span class="badge badge-ok" title="On the whitelist"><span>whitelisted</span></span>{% endif %}
               {% if row.ip in banned %}<span class="badge badge-error" title="Currently banned by fail2ban"><span>banned now</span></span>{% endif %}
-              {% if st != 'block' %}{{ move_btn(row.ip, 'block', 'Blacklist', 'Blacklist ' ~ row.ip ~ '? Everything from it will be refused.', 'Always refuse this address') }}{% endif %}
-              {% if st != 'allow' %}{{ move_btn(row.ip, 'allow', 'Whitelist', '', 'Trust this address: never ban it') }}{% endif %}
+              {% call menu() %}
+                {% if st != 'block' %}{{ item("/admin/security/rules/move", "Blacklist this address", {"cidr": row.ip, "to": "block"}, "Blacklist " ~ row.ip ~ "? Everything from it will be refused.") }}{% endif %}
+                {% if st != 'allow' %}{{ item("/admin/security/rules/move", "Whitelist this address", {"cidr": row.ip, "to": "allow"}) }}{% endif %}
+              {% endcall %}
             </td>
           </tr>
           {% endfor %}
