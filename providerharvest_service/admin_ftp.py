@@ -17,12 +17,14 @@ import ipaddress
 import json
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from providerharvest_service import access_control
 from providerharvest_service.admin_auth import require_admin_key, require_ftp_sync_key
+from providerharvest_service.client_addr import sender_address
 from providerharvest_service.db import get_session
 from providerharvest_service.ftp_credentials import (
     USERNAME_RE,
@@ -348,6 +350,18 @@ class FtpBoxStatusIn(_BoxStatusFields):
     # The box's fail2ban state; both optional so a box on older code still reports.
     banned_ips: list[str] | None = None
     fail2ban_active: bool | None = None
+    # The version of the whitelist/blacklist the box has applied (see
+    # access_control.py); None from a box on older code.
+    access_version: str | None = None
+
+
+class AccessOut(BaseModel):
+    """The whitelist and blacklist the box is to enforce, with the version it
+    should report back once it has."""
+
+    version: str
+    allow: list[str] = []
+    block: list[str] = []
 
 
 class FtpBoxStatusOut(_BoxStatusFields):
@@ -355,6 +369,7 @@ class FtpBoxStatusOut(_BoxStatusFields):
     # Addresses an admin asked to be let back in, for the box to release
     # now -- how a request made here reaches a box that loader can't call.
     unban: list[str] = []
+    access: AccessOut | None = None
 
 
 # A request the box never acts on (it's down, or fail2ban is) shouldn't sit
@@ -364,7 +379,7 @@ UNBAN_REQUEST_TTL = datetime.timedelta(minutes=15)
 
 @sync_router.put("/admin/ftp-box-status", response_model=FtpBoxStatusOut)
 def report_ftp_box_status(
-    payload: FtpBoxStatusIn, session: Session = Depends(get_session)
+    payload: FtpBoxStatusIn, request: Request, session: Session = Depends(get_session)
 ) -> FtpBoxStatusOut:
     # Same narrow LOADER_FTP_SYNC_KEY as the sync pull above, not a new
     # credential -- this is that same remote box reporting on itself
@@ -386,6 +401,9 @@ def report_ftp_box_status(
         addresses = {_valid_address(candidate) for candidate in payload.banned_ips}
         row.banned_ips = json.dumps(sorted(a for a in addresses if a))
     row.fail2ban_active = payload.fail2ban_active
+    row.access_version = payload.access_version
+    # Where this report came from: the one address no block may ever cover.
+    row.address = sender_address(request) or row.address
     for client in payload.clients:
         _record_sender(session, client.username, client.ip)
     pending = _collect_unban_requests(session, row)
@@ -402,6 +420,7 @@ def report_ftp_box_status(
         sync_message=row.sync_message,
         reported_at=row.reported_at,
         unban=pending,
+        access=AccessOut(**access_control.box_payload(session)),
     )
 
 

@@ -325,6 +325,28 @@ def test_a_refused_report_asks_for_nothing_to_be_unbanned():
     assert report.accepted is False and report.unban == ()
 
 
+# -- loader's whitelist/blacklist in the heartbeat ----------------------------------------
+
+def test_report_status_sends_the_applied_access_version_and_returns_the_rules():
+    rules = {"version": "abc", "allow": ["198.51.100.7/32"], "block": ["203.0.113.0/24"]}
+    session = FakeSession(FakeResponse(200), put_response=FakeResponse(200, json_body={"unban": [], "access": rules}))
+    report = _report(session, access_version="")
+    assert session.put_calls[0]["json"]["access_version"] == ""  # nothing applied yet is still said, so loader shows "waiting"
+    assert report.access == rules
+
+    session = FakeSession(FakeResponse(200), put_response=FakeResponse(200))
+    _report(session, access_version="abc")
+    assert session.put_calls[0]["json"]["access_version"] == "abc"
+    session = FakeSession(FakeResponse(200), put_response=FakeResponse(200))
+    _report(session)
+    assert "access_version" not in session.put_calls[0]["json"]
+
+
+def test_a_reply_without_rules_has_none():
+    for body in ({}, [], {"access": None}):
+        assert _report(FakeSession(FakeResponse(200), put_response=FakeResponse(200, json_body=body))).access is None
+
+
 # -- per-account login limits during a sync ---------------------------------------
 
 def test_sync_applies_the_limits_before_the_accounts_become_loginable(tmp_path):

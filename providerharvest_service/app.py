@@ -21,6 +21,7 @@ import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, status
 
 from providerharvest_service import db, harvest_db, scheduler
+from providerharvest_service.access_middleware import AccessControlMiddleware
 from providerharvest_service.admin_auth import require_admin_key
 from providerharvest_service.admin_ftp import router as ftp_accounts_router
 from providerharvest_service.admin_ftp import sync_router as ftp_accounts_sync_router
@@ -59,6 +60,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="providerharvest-service", lifespan=lifespan)
 app.add_middleware(AdminSessionMiddleware)
 app.add_middleware(FailedAuthMiddleware)
+# Added last, so it runs first: a blacklisted address gets nothing, not even the login redirect.
+app.add_middleware(AccessControlMiddleware)
 app.include_router(ftp_accounts_router)
 app.include_router(ftp_accounts_sync_router)
 app.include_router(provider_sources_ui_router)

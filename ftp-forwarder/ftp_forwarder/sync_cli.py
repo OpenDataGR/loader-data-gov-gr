@@ -15,7 +15,7 @@ import time
 
 import requests
 
-from ftp_forwarder import account_sync, box_health, ip_limits
+from ftp_forwarder import access_rules, account_sync, box_health, ip_limits
 from ftp_forwarder.attempts_log import AttemptsLogTail
 from ftp_forwarder.auth_log import AuthLogTail
 from ftp_forwarder.ssh_log import JournalSshTail
@@ -114,6 +114,9 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("cannot read %s (%s): failed FTP/SFTP logins will not be reported", args.attempts_token_file, exc)
     attempts_tail = AttemptsLogTail(args.attempts_log, args.attempts_state, attempts_token)
     ssh_tail = JournalSshTail(args.ssh_state, unit=args.ssh_unit)
+    # Starts with nothing applied: the chain lives in memory, so after a restart (or a
+    # reboot) loader's rules are put back at the first heartbeat.
+    enforcer = access_rules.Enforcer(jails=jails)
 
     while True:
         pending_logins.update(auth_tail.poll())
@@ -146,9 +149,18 @@ def main(argv: list[str] | None = None) -> int:
             sync_message=sync_message,
             clients=[{"username": login.username, "ip": login.ip} for login in pending_logins.values()],
             banned_ips=box_health.read_banned_in(jails),
+            access_version=enforcer.applied_version or "",
         )
         if report.accepted:
             pending_logins.clear()
+            # Loader's whitelist and blacklist. Any problem leaves what is in force alone and
+            # shows as "waiting" on loader's side, until the next heartbeat tries again.
+            try:
+                access = access_rules.parse(report.access)
+                if access is not None and enforcer.apply(access):
+                    logger.info("access rules %s applied", access.version)
+            except access_rules.AccessError as exc:
+                logger.error("could not apply loader's access rules: %s", exc)
             # Addresses an admin asked loader to let back in; the next report
             # then shows them gone from the ban list, which closes the request.
             for address in report.unban:

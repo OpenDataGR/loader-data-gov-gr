@@ -28,6 +28,18 @@ def _cheap_bcrypt(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _fresh_access_rules():
+    """The blacklist/whitelist is cached in-process for a few seconds (see
+    access_control.cached_snapshot); a rule added in one test must not still be
+    cached when the next one starts."""
+    from providerharvest_service import access_control
+
+    access_control.invalidate()
+    yield
+    access_control.invalidate()
+
+
+@pytest.fixture(autouse=True)
 def _failed_auth_goes_to_a_throwaway_db(tmp_path, monkeypatch):
     """Refused logins/keys are recorded through ``db.SessionLocal`` (see
     failed_auth.py), outside the get_session dependency that tests override.

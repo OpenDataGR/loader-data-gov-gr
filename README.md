@@ -153,6 +153,25 @@ limits"). The source is the single place the list is edited: the FTP box page
 shows a provider's account list read-only, and the JSON admin API refuses to
 change it (409). Admin-made accounts keep their manual "Allowed from" list.
 
+**Whitelist and blacklist (the Security box's "Address control").** One panel
+holds three lists side by side -- *Banned now* (fail2ban, per FTP box),
+*Blacklist* and *Whitelist* -- and every entry can be moved to another list
+with a button (Banned -> Blacklist, Banned -> Whitelist, Blacklist <->
+Whitelist, or removed), or added by hand with a note and an optional expiry
+(`access_control.py`, `AccessRule`). **Blacklist**: loader answers every HTTP
+request from it with 403 before anything else, even before the login redirect
+(`access_middleware.py`, outermost; the refusal is recorded as *Blocked
+address*), and the FTP box drops its packets (see `ftp-forwarder/README.md`).
+**Whitelist**: never banned, and it *wins over* the blacklist, so a trusted
+address inside a blocked range gets through; on the box it goes into fail2ban's
+`ignoreip` and any current ban on it is lifted. IPv4 addresses and ranges only,
+nothing wider than a /8, and the guards that matter: you cannot blacklist your
+own address or the FTP box's (unless whitelisted first), since locking yourself or
+the relay out cannot be undone from the page. Each worker process caches the
+rules for 5 seconds (at once on the one that made the change). The box learns the
+rules from the reply to its heartbeat (`access`, with a `version`) and reports
+the version it has applied, shown per box as *rules applied* / *waiting*.
+
 `ui_admin_ftp.py`
 puts an actual HTML page on this (`/admin/ftp`, in the masthead nav)
 -- the account list plus live status for every remote FTP/SFTP-

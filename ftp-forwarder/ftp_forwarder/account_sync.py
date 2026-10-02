@@ -189,6 +189,8 @@ class Report:
 
     accepted: bool
     unban: tuple[str, ...] = ()
+    # Loader's whitelist/blacklist as sent (not yet validated -- see access_rules.parse).
+    access: object = None
 
     def __bool__(self) -> bool:
         return self.accepted
@@ -206,6 +208,7 @@ def report_status(
     sync_message: str | None,
     clients: list[dict] | None = None,
     banned_ips: list[str] | None = None,
+    access_version: str | None = None,
     timeout_s: float = 30.0,
 ) -> Report:
     """Best-effort: a failed heartbeat is logged, never raised -- this
@@ -232,6 +235,8 @@ def report_status(
     }
     if banned_ips is not None:
         payload["banned_ips"] = banned_ips
+    if access_version is not None:
+        payload["access_version"] = access_version  # "" until a set of rules has been applied
     try:
         resp = session.put(url, json=payload, headers={"X-Ftp-Sync-Key": sync_key}, timeout=timeout_s)
         if resp.status_code != 200:
@@ -247,7 +252,11 @@ def report_status(
     unban = body.get("unban") if isinstance(body, dict) else None
     if not isinstance(unban, list):
         unban = []
-    return Report(accepted=True, unban=tuple(a for a in unban if isinstance(a, str)))
+    return Report(
+        accepted=True,
+        unban=tuple(a for a in unban if isinstance(a, str)),
+        access=body.get("access") if isinstance(body, dict) else None,
+    )
 
 
 def report_attempts(

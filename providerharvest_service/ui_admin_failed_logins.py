@@ -27,7 +27,7 @@ import datetime
 import io
 import ipaddress
 import math
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -35,8 +35,9 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import and_, case, distinct, func, or_, select
 from sqlalchemy.orm import Session
 
-from providerharvest_service import build_info, failed_auth, nav
+from providerharvest_service import access_control, admin_session, build_info, failed_auth, nav
 from providerharvest_service.admin_ftp import SFTP_SCP
+from providerharvest_service.client_addr import sender_address
 from providerharvest_service.db import get_session
 from providerharvest_service.models import FtpBoxStatus, FtpLoginAttempt, FtpUnbanRequest
 
@@ -80,7 +81,8 @@ METHOD = case(
     ),
 )
 _KNOWN_METHODS = ("FTP", SFTP_SCP, "SSH", failed_auth.WEB_LOGIN, failed_auth.PUSH_KEY, failed_auth.ADMIN_KEY,
-                  failed_auth.BOX_KEY, failed_auth.BEARER, failed_auth.PUSH_ADDRESS, failed_auth.OTHER_HTTP)
+                  failed_auth.BOX_KEY, failed_auth.BEARER, failed_auth.PUSH_ADDRESS, failed_auth.BLOCKED,
+                  failed_auth.OTHER_HTTP)
 
 # What each view can be sorted by: URL key -> SQL expression. The first entry is the default.
 _SORTS = {
@@ -264,8 +266,94 @@ def _boxes_with_pending_unbans(session: Session) -> list[FtpBoxStatus]:
     return boxes
 
 
-def _back(flash: str, kind: str = "success") -> RedirectResponse:
-    return RedirectResponse("%s?%s" % (PAGE, urlencode({"flash": flash, "flash_kind": kind})), status_code=303)
+def _back(flash: str, kind: str = "success", request: Request | None = None) -> RedirectResponse:
+    """Back to this page with a message. When the click came from this very page
+    (the Referer, which is only believed if it is this page's own path) the
+    filters, tab and sort in its query string are kept, so acting on a row does
+    not throw away what you were looking at."""
+    params: dict = {}
+    if request is not None:
+        referer = urlsplit(request.headers.get("referer") or "")
+        if referer.path == PAGE:
+            params = {k: v for k, v in parse_qsl(referer.query) if k not in ("flash", "flash_kind")}
+    params.update({"flash": flash, "flash_kind": kind})
+    return RedirectResponse("%s?%s" % (PAGE, urlencode(params)), status_code=303)
+
+
+def _who(request: Request) -> str:
+    """The logged-in admin's name, for the audit column of a rule."""
+    return admin_session.verify_session_cookie(request.cookies.get(admin_session.COOKIE_NAME, "")) or ""
+
+
+LIST_NAME = {access_control.BLOCK: "blacklist", access_control.ALLOW: "whitelist"}
+
+
+@router.post("/rules")
+async def add_rule(request: Request, session: Session = Depends(get_session)):
+    """Add an address or range to the blacklist or whitelist by hand."""
+    form = await request.form()
+    kind = str(form.get("kind") or "")
+    try:
+        rule = access_control.add_rule(
+            session, kind, str(form.get("cidr") or ""), note=str(form.get("note") or ""),
+            created_by=_who(request), duration=str(form.get("duration") or "forever"),
+            requester=sender_address(request),
+        )
+    except access_control.AccessError as exc:
+        return _back(str(exc), "error", request)
+    return _back("Added %s to the %s." % (rule.cidr, LIST_NAME[kind]), request=request)
+
+
+@router.post("/rules/move")
+async def move_rule(request: Request, session: Session = Depends(get_session)):
+    """Put an address on a list, taking it off the other one -- or, with
+    ``to=none``, off whichever list it is on. This is how an address goes from the
+    ban list to the blacklist or whitelist, and between those two."""
+    form = await request.form()
+    to = str(form.get("to") or "")
+    try:
+        rule = access_control.move(
+            session, str(form.get("cidr") or ""), to, created_by=_who(request),
+            duration=str(form.get("duration") or "forever"), requester=sender_address(request),
+        )
+    except access_control.AccessError as exc:
+        return _back(str(exc), "error", request)
+    if rule is None:
+        return _back("Removed %s from its list." % str(form.get("cidr") or "").strip(), request=request)
+    released = _release_whitelisted_bans(session, rule) if to == access_control.ALLOW else 0
+    note = " and asked the box to lift its ban" if released else ""
+    return _back("%s is now on the %s%s." % (rule.cidr, LIST_NAME[to], note), request=request)
+
+
+def _release_whitelisted_bans(session: Session, rule) -> int:
+    """A newly trusted address that fail2ban currently holds should be let go now,
+    not when its ban runs out: ask each box that has it banned (the same request the
+    Unban button makes). The box would also do it when it applies the rule; this is
+    the quicker route."""
+    network = ipaddress.ip_network(rule.cidr)
+    made = 0
+    for box in session.scalars(select(FtpBoxStatus)).all():
+        for address in box.banned:
+            try:
+                inside = ipaddress.ip_address(address) in network
+            except ValueError:
+                continue
+            if not inside:
+                continue
+            if session.scalar(select(FtpUnbanRequest).where(FtpUnbanRequest.hostname == box.hostname, FtpUnbanRequest.ip == address)) is None:
+                session.add(FtpUnbanRequest(hostname=box.hostname, ip=address))
+                made += 1
+    if made:
+        session.commit()
+    return made
+
+
+@router.post("/rules/{rule_id}/delete")
+def delete_rule(rule_id: str, request: Request, session: Session = Depends(get_session)):
+    rule = access_control.remove_rule(session, rule_id)
+    if rule is None:
+        return _back("No such rule (it may already have been removed or expired).", "error", request)
+    return _back("Removed %s from the %s." % (rule.cidr, LIST_NAME.get(rule.kind, "list")), request=request)
 
 
 @router.post("/boxes/{hostname}/unban")
@@ -278,21 +366,21 @@ async def unban_address(request: Request, hostname: str, session: Session = Depe
     arbitrary addresses."""
     box = session.get(FtpBoxStatus, hostname)
     if box is None:
-        return _back("No such box.", "error")
+        return _back("No such box.", "error", request)
     form = await request.form()
     try:
         address = str(ipaddress.ip_address((form.get("ip") or "").strip()))
     except ValueError:
-        return _back("That is not an IP address.", "error")
+        return _back("That is not an IP address.", "error", request)
     if address not in box.banned:
-        return _back("%s is not on the ban list (it may already have been released)." % address, "error")
+        return _back("%s is not on the ban list (it may already have been released)." % address, "error", request)
     already = session.scalar(
         select(FtpUnbanRequest).where(FtpUnbanRequest.hostname == hostname, FtpUnbanRequest.ip == address)
     )
     if already is None:
         session.add(FtpUnbanRequest(hostname=hostname, ip=address))
         session.commit()
-    return _back("Unban requested for %s -- the box applies it within about a minute." % address)
+    return _back("Unban requested for %s -- the box applies it within about a minute." % address, request=request)
 
 
 @router.get("/failed-logins", response_class=HTMLResponse)
@@ -351,6 +439,13 @@ def attempts_report(request: Request, page: int = 1, session: Session = Depends(
         return ("ascending" if f.direction == "asc" else "descending") if f.sort == key else "none"
 
     boxes = _boxes_with_pending_unbans(session)
+    snap = access_control.snapshot(session)
+    all_rules = access_control.rules(session)
+    for box in boxes:
+        # Has this box applied the current whitelist/blacklist? Unknown for a box on older code.
+        box.access_state = (  # type: ignore[attr-defined]
+            "unknown" if box.access_version is None else ("applied" if box.access_version == snap.version else "waiting")
+        )
     return templates.TemplateResponse(
         request,
         "admin/failed_logins.html",
@@ -365,6 +460,10 @@ def attempts_report(request: Request, page: int = 1, session: Session = Depends(
             "banned": banned,
             "boxes": boxes,
             "banned_total": len(banned),
+            "blacklist": [r for r in all_rules if r.kind == access_control.BLOCK],
+            "whitelist": [r for r in all_rules if r.kind == access_control.ALLOW],
+            "durations": access_control.DURATIONS,
+            "state_of": snap.verdict,
             "link": link,
             "sort_href": sort_href,
             "sort_mark": sort_mark,

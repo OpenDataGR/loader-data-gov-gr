@@ -15,11 +15,25 @@
     a.chip { text-decoration:none; }
     a.chip b { font-weight:700; margin-left:0.2rem; }
     .chip.active { background:var(--color-primary-light); color:#fff; }
-    details.banned { margin-top:0.8rem; border-top:1px solid #e3e7ee; padding-top:0.6rem; }
-    details.banned > summary { cursor:pointer; font-weight:600; color:var(--color-primary); }
     .count { display:inline-block; min-width:1.4rem; text-align:center; padding:0 0.35rem; border-radius:0.7rem; background:#e8edf5; font-size:0.78rem; font-weight:600; color:var(--color-primary); }
-    .ban-items { display:flex; flex-wrap:wrap; gap:0.35rem 0.9rem; margin:0.3rem 0 0.6rem; }
-    .ban-item { display:inline-flex; align-items:center; gap:0.4rem; }
+
+    details.control > summary { cursor:pointer; font-weight:600; color:var(--color-primary); font-size:1.02rem; }
+    details.control > summary .muted { font-weight:400; margin-left:0.6rem; }
+    .lists3 { display:grid; grid-template-columns:repeat(auto-fit, minmax(270px, 1fr)); gap:0.9rem 1.2rem; margin-top:0.7rem; }
+    .listcol { border:1px solid #e3e7ee; border-radius:8px; padding:0.6rem 0.8rem 0.7rem; background:#fbfcfe; }
+    .listcol h3 { margin:0 0 0.15rem; font-size:0.95rem; color:var(--color-primary); display:flex; align-items:center; gap:0.4rem; }
+    .listcol > p.muted { margin:0 0 0.45rem; }
+    .listcol .boxname { margin-top:0.5rem; font-size:0.85rem; }
+    .entry { display:flex; flex-wrap:wrap; align-items:center; gap:0.25rem 0.5rem; padding:0.28rem 0; border-top:1px dashed #e3e7ee; font-size:0.85rem; }
+    .entry:first-of-type { border-top:none; }
+    .entry .what { min-width:7.5rem; }
+    .entry .acts { margin-left:auto; display:inline-flex; gap:0.3rem; flex-wrap:wrap; }
+    .add-rule { display:flex; flex-wrap:wrap; gap:0.45rem; align-items:center; margin-top:0.9rem; padding-top:0.7rem; border-top:1px solid #e3e7ee; }
+    .add-rule select, .add-rule input[type=text] { width:auto; margin:0; padding:0.35rem 0.55rem; font-size:0.85rem; }
+    .add-rule input[name=cidr] { width:10.5rem; }
+    .add-rule input[name=note] { width:13rem; }
+    .boxrules { margin:0.5rem 0 0; }
+
     .tabs { display:flex; flex-wrap:wrap; align-items:center; gap:0.2rem; border-bottom:2px solid #e3e7ee; margin-bottom:0.5rem; }
     .tabs a.tab { padding:0.5rem 0.9rem; text-decoration:none; color:var(--color-gray-700); font-weight:600; border-bottom:3px solid transparent; margin-bottom:-2px; }
     .tabs a.tab.active { color:var(--color-primary); border-bottom-color:var(--color-primary-light); }
@@ -29,11 +43,21 @@
     table.compact th a.sort:hover { text-decoration:underline; }
     table.compact td a.cell { color:inherit; text-decoration:none; border-bottom:1px dotted #9aa5b5; }
     table.compact td a.cell:hover { color:var(--color-primary); border-bottom-style:solid; }
+    table.compact td.acts { white-space:nowrap; }
+    table.compact td.acts form { margin-left:0.2rem; }
     .pager { display:flex; flex-wrap:wrap; gap:0.5rem; align-items:center; margin-top:0.7rem; }
   </style>
 
   {% macro th(label, key) -%}
     <th aria-sort="{{ sort_aria(key) }}"><a class="sort" href="{{ sort_href(key) }}">{{ label }}{% if sort_mark(key) %} {{ sort_mark(key) }}{% endif %}</a></th>
+  {%- endmacro %}
+
+  {# One button that moves an address to a list (taking it off the other). to = block | allow | none. #}
+  {% macro move_btn(cidr, to, label, confirm_text="", title="") -%}
+    <form class="inline" method="post" action="/admin/security/rules/move"{% if confirm_text %} onsubmit="return confirm('{{ confirm_text }}');"{% endif %}>
+      <input type="hidden" name="cidr" value="{{ cidr }}"><input type="hidden" name="to" value="{{ to }}">
+      <button type="submit" class="btn-sm btn-secondary"{% if title %} title="{{ title }}"{% endif %}>{{ label }}</button>
+    </form>
   {%- endmacro %}
 
   <div class="panel">
@@ -75,41 +99,116 @@
            title="{{ 'Show all methods' if f.method == row.method else 'Only ' ~ row.method }}">{{ row.method }}<b>{{ row.n }}</b></a>
       {% endfor %}
     </div>
+  </div>
 
-    <details class="banned" {% if banned_total %}open{% endif %}>
-      <summary>Banned addresses <span class="count">{{ banned_total }}</span></summary>
-      <p class="muted" style="margin:0.3rem 0 0;">
-        FTP/SFTP/SSH addresses blocked after repeated refused logins (5 in 10 minutes bans for an hour; 8 in 6 hours
-        -- a slow scanner -- bans for a day; longer for repeat offenders). If a provider has locked themselves out,
-        let them back in here -- the box applies it within about a minute. Shown as last reported by each box.
-      </p>
-      {% if not boxes %}
-        <p class="muted">No FTP box has reported in yet.</p>
-      {% endif %}
-      {% for box in boxes %}
-        <div class="name-title" style="margin-top:0.6rem;">{{ box.hostname }}
-          {% if box.fail2ban_active is false %}<span class="badge badge-error" title="fail2ban is not running: failed logins are not being banned">{{ macros.icon("rejected", 13) }}<span>fail2ban off</span></span>{% endif %}
-        </div>
-        {% if box.banned %}
-          <div class="ban-items">
-            {% for ip in box.banned %}
-              <span class="ban-item"><code>{{ ip }}</code>
-                {% if ip in box.pending_unban %}
-                  <span class="muted">unban requested -- waiting for the box</span>
-                {% else %}
-                  <form class="inline" method="post" action="/admin/security/boxes/{{ box.hostname }}/unban"
-                        onsubmit="return confirm('Let {{ ip }} back in?');">
-                    <input type="hidden" name="ip" value="{{ ip }}">
-                    <button type="submit" class="btn-sm btn-secondary">Unban</button>
-                  </form>
-                {% endif %}
+  <div class="panel" style="margin-top:0.9rem;" id="address-control">
+    <details class="control" {% if banned_total or blacklist or whitelist %}open{% endif %}>
+      <summary>Address control
+        <span class="muted"><span class="count">{{ banned_total }}</span> banned
+          &middot; <span class="count">{{ blacklist|length }}</span> blacklisted
+          &middot; <span class="count">{{ whitelist|length }}</span> whitelisted</span>
+      </summary>
+
+      <div class="lists3">
+        <section class="listcol" id="banned-list">
+          <h3>Banned now <span class="count">{{ banned_total }}</span></h3>
+          <p class="muted">Blocked automatically after repeated refused logins (5 in 10 minutes bans for an hour; 8 in 6 hours
+            -- a slow scanner -- for a day; longer for repeat offenders). Shown as last reported by each FTP box.</p>
+          {% if not boxes %}<p class="muted">No FTP box has reported in yet.</p>{% endif %}
+          {% for box in boxes %}
+            <div class="boxname name-title">{{ box.hostname }}
+              {% if box.fail2ban_active is false %}<span class="badge badge-error" title="fail2ban is not running: failed logins are not being banned">{{ macros.icon("rejected", 13) }}<span>fail2ban off</span></span>{% endif %}
+            </div>
+            {% if box.banned %}
+              {% for ip in box.banned %}
+                <div class="entry">
+                  <span class="what"><code>{{ ip }}</code></span>
+                  <span class="acts">
+                    {% if ip in box.pending_unban %}
+                      <span class="muted">unban requested -- waiting for the box</span>
+                    {% else %}
+                      <form class="inline" method="post" action="/admin/security/boxes/{{ box.hostname }}/unban"
+                            onsubmit="return confirm('Let {{ ip }} back in?');">
+                        <input type="hidden" name="ip" value="{{ ip }}">
+                        <button type="submit" class="btn-sm btn-secondary">Unban</button>
+                      </form>
+                    {% endif %}
+                    {{ move_btn(ip, 'block', '&rarr; Blacklist'|safe, 'Blacklist ' ~ ip ~ ' for good? Everything from it will be refused.', 'Keep it out permanently') }}
+                    {{ move_btn(ip, 'allow', '&rarr; Whitelist'|safe, '', 'Trust it: lifts the ban and never bans it again') }}
+                  </span>
+                </div>
+              {% endfor %}
+            {% else %}
+              <p class="muted" style="margin:0.3rem 0 0;">No addresses banned right now.</p>
+            {% endif %}
+          {% endfor %}
+        </section>
+
+        <section class="listcol" id="blacklist">
+          <h3>Blacklist <span class="count">{{ blacklist|length }}</span></h3>
+          <p class="muted">Always refused: every request to loader gets a 403, and the FTP box drops its packets.</p>
+          {% for rule in blacklist %}
+            <div class="entry">
+              <span class="what"><code>{{ rule.cidr }}</code></span>
+              <span class="muted">{% if rule.note %}{{ rule.note }} &middot; {% endif %}{% if rule.expires_at %}until {{ rule.expires_at|short_utc }} UTC{% else %}no expiry{% endif %}{% if rule.created_by %} &middot; by {{ rule.created_by }}{% endif %}</span>
+              <span class="acts">
+                {{ move_btn(rule.cidr, 'allow', '&rarr; Whitelist'|safe, '', 'Trust it instead') }}
+                <form class="inline" method="post" action="/admin/security/rules/{{ rule.id }}/delete" onsubmit="return confirm('Remove {{ rule.cidr }} from the blacklist?');">
+                  <button type="submit" class="btn-sm btn-secondary">Remove</button>
+                </form>
               </span>
-            {% endfor %}
-          </div>
+            </div>
+          {% else %}
+            <p class="muted">Nothing blacklisted.</p>
+          {% endfor %}
+        </section>
+
+        <section class="listcol" id="whitelist">
+          <h3>Whitelist <span class="count">{{ whitelist|length }}</span></h3>
+          <p class="muted">Trusted: never banned, and wins over the blacklist (one trusted address inside a blocked range stays in).</p>
+          {% for rule in whitelist %}
+            <div class="entry">
+              <span class="what"><code>{{ rule.cidr }}</code></span>
+              <span class="muted">{% if rule.note %}{{ rule.note }} &middot; {% endif %}{% if rule.expires_at %}until {{ rule.expires_at|short_utc }} UTC{% else %}no expiry{% endif %}{% if rule.created_by %} &middot; by {{ rule.created_by }}{% endif %}</span>
+              <span class="acts">
+                {{ move_btn(rule.cidr, 'block', '&rarr; Blacklist'|safe, 'Blacklist ' ~ rule.cidr ~ '? Everything from it will be refused.', 'Block it instead') }}
+                <form class="inline" method="post" action="/admin/security/rules/{{ rule.id }}/delete" onsubmit="return confirm('Remove {{ rule.cidr }} from the whitelist?');">
+                  <button type="submit" class="btn-sm btn-secondary">Remove</button>
+                </form>
+              </span>
+            </div>
+          {% else %}
+            <p class="muted">Nothing whitelisted.</p>
+          {% endfor %}
+        </section>
+      </div>
+
+      <form class="add-rule" method="post" action="/admin/security/rules">
+        <strong style="font-size:0.85rem;">Add</strong>
+        <input type="text" name="cidr" placeholder="203.0.113.9 or 198.51.100.0/24" aria-label="Address or range" required>
+        <select name="kind" aria-label="List">
+          <option value="block">to the blacklist</option>
+          <option value="allow">to the whitelist</option>
+        </select>
+        <select name="duration" aria-label="For how long">
+          {% for key, label, _ in durations %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+        </select>
+        <input type="text" name="note" maxlength="200" placeholder="Note (optional)" aria-label="Note">
+        <button type="submit" class="btn-sm">Add</button>
+      </form>
+      <p class="muted" style="margin:0.4rem 0 0;">IPv4 addresses and ranges (nothing wider than a /8). You can't blacklist your own address or the FTP box's.
+        Changes reach loader within a few seconds and the FTP box within about a minute:</p>
+      <p class="boxrules muted">
+        {% for box in boxes %}
+          <span style="margin-right:1rem;">{{ box.hostname }}:
+            {% if box.access_state == 'applied' %}<span class="badge badge-ok"><span>rules applied</span></span>
+            {% elif box.access_state == 'waiting' %}<span class="badge badge-pending"><span>waiting for the box</span></span>
+            {% else %}<span class="muted">rules status unknown (box on older code)</span>{% endif %}
+          </span>
         {% else %}
-          <p class="muted" style="margin:0.3rem 0 0;">No addresses banned right now.</p>
-        {% endif %}
-      {% endfor %}
+          no FTP box has reported in yet
+        {% endfor %}
+      </p>
     </details>
   </div>
 
@@ -135,6 +234,7 @@
         </thead>
         <tbody>
           {% for row in rows %}
+          {% set st = state_of(row.ip) %}
           <tr>
             <td><a class="cell" href="{{ link(address=row.ip, view='attempts', page=None) }}" title="Show this address's attempts"><code>{{ row.ip }}</code></a></td>
             <td class="name-title">{{ row.attempts }}</td>
@@ -142,7 +242,13 @@
             <td class="muted" title="{{ row.last_at|utc }} UTC">{{ row.last_at|short_utc }}</td>
             <td>{% for m in (row.methods or "").split(",")|sort %}<a class="chip" href="{{ link(method=m, page=None) }}">{{ m }}</a> {% endfor %}</td>
             <td>{{ row.usernames }}</td>
-            <td>{% if row.ip in banned %}<span class="badge badge-error" title="Currently banned by fail2ban"><span>banned now</span></span>{% endif %}</td>
+            <td class="acts">
+              {% if st == 'block' %}<span class="badge badge-error" title="On the blacklist"><span>blacklisted</span></span>{% endif %}
+              {% if st == 'allow' %}<span class="badge badge-ok" title="On the whitelist"><span>whitelisted</span></span>{% endif %}
+              {% if row.ip in banned %}<span class="badge badge-error" title="Currently banned by fail2ban"><span>banned now</span></span>{% endif %}
+              {% if st != 'block' %}{{ move_btn(row.ip, 'block', 'Blacklist', 'Blacklist ' ~ row.ip ~ '? Everything from it will be refused.', 'Always refuse this address') }}{% endif %}
+              {% if st != 'allow' %}{{ move_btn(row.ip, 'allow', 'Whitelist', '', 'Trust this address: never ban it') }}{% endif %}
+            </td>
           </tr>
           {% endfor %}
         </tbody>

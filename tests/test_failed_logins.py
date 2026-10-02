@@ -335,15 +335,15 @@ def test_clicking_a_summary_chip_filters_by_that_method_and_clicking_again_clear
     assert "method=" not in chip.group(1)  # ...and its link drops the filter again
 
 
-def test_the_ban_list_is_a_collapsible_strip_open_only_when_someone_is_banned(admin, _isolated_db):
+def test_address_control_is_a_collapsible_panel_open_only_when_there_is_something_to_act_on(admin, _isolated_db):
     _add_ban_box(_isolated_db, banned=[])
-    assert '<details class="banned" >' in admin.get("/admin/security/failed-logins").text  # closed: nobody to act on
+    assert '<details class="control" >' in admin.get("/admin/security/failed-logins").text  # closed: nothing listed
     with _isolated_db() as session:
         box = session.get(FtpBoxStatus, "snf-899358")
         box.banned_ips = '["1.2.3.4"]'
         session.commit()
     html = admin.get("/admin/security/failed-logins").text
-    assert '<details class="banned" open>' in html and 'Banned addresses <span class="count">1</span>' in html
+    assert '<details class="control" open>' in html and "<h3>Banned now <span class=\"count\">1</span></h3>" in html
 
 
 def test_an_empty_report_renders(admin):

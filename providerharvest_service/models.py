@@ -240,10 +240,35 @@ class FtpBoxStatus(Base):
     # fail2ban itself is running (NULL: a box that doesn't report it).
     banned_ips: Mapped[str | None] = mapped_column(String, nullable=True)
     fail2ban_active: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # The address this box's reports come from (its public IP, as loader sees it):
+    # what the access rules must never block, or the box could not reach loader.
+    address: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Which version of the loader's whitelist/blacklist (see access_control.py) the
+    # box says it has applied; compared with the current one to show "applied" or
+    # "waiting". NULL: a box that doesn't report it.
+    access_version: Mapped[str | None] = mapped_column(String, nullable=True)
 
     @property
     def banned(self) -> list[str]:
         return json.loads(self.banned_ips) if self.banned_ips else []
+
+
+class AccessRule(Base):
+    """One entry of the Security box's whitelist ("allow") or blacklist ("block"):
+    an IPv4 address or range. Enforced by loader itself on every HTTP request and,
+    through the box's heartbeat reply, by the FTP box (see access_control.py). A
+    rule may carry an expiry (a temporary block); expired rules are ignored."""
+
+    __tablename__ = "access_rule"
+    __table_args__ = (Index("ix_access_rule_kind_cidr", "kind", "cidr", unique=True),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_new_id)
+    kind: Mapped[str] = mapped_column(String, nullable=False)  # "allow" | "block"
+    cidr: Mapped[str] = mapped_column(String, nullable=False)  # canonical IPv4 network
+    note: Mapped[str] = mapped_column(String, nullable=False, default="")
+    created_by: Mapped[str] = mapped_column(String, nullable=False, default="")
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
+    expires_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class FtpUnbanRequest(Base):
