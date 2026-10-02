@@ -1,0 +1,137 @@
+name: Prove per-user IP limits in ProFTPD (one-off)
+
+# Throwaway: starts a second ProFTPD on spare ports (2291 FTP, 2292 SFTP) with its own
+# tiny account database and three test accounts, and tries each over FTP and SFTP:
+#   t-allow  limited to the address we connect from   -> must get in
+#   t-deny   limited to some other address            -> must be refused (right password!)
+#   t-open   no limit                                  -> must get in
+# Question being settled: does <IfUser> + <Limit LOGIN> bind SFTP (mod_sftp) as well as
+# plain FTP? The live service on 21/2222 is not touched. Deleted again afterwards.
+on:
+  workflow_dispatch:
+
+jobs:
+  prove:
+    runs-on: [self-hosted, loader-ftp]
+    steps:
+      - name: Which modules does this ProFTPD have?
+        run: |
+          sudo -n proftpd -l | grep -E 'ifsession|sftp|sql|wrap2' || true
+          sudo -n proftpd -vv 2>&1 | head -3
+          grep -rn 'ifsession' /etc/proftpd/modules.conf || echo "(no ifsession line in modules.conf)"
+
+      - name: Start the throwaway server
+        run: |
+          rm -rf /tmp/iplimit && mkdir -p /tmp/iplimit && cd /tmp/iplimit
+          UIDN=$(id -u); GIDN=$(id -g)
+          HASH=$(openssl passwd -6 'test-pass-123')
+          sqlite3 accounts.db "CREATE TABLE ftp_account (username TEXT PRIMARY KEY, password_hash TEXT, home_directory TEXT);
+            CREATE TABLE groups (groupname TEXT PRIMARY KEY, gid INTEGER, members TEXT);
+            INSERT INTO ftp_account VALUES ('t-allow','$HASH','/tmp/iplimit/home');
+            INSERT INTO ftp_account VALUES ('t-deny','$HASH','/tmp/iplimit/home');
+            INSERT INTO ftp_account VALUES ('t-open','$HASH','/tmp/iplimit/home');"
+          mkdir -p home
+          cat > proftpd.conf <<EOF
+          ServerName "iplimit-proof"
+          ServerType standalone
+          DefaultServer on
+          Port 2291
+          UseIPv6 off
+          PidFile /tmp/iplimit/proftpd.pid
+          ScoreboardFile /tmp/iplimit/scoreboard
+          SystemLog /tmp/iplimit/system.log
+          TransferLog none
+          AuthOrder mod_sql.c
+          SQLBackend sqlite3
+          SQLConnectInfo /tmp/iplimit/accounts.db
+          SQLAuthTypes Crypt
+          SQLUserInfo ftp_account username password_hash NULL NULL home_directory NULL
+          SQLDefaultUID $UIDN
+          SQLDefaultGID $GIDN
+          RequireValidShell off
+          <Global>
+            <IfUser t-allow>
+              <Limit LOGIN>
+                Allow 127.0.0.1
+                DenyAll
+              </Limit>
+            </IfUser>
+            <IfUser t-deny>
+              <Limit LOGIN>
+                Allow 203.0.113.0/24
+                DenyAll
+              </Limit>
+            </IfUser>
+          </Global>
+          <VirtualHost 0.0.0.0>
+            Port 2292
+            <IfModule mod_sftp.c>
+              SFTPEngine on
+              SFTPHostKey /etc/proftpd/ssh_host_rsa_key
+              SFTPAuthMethods password
+            </IfModule>
+            SQLBackend sqlite3
+            SQLConnectInfo /tmp/iplimit/accounts.db
+            SQLAuthTypes Crypt
+            SQLUserInfo ftp_account username password_hash NULL NULL home_directory NULL
+            SQLDefaultUID $UIDN
+            SQLDefaultGID $GIDN
+            RequireValidShell off
+          </VirtualHost>
+          EOF
+          sudo -n proftpd -t -c /tmp/iplimit/proftpd.conf
+          sudo -n nohup proftpd -n -c /tmp/iplimit/proftpd.conf > server.out 2>&1 &
+          sleep 4
+          sudo -n ss -tlnp | grep -E ':2291 |:2292 ' || { echo "::error::throwaway server did not start"; cat server.out; exit 1; }
+
+      - name: Try each account over FTP and SFTP
+        run: |
+          cd /tmp/iplimit
+          python3 -m venv v && ./v/bin/pip install -q paramiko
+          cat > try.py <<'PY'
+          import ftplib, sys, paramiko, logging
+          logging.getLogger("paramiko").setLevel(logging.CRITICAL)
+          PW = "test-pass-123"
+          results = {}
+          for user in ("t-allow", "t-deny", "t-open"):
+              try:
+                  f = ftplib.FTP(); f.connect("127.0.0.1", 2291, timeout=15); f.login(user, PW); f.quit()
+                  results[("FTP", user)] = "LOGGED IN"
+              except ftplib.error_perm as e:
+                  results[("FTP", user)] = "refused: %s" % str(e)[:60]
+              except Exception as e:
+                  results[("FTP", user)] = "ERROR %r" % e
+              c = paramiko.SSHClient(); c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+              try:
+                  c.connect("127.0.0.1", 2292, username=user, password=PW, allow_agent=False, look_for_keys=False, timeout=15)
+                  results[("SFTP", user)] = "LOGGED IN"
+              except paramiko.AuthenticationException as e:
+                  results[("SFTP", user)] = "refused: %s" % e
+              except Exception as e:
+                  results[("SFTP", user)] = "ERROR %r" % e
+              finally:
+                  c.close()
+          expected = {("FTP","t-allow"):True, ("FTP","t-deny"):False, ("FTP","t-open"):True,
+                      ("SFTP","t-allow"):True, ("SFTP","t-deny"):False, ("SFTP","t-open"):True}
+          ok = True
+          for key, want in expected.items():
+              got = results[key] == "LOGGED IN"
+              flag = "ok " if got == want else "WRONG"
+              if got != want: ok = False
+              print("%-5s %-8s expected %-9s -> %s  [%s]" % (key[0], key[1], "in" if want else "refused", results[key], flag))
+          sys.exit(0 if ok else 1)
+          PY
+          ./v/bin/python try.py
+
+      - name: What did ProFTPD log about the refusals?
+        if: always()
+        run: |
+          sudo -n grep -Ei 'denied|t-deny|limit|login' /tmp/iplimit/system.log | tail -20 || true
+
+      - name: Tear the throwaway server down
+        if: always()
+        run: |
+          sudo -n kill "$(cat /tmp/iplimit/proftpd.pid 2>/dev/null)" 2>/dev/null || true
+          sleep 1
+          sudo -n rm -rf /tmp/iplimit
+          sudo -n ss -tlnp | grep -E ':2291 |:2292 ' && echo "::warning::throwaway server still listening" || echo "throwaway server gone"
