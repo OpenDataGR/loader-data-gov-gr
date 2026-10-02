@@ -1,15 +1,15 @@
 {% extends "base.html" %}
 {% import "_macros.html" as macros %}
-{% block title %}Failed logins -- loader.data.gov.gr{% endblock %}
+{% block title %}Security box -- loader.data.gov.gr{% endblock %}
 {% block content %}
   <div class="panel">
-    <h1>Failed logins</h1>
+    <h1>Security box</h1>
     <p class="subtitle">
       Every refused login or credential, on any way in -- FTP and SFTP (reported by the box),
       the web login and the API/sync keys (seen by loader itself) -- kept for {{ retention_note }}
       {% if oldest %}(the oldest on record is {{ oldest|utc }} UTC){% endif %}.
       FTP/SFTP addresses that keep failing are banned automatically (see below); the boxes themselves
-      are on the <a href="/admin/ftp">FTP subsystem</a> page.
+      are on the <a href="/admin/ftp">FTP box</a> page.
     </p>
 
     <form method="get" action="/admin/security/failed-logins" style="display:flex; flex-wrap:wrap; gap:0.8rem; align-items:flex-end;">

@@ -57,7 +57,7 @@ endpoint any HTTPS-capable provider could call directly.
   loader ever learns this box is alive: since this box only ever calls
   loader (see "pull-based and outbound-only" below), loader can't ask
   -- it can only remember what it was last told, which is what its own
-  admin panel's "FTP subsystem" page shows.
+  admin panel's "FTP box" page shows.
 
 Deliberately separate processes/systemd units: account provisioning
 and file relaying are different responsibilities that should fail
@@ -100,7 +100,7 @@ made-up log before enabling it, and prints the jail's status each run.
 
 A legitimate provider who mistypes a password too often is banned like
 anyone else and waits out the hour -- or an admin can let them back in
-right away, from loader's **Failed logins** page (`/admin/security/failed-logins`): it lists
+right away, from loader's **Security box** page (`/admin/security/failed-logins`): it lists
 the addresses currently banned on each box, with an Unban button. Loader
 can't reach the box, so the click only records a request
 (`FtpUnbanRequest`); the box collects it from the reply to its next
@@ -120,7 +120,7 @@ lifted by the same Unban button.
 
 ### Report of failed logins
 
-The ban list says who is blocked *now*; the **Failed logins**
+The ban list says who is blocked *now*; the **Security box**
 report (`/admin/security/failed-logins`, the same page as the ban list) says who
 has been knocking and how often. ProFTPD writes a second log,
 `/var/log/proftpd/loader-attempts.log` (`%{%s}t %a %p %m %s %U`: time,

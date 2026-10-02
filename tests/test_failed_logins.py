@@ -236,7 +236,7 @@ def test_currently_banned_addresses_are_marked(admin, machine, _isolated_db):
     assert "banned now" in admin.get("/admin/security/failed-logins").text
 
 
-# -- ban list and unban (moved here from the FTP subsystem page) -------------------------------
+# -- ban list and unban (moved here from the FTP box page) -------------------------------
 
 PAGE = "/admin/security/failed-logins"
 UNBAN = "/admin/security/boxes/snf-899358/unban"

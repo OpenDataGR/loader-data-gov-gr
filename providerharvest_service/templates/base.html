@@ -341,8 +341,8 @@
       <a href="/provider/sources" class="{{ 'active' if request.url.path.startswith('/provider') else '' }}">{{ macros.icon("provider", 16) }} Provider portal</a>
       <a href="/admin/sources/pending" class="{{ 'active' if request.url.path == '/admin/sources/pending' else '' }}">{{ macros.icon("queue", 16) }} Pending approval</a>
       <a href="/admin/sources" class="{{ 'active' if request.url.path == '/admin/sources' else '' }}">{{ macros.icon("admin", 16) }} Admin dashboard</a>
-      <a href="/admin/ftp" class="{{ 'active' if request.url.path == '/admin/ftp' else '' }}">{{ macros.icon("push", 16) }} FTP subsystem</a>
-      <a href="/admin/security/failed-logins" class="{{ 'active' if request.url.path.startswith('/admin/security') else '' }}">{{ macros.icon("rejected", 16) }} Failed logins</a>
+      <a href="/admin/ftp" class="{{ 'active' if request.url.path == '/admin/ftp' else '' }}">{{ macros.icon("push", 16) }} FTP box</a>
+      <a href="/admin/security/failed-logins" class="{{ 'active' if request.url.path.startswith('/admin/security') else '' }}">{{ macros.icon("rejected", 16) }} Security box</a>
       {% if request.url.path != '/admin/login' %}
         <form method="post" action="/admin/logout" style="margin-left:auto; display:flex;">
           <button type="submit" class="btn-secondary btn-sm" style="align-self:center;">{{ macros.icon("x", 14) }} Log out</button>
