@@ -1,0 +1,24 @@
+name: Peek at the IP-limit rules on the FTP box (one-off)
+
+# Read-only one-off; deleted again once looked at.
+on:
+  workflow_dispatch:
+
+jobs:
+  peek:
+    runs-on: [self-hosted, loader-ftp]
+    steps:
+      - name: The generated rules and whether ProFTPD accepts the config
+        run: |
+          ls -l /etc/proftpd/conf.d/
+          echo "--- loader-ip-limits.conf"
+          cat /etc/proftpd/conf.d/loader-ip-limits.conf
+          echo "--- proftpd -t"
+          sudo -n proftpd -t 2>&1 | tail -3
+          echo "--- proftpd active / listeners"
+          systemctl is-active proftpd
+          sudo -n ss -tlnp | grep -E ':21 |:2222 '
+      - name: Is the sync service healthy with the new code?
+        run: |
+          systemctl is-active loader-ftp-forwarder-sync
+          sudo -n journalctl -u loader-ftp-forwarder-sync --no-pager --since "-10 min" | grep -Ei 'limit|error|failed|synced|applied' | tail -12
