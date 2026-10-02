@@ -132,11 +132,9 @@
         </form>
       {% endif %}
       <a href="/provider/sources/{{ s.id }}/runs">{{ icon("history", 14) }} View runs</a>
-      {% if s.transport_type == "push" and s.push_method == "https" %}
-        <form method="post" action="/provider/sources/{{ s.id }}/rotate-key"
-              onsubmit="return confirm('Issue a new API key for {{ s.name }}? The current key stops working at once, so the provider\'s uploads will fail until they switch to the new one.');">
-          <button type="submit">{{ icon("queue", 14) }} Rotate API key</button>
-        </form>
+      {% if s.transport_type == "push" %}
+        {# The one home of a push source's login / API key / allowed senders -- no copies of its controls here. #}
+        <a href="/provider/sources/{{ s.id }}/credentials">{{ icon("queue", 14) }} Credentials</a>
       {% endif %}
       {% if s.status == "active" and s.transport_type != "push" %}
         <form method="post" action="/provider/sources/{{ s.id }}/harvest-now">

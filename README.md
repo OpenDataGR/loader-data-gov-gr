@@ -158,7 +158,13 @@ a bcrypt hash (`$2a$`, the prefix ProFTPD needs) and an HTTPS push key likewise,
 neither can ever be displayed -- not even a password the provider chose at
 registration; making them viewable would mean storing them recoverably, and a
 leaked database would then hand over every provider's password. What an admin can
-do instead, from the account's (or source's) "..." menu: **Set a password**
+do instead -- all on the source's **Credentials page**
+(`/provider/sources/{id}/credentials`, linked from the "..." menu of every push
+source in the portal and on the admin dashboard; one home for a push source's
+login or API key, its allowed senders and its last activity, with no copies of
+those controls elsewhere: the FTP box page shows a provider's own account
+read-only with a "Manage on the source" link, and only accounts an admin made by
+hand are changed from that page): **Set a password**
 (`/admin/ftp/{id}/set-password`: one the provider gave you; at least 12 characters,
 at most 72 bytes -- bcrypt reads no more, so a longer one would silently match any
 ending -- typed twice, never echoed or put in a URL; the same rules now apply to a

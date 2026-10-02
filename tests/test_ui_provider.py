@@ -503,7 +503,7 @@ def test_editing_a_push_source_locks_its_kind_and_method(client, _isolated_db):
 
     text = client.get("/provider/sources/%s/edit" % source_id).text
     assert "This can't be changed once registered" in text
-    assert "can't be changed here -- ask an admin to issue a new password" in text
+    assert 'href="/provider/sources/%s/credentials">Credentials page' % source_id in text  # where the login is managed
     assert 'name="push_ftp_password"' not in text  # no password field to edit
 
 

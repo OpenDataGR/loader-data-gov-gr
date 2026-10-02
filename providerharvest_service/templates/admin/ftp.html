@@ -58,10 +58,10 @@
     <h1>FTP-push accounts</h1>
     <p class="subtitle">
       Providers create their own account by registering a push source with FTP/SFTP
-      (it stays disabled until you approve the source). Passwords are stored only as a
-      one-way hash, so they can never be shown -- not even one the provider chose. In an
-      account's menu you can <em>set</em> a password you were given, or <em>rotate</em> to a
-      newly generated one (shown exactly once, right after the action).
+(it stays disabled until you approve the source). A provider's own account is managed on
+      <em>its source</em> -- password, rotation, allowed senders -- so it appears here read-only, with a link;
+      only accounts an admin made by hand are changed from this page. Passwords are stored only as a
+      one-way hash, so they can never be shown, not even one the provider chose.
     </p>
     <p class="subtitle" style="margin-top:0;">
       <strong>Allowed from:</strong> with no address listed an account works from anywhere. Once you
@@ -119,14 +119,19 @@
             <td class="actions-cell">
               <div class="row-actions">
               {% call macros.dots_menu() %}
-                <a href="/admin/ftp/{{ a.id }}/set-password">Set a password&hellip;</a>
-                {{ macros.dots_item("/admin/ftp/" ~ a.id ~ "/rotate-password", "Rotate (generate a new one)", {}, "Replace the password for " ~ a.username ~ " with a newly generated one? The current password stops working at once, so uploads from that provider fail until they use the new one. A password they chose themselves is replaced too.") }}
-                {% if a.enabled %}
-                  {{ macros.dots_item("/admin/ftp/" ~ a.id ~ "/disable", "Disable") }}
+                {% if a.managed_source_id %}
+                  {# A provider's own account: its password, enabling and removal follow its push source -- one home. #}
+                  <a href="/provider/sources/{{ a.managed_source_id }}/credentials">Manage on the source&hellip;</a>
                 {% else %}
-                  {{ macros.dots_item("/admin/ftp/" ~ a.id ~ "/enable", "Enable") }}
+                  <a href="/admin/ftp/{{ a.id }}/set-password">Set a password&hellip;</a>
+                  {{ macros.dots_item("/admin/ftp/" ~ a.id ~ "/rotate-password", "Rotate (generate a new one)", {}, "Replace the password for " ~ a.username ~ " with a newly generated one? The current password stops working at once, so uploads fail until the new one is used.") }}
+                  {% if a.enabled %}
+                    {{ macros.dots_item("/admin/ftp/" ~ a.id ~ "/disable", "Disable") }}
+                  {% else %}
+                    {{ macros.dots_item("/admin/ftp/" ~ a.id ~ "/enable", "Enable") }}
+                  {% endif %}
+                  {{ macros.dots_item("/admin/ftp/" ~ a.id ~ "/delete", "Delete", {}, "Delete FTP account " ~ a.username ~ "? This cannot be undone.", True) }}
                 {% endif %}
-                {{ macros.dots_item("/admin/ftp/" ~ a.id ~ "/delete", "Delete", {}, "Delete FTP account " ~ a.username ~ "? This cannot be undone.", True) }}
               {% endcall %}
               </div>
             </td>

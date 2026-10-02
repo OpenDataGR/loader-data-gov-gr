@@ -34,6 +34,7 @@ through even briefly.
 from __future__ import annotations
 
 import datetime
+import re
 from urllib.parse import urlencode, urlparse
 
 from fastapi import APIRouter, Depends, Request
@@ -69,10 +70,24 @@ _MANAGED_NOTE = (
 )
 
 
+# A push source's Credentials page: where a provider's own account is managed, and so where
+# its actions return to (only ever this site's own path shape -- the Referer is client-supplied).
+_CREDENTIALS_PATH = re.compile(r"^/provider/sources/[A-Za-z0-9-]{1,64}/credentials$")
+
+
 def _came_from(request: Request, flash: str, kind: str = "success") -> str:
     referer_path = urlparse(request.headers.get("referer") or "").path
-    target = referer_path if referer_path in _ALLOWED_REDIRECT_PATHS else "/admin/ftp"
+    allowed = referer_path in _ALLOWED_REDIRECT_PATHS or _CREDENTIALS_PATH.match(referer_path)
+    target = referer_path if allowed else "/admin/ftp"
     return "%s?%s" % (target, urlencode({"flash": flash, "flash_kind": kind}))
+
+
+def _account_home(account: FtpAccount) -> str:
+    """Where this account is managed: its source's Credentials page for a provider's own
+    account, the FTP box page for one an admin made by hand."""
+    if account.managed_source_id:
+        return "/provider/sources/%s/credentials" % account.managed_source_id
+    return "/admin/ftp"
 
 
 def _utcnow() -> datetime.datetime:
@@ -146,7 +161,9 @@ def set_password_form(request: Request, account_id: str, session: Session = Depe
     account = session.get(FtpAccount, account_id)
     if account is None:
         return RedirectResponse(_came_from(request, "No such account.", kind="error"), status_code=303)
-    return templates.TemplateResponse(request, "admin/ftp_set_password.html", {"account": account, "error": None})
+    return templates.TemplateResponse(
+        request, "admin/ftp_set_password.html", {"account": account, "error": None, "home": _account_home(account)}
+    )
 
 
 @router.post("/{account_id}/set-password", response_class=HTMLResponse)
@@ -170,14 +187,13 @@ async def set_password(request: Request, account_id: str, session: Session = Dep
             error = "Password: %s." % problem
     if error:
         return templates.TemplateResponse(
-            request, "admin/ftp_set_password.html", {"account": account, "error": error}, status_code=400
+            request, "admin/ftp_set_password.html",
+            {"account": account, "error": error, "home": _account_home(account)}, status_code=400,
         )
     account.password_hash = hash_password(password)
     session.commit()
-    return RedirectResponse(
-        _came_from(request, "Password for %r set. It is stored only as a hash and cannot be shown again." % account.username),
-        status_code=303,
-    )
+    flash = "Password for %r set. It is stored only as a hash and cannot be shown again." % account.username
+    return RedirectResponse("%s?%s" % (_account_home(account), urlencode({"flash": flash, "flash_kind": "success"})), status_code=303)
 
 
 @router.post("/{account_id}/rotate-password", response_class=HTMLResponse)
@@ -193,7 +209,11 @@ def rotate_password(request: Request, account_id: str, session: Session = Depend
     return templates.TemplateResponse(
         request,
         "admin/ftp_password_reveal.html",
-        {"username": account.username, "password": password, "action": "rotated"},
+        {
+            "username": account.username, "password": password, "action": "rotated",
+            "back_url": _account_home(account),
+            "back_label": "Back to the source's credentials" if account.managed_source_id else "Back to FTP box",
+        },
     )
 
 

@@ -280,7 +280,8 @@
           <div id="push-ftp-fields">
             {% if editing %}
               <p class="muted" style="margin-top:0.6rem;">
-                The FTP/SFTP login can't be changed here -- ask an admin to issue a new password.
+                The FTP/SFTP login isn't part of this form -- set or rotate its password on the
+                <a href="/provider/sources/{{ source_id }}/credentials">Credentials page</a>.
               </p>
             {% else %}
               <p class="muted" style="margin-top:0.6rem;">

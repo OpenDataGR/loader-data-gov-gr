@@ -823,6 +823,13 @@ def _managed_ftp_accounts(session: Session, source: ProviderSource) -> list[FtpA
     return list(session.scalars(select(FtpAccount).where(FtpAccount.managed_source_id == source.id)).all())
 
 
+def managed_ftp_account(session: Session, source: ProviderSource) -> FtpAccount | None:
+    """The FTP/SFTP login created for this source at registration (an
+    ``push_method="ftp"`` source has exactly one), or None."""
+    accounts = _managed_ftp_accounts(session, source)
+    return accounts[0] if accounts else None
+
+
 def allowed_senders(source: ProviderSource) -> list[str]:
     """The addresses this (push) source accepts data from; empty means anyone."""
     return list(json.loads(source.config or "{}").get("allowed_senders") or [])

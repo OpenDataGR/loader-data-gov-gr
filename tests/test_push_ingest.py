@@ -460,16 +460,86 @@ def test_rotating_an_unknown_source_or_without_the_login_is_refused(client, _iso
     assert resp.status_code == 303 and resp.headers["location"].startswith("/admin/login")
 
 
-def test_the_menu_offers_rotate_api_key_only_for_https_push_sources_and_asks_first(client, _isolated_db):
-    source_id, _ = _register_and_activate_push_source(client, _isolated_db)
+def test_the_sources_menu_links_to_credentials_for_push_sources_only_and_holds_no_copy_of_its_controls(client, _isolated_db):
+    https_id, _ = _register_and_activate_push_source(client, _isolated_db)
+    assert client.post("/provider/sources/new", data={"name": "ftp-one", "title": "t", "transport_type": "push", "push_method": "ftp"}).status_code == 200
+    client.post("/provider/sources/new", data={
+        "name": "a-pull-source", "title": "p", "transport_type": "http", "endpoint_url": "https://x.example.gr/a",
+        "frequency": "DAILY", "auth_type": "api_key", "api_key": "k"})
     page = client.get("/provider/sources").text
-    item = page.split('action="/provider/sources/%s/rotate-key"' % source_id, 1)[1].split("</form>", 1)[0]
-    assert "return confirm(" in item and "stops working at once" in item and "Rotate API key" in item
+    assert page.count("/credentials") == 2 and 'href="/provider/sources/%s/credentials"' % https_id in page  # both push sources, not the pull one
+    assert "/rotate-key" not in page and "rotate-password" not in page  # one home: the Credentials page
+    admin_page = client.get("/admin/sources").text
+    assert admin_page.count("/credentials") == 2 and "/rotate-key" not in admin_page
 
-    other = client.post("/provider/sources/new", data={"name": "ftp-one", "title": "t", "transport_type": "push", "push_method": "ftp"})
-    assert other.status_code == 200
-    assert page.count("/rotate-key") == 1
-    assert client.get("/provider/sources").text.count("/rotate-key") == 1  # the FTP push source got none
+
+def test_the_credentials_page_of_an_https_source_has_the_url_rotate_and_senders(client, _isolated_db):
+    source_id, _ = _register_and_activate_push_source(client, _isolated_db, allowed_senders="203.0.113.9")
+    page = client.get("/provider/sources/%s/credentials" % source_id).text
+    assert "/push/acme-push/upload" in page and "stored as a hash" in page
+    rotate = page.split('action="/provider/sources/%s/rotate-key"' % source_id, 1)[1].split("</form>", 1)[0]
+    assert "return confirm(" in rotate and "stops working at once" in rotate
+    assert "<code>203.0.113.9/32</code>" in page and "Edit allowed senders" in page
+    assert "set-password" not in page  # an FTP-only control
+
+
+def test_the_credentials_page_of_an_ftp_source_has_the_login_set_rotate_and_senders(client, _isolated_db):
+    _register_ftp(client, allowed_senders="203.0.113.9")
+    with _isolated_db() as session:
+        source = provider_sources.list_all(session)[0]
+        source_id = source.id
+    from sqlalchemy import select
+
+    from providerharvest_service.models import FtpAccount
+
+    with _isolated_db() as session:
+        account = session.scalar(select(FtpAccount))
+        account_id, username = account.id, account.username
+    page = client.get("/provider/sources/%s/credentials" % source_id).text
+    assert "<code>%s</code>" % username in page and 'href="/admin/ftp/%s/set-password"' % account_id in page
+    rotate = page.split('action="/admin/ftp/%s/rotate-password"' % account_id, 1)[1].split("</form>", 1)[0]
+    assert "return confirm(" in rotate and "A password they chose themselves is replaced too" in rotate
+    assert "cannot be shown" in page and "<code>203.0.113.9/32</code>" in page
+    assert "rotate-key" not in page  # an HTTPS-only control
+
+
+def test_the_credentials_page_says_the_blacklist_still_applies_and_links_to_it(client, _isolated_db):
+    source_id, _ = _register_and_activate_push_source(client, _isolated_db)
+    page = client.get("/provider/sources/%s/credentials" % source_id).text
+    assert "blacklist and whitelist" in page and "/admin/security/failed-logins#address-control" in page
+
+
+def test_the_credentials_page_shows_activity_and_works_for_a_pending_source(client, _isolated_db):
+    client.post("/provider/sources/new", data={"name": "acme-push", "title": "t", "transport_type": "push"})
+    with _isolated_db() as session:
+        source_id = provider_sources.list_all(session)[0].id
+    resp = client.get("/provider/sources/%s/credentials" % source_id)  # still pending: the page works before approval
+    assert resp.status_code == 200 and "nothing received yet" in resp.text and "pending" in resp.text.lower()
+
+
+def test_credentials_for_a_pull_source_an_unknown_source_or_without_the_login_go_nowhere(client, _isolated_db):
+    from fastapi.testclient import TestClient
+
+    from providerharvest_service.app import app
+
+    client.post("/provider/sources/new", data={
+        "name": "a-pull-source", "title": "p", "transport_type": "http", "endpoint_url": "https://x.example.gr/a",
+        "frequency": "DAILY", "auth_type": "api_key", "api_key": "k"})
+    with _isolated_db() as session:
+        pull_id = provider_sources.list_all(session)[0].id
+    assert "flash_kind=error" in client.get("/provider/sources/%s/credentials" % pull_id, follow_redirects=False).headers["location"]
+    assert "flash_kind=error" in client.get("/provider/sources/no-such/credentials", follow_redirects=False).headers["location"]
+    anonymous = TestClient(app, base_url="https://testserver")
+    resp = anonymous.get("/provider/sources/%s/credentials" % pull_id, follow_redirects=False)
+    assert resp.status_code == 303 and resp.headers["location"].startswith("/admin/login")
+
+
+def test_the_page_never_shows_a_secret(client, _isolated_db):
+    source_id, api_key = _register_and_activate_push_source(client, _isolated_db)
+    page = client.get("/provider/sources/%s/credentials" % source_id).text
+    assert api_key not in page
+    config = _config(_isolated_db)
+    assert config["push_api_key_hash"] not in page
 
 
 # -- FTP/SFTP push: the list becomes the account's login limit --------------------------------
@@ -534,18 +604,17 @@ def test_the_ftp_box_page_shows_a_provider_accounts_list_read_only_and_refuses_e
     assert managed  # a provider's own account
     page = client.get("/admin/ftp").text
     assert "<code>203.0.113.9/32</code>" in page and "set on the source" in page
-    assert 'action="/admin/ftp/%s/allowed-ips"' % _extract_ftp_account_id(page) not in page  # no form to change it here
+    assert "/allowed-ips" not in page  # no form to change it here
 
-    account_id = _extract_ftp_account_id(page)
+    from sqlalchemy import select
+
+    from providerharvest_service.models import FtpAccount
+
+    with _isolated_db() as session:
+        account_id = session.scalar(select(FtpAccount.id))
     resp = client.post("/admin/ftp/%s/allowed-ips" % account_id, data={"cidr": "8.8.8.8"}, follow_redirects=False)
     assert "flash_kind=error" in resp.headers["location"]
     assert _ftp_account(_isolated_db)[1] == ["203.0.113.9/32"]
-
-
-def _extract_ftp_account_id(html):
-    end = html.index("/rotate-password")
-    start = html.rindex("/admin/ftp/", 0, end) + len("/admin/ftp/")
-    return html[start:end]
 
 
 def test_deleting_the_source_takes_its_limit_with_it(client, _isolated_db):

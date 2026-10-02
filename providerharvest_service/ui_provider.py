@@ -146,6 +146,35 @@ def delete_source(source_id: str, session: Session = Depends(get_session)) -> Re
     return RedirectResponse(_redirect_with_flash("Source deleted."), status_code=303)
 
 
+@router.get("/sources/{source_id}/credentials", response_class=HTMLResponse)
+def source_credentials(source_id: str, request: Request, session: Session = Depends(get_session)):
+    """The one place for everything that lets a push source in: its FTP/SFTP login
+    (set or rotate the password) or HTTPS upload URL and API key (rotate), who may
+    send (the allowed senders), and when it last did. The FTP box page shows a
+    provider's own account read-only and links here."""
+    try:
+        source = provider_sources.get_or_404(session, source_id)
+    except provider_sources.NotFound:
+        return RedirectResponse(_redirect_with_flash("No such source.", kind="error"), status_code=303)
+    if source.transport_type != "push":
+        return RedirectResponse(
+            _redirect_with_flash("Only a push source has a login or API key to manage.", kind="error"), status_code=303
+        )
+    return templates.TemplateResponse(
+        request,
+        "provider/source_credentials.html",
+        {
+            "source": source,
+            "account": provider_sources.managed_ftp_account(session, source) if source.push_method == "ftp" else None,
+            "server": _ftp_public_endpoint(),
+            "upload_url": _push_upload_url(request, source.name),
+            "allowed_senders": provider_sources.allowed_senders(source),
+            "flash": request.query_params.get("flash"),
+            "flash_kind": request.query_params.get("flash_kind", "success"),
+        },
+    )
+
+
 @router.post("/sources/{source_id}/rotate-key", response_class=HTMLResponse)
 def source_rotate_key(source_id: str, request: Request, session: Session = Depends(get_session)):
     """A new API key for an HTTPS push source -- the way back from a lost or leaked

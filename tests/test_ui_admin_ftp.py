@@ -147,19 +147,27 @@ def test_the_forwarding_target_is_shown_read_only(client, _isolated_db):
     assert resp.status_code in (404, 405)
 
 
+def _db_account_id(session_factory):
+    """A provider's own account has no controls on the FTP box page any more (they are on its
+    source's Credentials page), so its id cannot be scraped from that page."""
+    with session_factory() as session:
+        return session.scalar(select(FtpAccount.id))
+
+
 def test_rotate_password_shows_new_password_once(client, _isolated_db):
     _register_ftp_push_source(_isolated_db)
-    account_id = _account_id(client)
+    account_id = _db_account_id(_isolated_db)
 
     resp = client.post("/admin/ftp/%s/rotate-password" % account_id)
     assert resp.status_code == 200
     assert "password-field" in resp.text
     assert "rotated" in resp.text
+    assert "Back to the source&#39;s credentials" in resp.text  # a provider's account returns to its source
 
 
 def test_disable_then_enable_account(client, _isolated_db):
     _register_ftp_push_source(_isolated_db, activate=True)
-    account_id = _account_id(client)
+    account_id = _db_account_id(_isolated_db)
 
     resp = client.post("/admin/ftp/%s/disable" % account_id, follow_redirects=False)
     assert resp.status_code == 303
@@ -173,7 +181,7 @@ def test_disable_then_enable_account(client, _isolated_db):
 
 def test_delete_account(client, _isolated_db):
     _register_ftp_push_source(_isolated_db)
-    account_id = _account_id(client)
+    account_id = _db_account_id(_isolated_db)
 
     resp = client.post("/admin/ftp/%s/delete" % account_id, follow_redirects=False)
     assert resp.status_code == 303
@@ -281,8 +289,54 @@ def test_the_account_menu_offers_set_rotate_disable_and_delete_and_rotate_asks_f
     assert 'href="/admin/ftp/%s/set-password"' % account_id in text and "Set a password" in text
     rotate = text.split('action="/admin/ftp/%s/rotate-password"' % account_id, 1)[1].split("</form>", 1)[0]
     assert "return confirm(" in rotate and "stops working at once" in rotate  # one click must not break a provider silently
-    assert "A password they chose themselves is replaced too" in rotate
     assert text.count('class="actions-menu"') >= 1 and "Disable" in text
+
+
+def test_a_providers_account_is_read_only_here_with_a_link_to_its_source(client, _isolated_db):
+    source_id = _register_ftp_push_source(_isolated_db, activate=True)
+    text = client.get("/admin/ftp").text
+    assert 'href="/provider/sources/%s/credentials"' % source_id in text and "Manage on the source" in text
+    for control in ("set-password", "rotate-password", "/disable", "/delete"):
+        assert control not in text  # one home: all of these are on the source's Credentials page
+    assert "<span>enabled</span>" in text  # its status is still shown
+
+
+def test_an_admin_made_account_keeps_all_its_controls_on_this_page(client, _isolated_db):
+    _add_admin_made_account(_isolated_db)
+    text = client.get("/admin/ftp").text
+    for control in ("set-password", "rotate-password", "/disable", "/delete"):
+        assert control in text
+    assert "Manage on the source" not in text
+
+
+def test_setting_a_password_on_a_providers_account_returns_to_its_credentials_page(client, _isolated_db):
+    source_id = _register_ftp_push_source(_isolated_db)
+    account_id = _db_account_id(_isolated_db)
+    page = client.get("/admin/ftp/%s/set-password" % account_id).text
+    assert 'href="/provider/sources/%s/credentials">Cancel' % source_id in page
+    resp = _set_password(client, account_id, "the password the provider gave me")
+    assert resp.headers["location"].startswith("/provider/sources/%s/credentials?" % source_id)
+    assert "flash_kind=success" in resp.headers["location"]
+    bad = _set_password(client, account_id, "short")
+    assert bad.status_code == 400 and 'href="/provider/sources/%s/credentials">Cancel' % source_id in bad.text
+
+
+def test_an_admin_made_accounts_set_password_returns_to_the_ftp_page(client, _isolated_db):
+    _add_admin_made_account(_isolated_db)
+    resp = _set_password(client, _account_id(client), "the password the provider gave me")
+    assert resp.headers["location"].startswith("/admin/ftp?")
+
+
+def test_actions_taken_from_a_credentials_page_return_there_and_a_forged_referer_is_ignored(client, _isolated_db):
+    source_id = _register_ftp_push_source(_isolated_db, activate=True)
+    account_id = _db_account_id(_isolated_db)
+    here = "https://loader.data.gov.gr/provider/sources/%s/credentials" % source_id
+    assert client.post("/admin/ftp/%s/disable" % account_id, headers={"referer": here}, follow_redirects=False).headers["location"].startswith(
+        "/provider/sources/%s/credentials?" % source_id)
+    for forged in ("https://evil.example/provider/sources/x/credentials/../../steal", "https://evil.example/steal",
+                   "https://loader.data.gov.gr/provider/sources/a/b/credentials", "https://loader.data.gov.gr/provider/sources//credentials"):
+        location = client.post("/admin/ftp/%s/enable" % account_id, headers={"referer": forged}, follow_redirects=False).headers["location"]
+        assert location.startswith("/admin/ftp?") and "evil" not in location, forged
 
 
 def test_the_set_password_page_explains_it_cannot_show_the_old_one(client, _isolated_db):
