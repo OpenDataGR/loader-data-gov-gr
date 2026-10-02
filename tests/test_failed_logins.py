@@ -236,6 +236,20 @@ def test_currently_banned_addresses_are_marked(admin, machine, _isolated_db):
     assert "banned now" in admin.get("/admin/security/failed-logins").text
 
 
+def test_ssh_attempts_are_filed_under_ssh_whatever_the_port(machine, admin, _isolated_db):
+    _send(machine, [dict(_attempt(ip="9.9.9.9", port=22, username="vpn"), channel="SSH")])
+    (row,) = _rows(_isolated_db)
+    assert row.channel == "SSH"
+    assert ",9.9.9.9,22,SSH,vpn,530" in admin.get("/admin/security/failed-logins.csv").text
+    assert len(admin.get("/admin/security/failed-logins.csv?method=SSH").text.splitlines()) == 2
+
+
+def test_a_box_cannot_file_an_attempt_under_a_channel_it_may_not_claim(machine, _isolated_db):
+    # "Web login" etc. are loader's own to record; a box naming one would fake HTTP failures.
+    _send(machine, [dict(_attempt(port=21), channel="Web login"), dict(_attempt(port=21), channel="<b>x</b>")])
+    assert [r.channel for r in _rows(_isolated_db)] == ["FTP", "FTP"]
+
+
 # -- ban list and unban (moved here from the FTP box page) -------------------------------
 
 PAGE = "/admin/security/failed-logins"

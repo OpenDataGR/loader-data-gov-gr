@@ -435,6 +435,9 @@ def _record_sender(session: Session, username: str, ip: str) -> None:
 ATTEMPT_RETENTION = datetime.timedelta(days=90)
 # Port 2222 serves SFTP and SCP over one SSH login; a refusal cannot say which.
 SFTP_SCP = "SFTP/SCP"
+# Ways in the box may name itself, beyond what the port says: sshd (22 and
+# 7002) logs the client's port, not its own, so the port alone can't say.
+BOX_CHANNELS = frozenset({"SSH"})
 MAX_ATTEMPTS_PER_REPORT = 2000
 MAX_USERNAME_LENGTH = 100
 
@@ -455,6 +458,7 @@ class LoginAttemptIn(BaseModel):
     port: int
     username: str = ""
     code: int
+    channel: str | None = None
 
 
 class LoginAttemptsIn(BaseModel):
@@ -483,7 +487,10 @@ def report_login_attempts(payload: LoginAttemptsIn, session: Session = Depends(g
         session.add(FtpLoginAttempt(
             hostname=payload.hostname, at=when, ip=address, port=attempt.port,
             username=clean_username(attempt.username), code=attempt.code,
-            channel={21: "FTP", 2222: SFTP_SCP}.get(attempt.port, "FTP/SFTP port %d" % attempt.port),
+            channel=(
+                attempt.channel if attempt.channel in BOX_CHANNELS
+                else {21: "FTP", 2222: SFTP_SCP}.get(attempt.port, "FTP/SFTP port %d" % attempt.port)
+            ),
         ))
         stored += 1
     session.execute(delete(FtpLoginAttempt).where(FtpLoginAttempt.at < oldest))

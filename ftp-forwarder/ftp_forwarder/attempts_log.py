@@ -36,9 +36,10 @@ class Attempt:
     port: int
     username: str
     code: int
+    channel: str | None = None  # set for anything that isn't FTP/SFTP-by-port, e.g. "SSH"
 
     def as_payload(self) -> dict:
-        return dataclasses.asdict(self)
+        return {k: v for k, v in dataclasses.asdict(self).items() if v is not None}
 
 
 def parse_line(line: str) -> Attempt | None:

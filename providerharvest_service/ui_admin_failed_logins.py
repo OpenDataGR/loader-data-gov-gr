@@ -69,7 +69,7 @@ METHOD = case(
         case((FtpLoginAttempt.port == 21, "FTP"), else_="Other"),
     ),
 )
-_KNOWN_METHODS = ("FTP", SFTP_SCP, failed_auth.WEB_LOGIN, failed_auth.PUSH_KEY, failed_auth.ADMIN_KEY,
+_KNOWN_METHODS = ("FTP", SFTP_SCP, "SSH", failed_auth.WEB_LOGIN, failed_auth.PUSH_KEY, failed_auth.ADMIN_KEY,
                   failed_auth.BOX_KEY, failed_auth.BEARER, failed_auth.OTHER_HTTP)
 
 

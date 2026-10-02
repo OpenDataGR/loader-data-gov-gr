@@ -18,6 +18,7 @@ import requests
 from ftp_forwarder import account_sync, box_health
 from ftp_forwarder.attempts_log import AttemptsLogTail
 from ftp_forwarder.auth_log import AuthLogTail
+from ftp_forwarder.ssh_log import JournalSshTail
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -51,6 +52,11 @@ def main(argv: list[str] | None = None) -> int:
         "--attempts-state", default="/var/lib/ftp-forwarder/attempts.state",
         help="Where the delivered-up-to position in --attempts-log is kept",
     )
+    parser.add_argument(
+        "--ssh-state", default="/var/lib/ftp-forwarder/ssh.state",
+        help="Where the delivered-up-to position in the sshd journal is kept (see ssh_log.py)",
+    )
+    parser.add_argument("--ssh-unit", default="ssh", help="The systemd unit sshd runs as (journal source)")
     parser.add_argument("--proftpd-unit", default="proftpd")
     parser.add_argument("--relay-unit", default="loader-ftp-forwarder")
     parser.add_argument("--fail2ban-unit", default="fail2ban")
@@ -88,6 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     # failed report doesn't lose them (only the latest per user matters).
     pending_logins: dict = {}
     attempts_tail = AttemptsLogTail(args.attempts_log, args.attempts_state)
+    ssh_tail = JournalSshTail(args.ssh_state, unit=args.ssh_unit)
 
     while True:
         pending_logins.update(auth_tail.poll())
@@ -132,21 +139,24 @@ def main(argv: list[str] | None = None) -> int:
         # Refused logins for the report: the read position only moves on once
         # loader has accepted the batch. A busy scanner day is drained a batch
         # per cycle without sleeping in between.
-        while True:
-            try:
-                attempts, position = attempts_tail.poll()
-                if not attempts:
-                    attempts_tail.commit(position)  # nothing to send, but skip past unrelated lines
+        # Two sources, same rule: ProFTPD's attempts log (FTP, SFTP/SCP) and the
+        # sshd journal (SSH on 22 and 7002).
+        for name, tail in (("attempts log", attempts_tail), ("sshd journal", ssh_tail)):
+            while True:
+                try:
+                    attempts, position = tail.poll()
+                    if not attempts:
+                        tail.commit(position)  # nothing to send, but skip past unrelated lines
+                        break
+                    if not account_sync.report_attempts(
+                        session, args.loader_base_url, sync_key,
+                        hostname=hostname, attempts=[a.as_payload() for a in attempts],
+                    ):
+                        break
+                    tail.commit(position)
+                except OSError as exc:
+                    logger.error("could not process the %s: %s", name, exc)
                     break
-                if not account_sync.report_attempts(
-                    session, args.loader_base_url, sync_key,
-                    hostname=hostname, attempts=[a.as_payload() for a in attempts],
-                ):
-                    break
-                attempts_tail.commit(position)
-            except OSError as exc:
-                logger.error("could not process the attempts log: %s", exc)
-                break
         time.sleep(args.interval_s)
 
 

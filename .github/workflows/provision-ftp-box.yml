@@ -258,6 +258,24 @@ jobs:
           ignoreip = 127.0.0.1/8 ::1
           EOF
 
+          # The distro's own sshd jail (enabled by defaults-debian.conf) guards port
+          # 22 only, but sshd also listens on 7002 -- a scanner banned on 22 could keep
+          # trying there (confirmed in the live iptables rules: `--dports 22`). Its
+          # defaults are also gentle (10-minute bans; 6,457 refused passwords in two
+          # days). Same ban shape as the FTP jail, on both ports.
+          sudo tee /etc/fail2ban/jail.d/loader-sshd.local > /dev/null <<'EOF'
+          [sshd]
+          enabled = true
+          port = 22,7002
+          maxretry = 5
+          findtime = 10m
+          bantime = 1h
+          bantime.increment = true
+          bantime.factor = 2
+          bantime.maxtime = 1w
+          ignoreip = 127.0.0.1/8 ::1
+          EOF
+
           # Prove the filter matches what ProFTPD really writes, on a made-up log:
           # a refused login must count, a successful one and a bare USER must not.
           now=$(date +%s)
@@ -267,11 +285,22 @@ jobs:
           rm -f /tmp/f2b-selftest.log /tmp/f2b-selftest.out
 
           sudo systemctl enable fail2ban
-          sudo systemctl restart fail2ban
+          # A reload, not a restart, when it is already running: a restart flushes every
+          # current ban (and only some come back), and this workflow gets re-run.
+          if systemctl is-active --quiet fail2ban; then
+            sudo fail2ban-client reload
+          else
+            sudo systemctl start fail2ban
+          fi
           sleep 3
           sudo systemctl is-active --quiet fail2ban && echo "fail2ban running" || (sudo journalctl -u fail2ban -n 30 --no-pager; exit 1)
           sudo fail2ban-client status loader-ftp
           sudo fail2ban-client status loader-ftp-slow
+          sudo fail2ban-client status sshd
+          # Both ports must be in the sshd ban rule, not just 22.
+          sudo iptables -S INPUT | grep f2b-sshd | tee /tmp/f2b-sshd-rule.out
+          grep -q -- '--dports 22,7002' /tmp/f2b-sshd-rule.out || { echo "::error::the sshd ban does not cover port 7002"; exit 1; }
+          rm -f /tmp/f2b-sshd-rule.out
 
       - name: Install and (re)start the file-relay service
         run: |
@@ -298,7 +327,7 @@ jobs:
               echo "::error::'$UNBAN_IP' does not look like an IP address"
               exit 1
             fi
-            for jail in loader-ftp loader-ftp-slow; do
+            for jail in loader-ftp loader-ftp-slow sshd; do
               sudo fail2ban-client set "$jail" unbanip "$UNBAN_IP" || true
             done
           fi

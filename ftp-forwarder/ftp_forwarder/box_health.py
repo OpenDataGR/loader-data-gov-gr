@@ -78,7 +78,7 @@ def unban(address: str, jail: str = "loader-ftp", *, run: Runner = _default_run)
     return run(["fail2ban-client", "set", jail, "unbanip", str(parsed)]).returncode == 0
 
 
-DEFAULT_JAILS = ("loader-ftp", "loader-ftp-slow")
+DEFAULT_JAILS = ("loader-ftp", "loader-ftp-slow", "sshd")
 
 
 def read_banned_in(jails: tuple[str, ...] | list[str], *, run: Runner = _default_run) -> list[str] | None:

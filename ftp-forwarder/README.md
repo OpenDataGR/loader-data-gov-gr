@@ -148,8 +148,21 @@ The same report also covers loader's own HTTP side, recorded by loader itself
 the username typed -- never the password), and any `401` for an API/sync key
 or bearer token, filed as *Admin API key*, *FTP box key*, *Push API key* or
 *Bearer token* by the path it hit. Capped at 30 rows per address per minute
-so a flood of bad requests cannot flood the table. Not yet covered: sshd on
-the box (22 / 7002).
+so a flood of bad requests cannot flood the table.
+
+**SSH on the box (ports 22 and 7002)** is covered too, as method *SSH*.
+The sync service reads sshd's journal (`ssh_log.py`; one row per `Failed
+password` line -- the other lines a scanner leaves describe the same attempt)
+and ships it like the ProFTPD log, with a journal cursor kept in
+`/var/lib/ftp-forwarder/ssh.state` that only advances once loader accepted
+the batch. sshd logs the *client's* port, not its own, so the report cannot
+say 22 or 7002; it shows 22 for both. The distro's sshd jail only banned on
+port 22 (confirmed in the live iptables rules) with 10-minute bans, so
+`provision-ftp-box.yml` overrides it: both ports, 5 failures in 10 minutes
+bans for an hour (doubling for repeats, up to a week), and fails the run if
+the ban rule doesn't cover 7002. The sshd jail's bans appear in the Security
+box ban list and are lifted by the same Unban button. fail2ban is reloaded,
+not restarted, on re-provisioning, because a restart flushes every current ban.
 
 Not covered, deliberately left for later: enforcing each account's
 per-account allowed-IP list on the box (stored in loader, not yet
