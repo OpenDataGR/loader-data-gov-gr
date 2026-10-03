@@ -27,7 +27,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
-from providerharvest_service import db
+from providerharvest_service import auto_ban, db
 from providerharvest_service.admin_ftp import ATTEMPT_RETENTION, clean_username
 from providerharvest_service.client_addr import sender_address
 from providerharvest_service.models import FtpLoginAttempt
@@ -45,6 +45,10 @@ BEARER = "Bearer token"
 PUSH_ADDRESS = "Push: address not allowed"  # a push source limited to its provider's addresses, hit from elsewhere
 BLOCKED = "Blocked address"  # an address on the blacklist (access_control.py), refused before anything else ran
 OTHER_HTTP = "HTTP"
+
+# The failures that count towards an automatic ban (see auto_ban.py). Not PUSH_KEY: a provider's
+# machine retrying with a stale key after a rotation must not get itself banned.
+AUTO_BAN_CHANNELS = (WEB_LOGIN, ADMIN_KEY, BOX_KEY, BEARER, OTHER_HTTP)
 
 # Longest prefix wins, so the box's endpoints are not taken for the admin API
 # whose path they share the start of.
@@ -86,6 +90,8 @@ def _record(address: str, channel: str, username: str, code: int) -> None:
         ))
         session.execute(delete(FtpLoginAttempt).where(FtpLoginAttempt.at < now - ATTEMPT_RETENTION))
         session.commit()
+        if code == 401:
+            auto_ban.consider(session, address, AUTO_BAN_CHANNELS)
 
 
 def record(request: Request, channel: str, username: str = "", code: int = 401) -> None:

@@ -1,0 +1,47 @@
+name: Clear automatic web bans
+
+# Emergency recovery that does not need the website: if the admin (or a provider) has been
+# banned by loader's automatic web ban (auto_ban.py: 10 failed logins/keys in 10 minutes ->
+# an hour, 30 in 24 hours -> a day) and so cannot reach the Security box to lift it, run this.
+# Removes only automatic bans (created_by = 'auto-ban'); manual blacklist entries and the
+# whitelist are never touched. Takes effect within a few seconds. Safe to run any time.
+#
+# To stop automatic bans altogether, set LOADER_HTTP_AUTOBAN=off in /etc/loader-data-gov-gr.env
+# and restart the service. Better, whitelist the address in the Security box once you are in.
+on:
+  workflow_dispatch:
+    inputs:
+      ip:
+        description: "Optional: one address to let back in. Empty clears every automatic ban."
+        required: false
+        default: ""
+
+jobs:
+  clear:
+    runs-on: [self-hosted, loader]
+    env:
+      BAN_IP: ${{ github.event.inputs.ip }}
+    steps:
+      - name: Remove the automatic bans
+        run: |
+          python3 - <<'PY'
+          import ipaddress, os, sqlite3, sys
+
+          wanted = os.environ.get("BAN_IP", "").strip()
+          where, args = "created_by = 'auto-ban'", ()
+          if wanted:
+              try:
+                  address = str(ipaddress.ip_address(wanted))  # the input is free text: only ever an address
+              except ValueError:
+                  sys.exit("%r is not an IP address" % wanted)
+              where += " AND cidr = ?"
+              args = (address + "/32",)
+
+          conn = sqlite3.connect("/opt/data-projects/loader-data-gov-gr/data/loader.db")
+          print("automatic bans before:")
+          for row in conn.execute("SELECT cidr, note, expires_at FROM access_rule WHERE created_by = 'auto-ban' ORDER BY cidr"):
+              print("  ", row)
+          removed = conn.execute("DELETE FROM access_rule WHERE " + where, args).rowcount
+          conn.commit()
+          print("removed %d automatic ban(s)" % removed)
+          PY

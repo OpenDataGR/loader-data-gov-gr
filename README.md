@@ -174,6 +174,23 @@ provider's uploads until they switch), and for an HTTPS push source **Rotate API
 key** (`/provider/sources/{id}/rotate-key`: the old key stops working immediately;
 before this a lost key meant deleting and re-registering the source).
 
+**Automatic web bans (`auto_ban.py`).** Loader bans an address that keeps failing to
+authenticate, like fail2ban does on the FTP box: **10 failures in 10 minutes -> an hour**,
+**30 in 24 hours -> a day**. Counted: failed web logins and admin, FTP-box-sync and
+bearer credentials (every refusal the Security box already records as a 401). A ban is a
+temporary `AccessRule` block made by `auto-ban`, so the same middleware enforces it and it
+reaches the FTP box's firewall too; the Security box lists it under *Banned now* ("loader
+(web)") where an admin can Unban, move it to the blacklist (turning it into a permanent
+entry in place) or whitelist it. It deliberately never bans: a **whitelisted** address (what
+the whitelist is for), the **FTP box's own address** (a mis-set sync key must stay
+recoverable), any **non-public** address (internal tools and health checks), IPv6 (nothing
+else supports it yet), or an address already blocked -- and **push API key failures are not
+counted**, because a provider's machine retrying with a stale key after a rotation would
+otherwise be banned, and stay banned after fixing it. Safety valves: `LOADER_HTTP_AUTOBAN=off`
+in the environment file turns it off, and the **"Clear automatic web bans" workflow** lifts
+bans from the VM without the website (for an admin who got themselves banned) -- whitelist your
+own office address in the Security box once you are in.
+
 **Whitelist and blacklist (the Security box's "Address control").** One panel
 holds three lists side by side -- *Banned now* (fail2ban, per FTP box),
 *Blacklist* and *Whitelist* -- and every entry can be moved to another list

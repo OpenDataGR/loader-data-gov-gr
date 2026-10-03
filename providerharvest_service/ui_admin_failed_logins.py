@@ -253,9 +253,12 @@ def _by_address(session: Session, conditions: list, *, order=None, limit: int | 
 
 
 def _banned_now(session: Session) -> set[str]:
+    """Addresses banned right now: fail2ban's, on each FTP box, and loader's own automatic
+    web bans (auto_ban.py)."""
     banned: set[str] = set()
     for box in session.scalars(select(FtpBoxStatus)).all():
         banned.update(box.banned)
+    banned.update(r.cidr.removesuffix("/32") for r in access_control.rules(session) if r.created_by == access_control.AUTO_BAN_BY)
     return banned
 
 
@@ -395,6 +398,8 @@ def delete_rule(rule_id: str, request: Request, session: Session = Depends(get_s
     rule = access_control.remove_rule(session, rule_id)
     if rule is None:
         return _back("No such rule (it may already have been removed or expired).", "error", request)
+    if rule.created_by == access_control.AUTO_BAN_BY:
+        return _back("Lifted the automatic ban on %s." % rule.cidr.removesuffix("/32"), request=request)
     return _back("Removed %s from the %s." % (rule.cidr, LIST_NAME.get(rule.kind, "list")), request=request)
 
 
@@ -502,7 +507,9 @@ def attempts_report(request: Request, page: int = 1, session: Session = Depends(
             "banned": banned,
             "boxes": boxes,
             "banned_total": len(banned),
-            "blacklist": [r for r in all_rules if r.kind == access_control.BLOCK],
+            # Manual entries only: an automatic ban is temporary and lives under "Banned now".
+            "blacklist": [r for r in all_rules if r.kind == access_control.BLOCK and r.created_by != access_control.AUTO_BAN_BY],
+            "autobans": [r for r in all_rules if r.kind == access_control.BLOCK and r.created_by == access_control.AUTO_BAN_BY],
             "whitelist": [r for r in all_rules if r.kind == access_control.ALLOW],
             "durations": access_control.DURATIONS,
             "state_of": snap.verdict,

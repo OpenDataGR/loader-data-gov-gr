@@ -83,6 +83,19 @@
     </div>
   {%- endmacro %}
 
+  {# One automatic web ban (auto_ban.py): lift it, make it a real blacklist entry, or trust the address. #}
+  {% macro auto_entry(rule, first) -%}
+    {% set ip = rule.cidr.replace('/32', '') %}
+    <div class="entry{% if first %} first{% endif %}">
+      <span class="info"><code>{{ ip }}</code><span class="muted">{{ rule.note|replace('auto-ban: ', '') }}{% if rule.expires_at %} &middot; until {{ rule.expires_at|short_utc }} UTC{% endif %}</span></span>
+      {% call menu() %}
+        {{ item("/admin/security/rules/" ~ rule.id ~ "/delete", "Unban", {}, "Let " ~ ip ~ " back in?") }}
+        {{ item("/admin/security/rules/move", "Move to blacklist", {"cidr": ip, "to": "block"}, "Blacklist " ~ ip ~ " for good? Everything from it will be refused.") }}
+        {{ item("/admin/security/rules/move", "Move to whitelist", {"cidr": ip, "to": "allow"}) }}
+      {% endcall %}
+    </div>
+  {%- endmacro %}
+
   {# One blacklist (kind = block) or whitelist (kind = allow) rule. #}
   {% macro rule_entry(rule, kind, first) -%}
     <div class="entry{% if first %} first{% endif %}">
@@ -151,7 +164,7 @@
         {% set shown = 6 %}
         <section class="listcol" id="banned-list">
           <h3>Banned now <span class="count">{{ banned_total }}</span></h3>
-          <p class="muted">Banned automatically after repeated refused logins (5 in 10 minutes: an hour; 8 in 6 hours: a day; repeat offenders longer). As last reported by each FTP box.</p>
+          <p class="muted">Banned automatically after repeated refused logins -- FTP/SFTP/SSH (5 in 10 minutes: an hour; 8 in 6 hours: a day; as last reported by each FTP box) and the web side (10 in 10 minutes: an hour; 30 in 24 hours: a day).</p>
           {% if not boxes %}<p class="muted">No FTP box has reported in yet.</p>{% endif %}
           {% for box in boxes %}
             <div class="boxname name-title">{{ box.hostname }}
@@ -168,6 +181,15 @@
               <p class="muted" style="margin:0.3rem 0 0;">No addresses banned right now.</p>
             {% endif %}
           {% endfor %}
+          {% if autobans %}
+            <div class="boxname name-title" title="Banned automatically after repeated failed web logins or keys (10 in 10 minutes: an hour; 30 in 24 hours: a day)">loader (web)</div>
+            {% for rule in autobans[:shown] %}{{ auto_entry(rule, loop.first) }}{% endfor %}
+            {% if autobans|length > shown %}
+              <details class="more"><summary>Show {{ autobans|length - shown }} more</summary>
+                {% for rule in autobans[shown:] %}{{ auto_entry(rule, false) }}{% endfor %}
+              </details>
+            {% endif %}
+          {% endif %}
         </section>
 
         <section class="listcol" id="blacklist">

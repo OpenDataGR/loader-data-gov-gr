@@ -40,6 +40,7 @@ from providerharvest_service.sender_allowlist import normalize_cidr
 logger = logging.getLogger(__name__)
 
 ALLOW, BLOCK = "allow", "block"
+AUTO_BAN_BY = "auto-ban"  # ``created_by`` of a block that auto_ban.py made (a temporary, automatic ban)
 KINDS = (BLOCK, ALLOW)
 MIN_PREFIX = 8
 MAX_RULES_PER_KIND = 500
@@ -207,8 +208,12 @@ def _clean_note(note: str | None) -> str:
     return "".join(ch for ch in (note or "") if ch.isprintable())[:NOTE_MAX].strip()
 
 
-def _box_addresses(session: Session) -> list[str]:
+def box_addresses(session: Session) -> list[str]:
+    """The public addresses the FTP boxes report from: never to be blocked or auto-banned."""
     return [a for a in session.scalars(select(FtpBoxStatus.address)).all() if a]
+
+
+_box_addresses = box_addresses  # (older name)
 
 
 def add_rule(
@@ -312,6 +317,19 @@ def move(
         return None
     if to not in KINDS:
         raise AccessError("that is not a list")
+    if to == BLOCK:
+        existing = session.scalar(select(AccessRule).where(AccessRule.kind == BLOCK, AccessRule.cidr == cidr))
+        if existing is not None and existing.created_by == AUTO_BAN_BY:
+            # An automatic (temporary) ban being made a real blacklist entry: keep the row, change who owns it
+            # and, per the form, when it ends -- not "already on the blacklist".
+            if duration not in _DURATION:
+                raise AccessError("unknown duration")
+            existing.created_by = _clean_note(created_by)[:100]
+            existing.expires_at = None if _DURATION[duration] is None else _now() + _DURATION[duration]
+            existing.note = ("was an automatic ban: " + existing.note.removeprefix("auto-ban: "))[:NOTE_MAX]
+            session.commit()
+            invalidate()
+            return existing
     other = ALLOW if to == BLOCK else BLOCK
     previous = session.scalar(select(AccessRule).where(AccessRule.kind == other, AccessRule.cidr == cidr))
     kept = None
