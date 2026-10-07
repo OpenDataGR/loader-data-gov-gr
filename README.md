@@ -205,7 +205,7 @@ address inside a blocked range gets through; on the box it goes into fail2ban's
 `ignoreip` and any current ban on it is lifted. IPv4 and IPv6 addresses and
 ranges, nothing wider than a /8 (IPv4) or a /32 (IPv6); a source's allowed
 senders take IPv6 too (proven against ProFTPD, FTP and SFTP). An
-automatic web ban of an IPv6 address bans its whole /64. And the guards that matter: you cannot blacklist your
+automatic web ban of an IPv6 address counts failures across, and bans, its whole /64. And the guards that matter: you cannot blacklist your
 own address or the FTP box's (unless whitelisted first), since locking yourself or
 the relay out cannot be undone from the page. How they combine with a push
 source's own allowed senders: the blacklist is checked first and beats them (a

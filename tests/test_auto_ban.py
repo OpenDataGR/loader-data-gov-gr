@@ -110,6 +110,21 @@ def test_a_public_ipv6_address_is_banned_as_its_whole_slash_64(session):
     assert access_control.snapshot(session).verdict("2001:4860:4861::1") is None
 
 
+def test_failures_from_different_addresses_of_one_slash_64_add_up(session):
+    for i in range(10):  # hopping between addresses, written in different ways
+        _fail(session, ["2001:4860:4860::%x" % (i + 1), "2001:4860:4860:0:0:0:0:%X" % (i + 1)][i % 2], 1)
+    rule = _consider(session, "2001:4860:4860::99")
+    assert rule is not None and rule.cidr == "2001:4860:4860::/64"
+    assert "10 failed logins or keys in 10 minutes" in rule.note
+
+
+def test_another_slash_64_and_ipv4_failures_do_not_count_toward_an_ipv6_ban(session):
+    _fail(session, "2001:4860:4861::1", 9)
+    _fail(session, SCANNER, 9)
+    _fail(session, "2001:4860:4860::1", 1)
+    assert _consider(session, "2001:4860:4860::1") is None
+
+
 def test_a_whitelisted_ipv6_address_is_never_banned(session):
     access_control.add_rule(session, ALLOW, "2001:4860:4860::8888")
     _fail(session, "2001:4860:4860::8888", 100)

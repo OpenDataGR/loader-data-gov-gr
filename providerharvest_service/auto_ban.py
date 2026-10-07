@@ -56,16 +56,26 @@ def enabled() -> bool:
     return os.environ.get("LOADER_HTTP_AUTOBAN", "on").strip().lower() not in ("off", "0", "false", "no")
 
 
-def _failures(session: Session, address: str, channels, since: datetime.datetime) -> int:
-    return session.scalar(
-        select(func.count()).select_from(FtpLoginAttempt).where(
-            FtpLoginAttempt.hostname == "loader",
-            FtpLoginAttempt.ip == address,
-            FtpLoginAttempt.code == 401,
-            FtpLoginAttempt.channel.in_(list(channels)),
-            FtpLoginAttempt.at >= since,
-        )
-    ) or 0
+def _failures(session: Session, network, channels, since: datetime.datetime) -> int:
+    """Failed authentications from ``network`` (one IPv4 address, or an IPv6 /64) since ``since``."""
+    where = (
+        FtpLoginAttempt.hostname == "loader",
+        FtpLoginAttempt.code == 401,
+        FtpLoginAttempt.channel.in_(list(channels)),
+        FtpLoginAttempt.at >= since,
+    )
+    if network.version == 4:
+        return session.scalar(
+            select(func.count()).select_from(FtpLoginAttempt).where(*where, FtpLoginAttempt.ip == str(network.network_address))
+        ) or 0
+    # IPv6 is written many ways (compressed, upper case), so match in Python, over just the IPv6 rows of the window.
+    count = 0
+    for stored in session.scalars(select(FtpLoginAttempt.ip).where(*where, FtpLoginAttempt.ip.contains(":"))):
+        try:
+            count += ipaddress.ip_address(stored) in network
+        except ValueError:
+            continue
+    return count
 
 
 def consider(session: Session, address: str, channels) -> AccessRule | None:
@@ -85,9 +95,12 @@ def consider(session: Session, address: str, channels) -> AccessRule | None:
     if address in access_control.box_addresses(session):
         return None
 
+    # One IPv6 customer holds a whole /64 (and can hop between its addresses), so that is the unit
+    # that is counted and banned; an IPv4 address is its own unit.
+    unit = ipaddress.ip_network(ip if ip.version == 4 else "%s/64" % ip, strict=False)
     now = access_control._now()
-    slow = _failures(session, address, channels, now - SLOW_WINDOW)
-    fast = _failures(session, address, channels, now - FAST_WINDOW)
+    slow = _failures(session, unit, channels, now - SLOW_WINDOW)
+    fast = _failures(session, unit, channels, now - FAST_WINDOW)
     if slow >= SLOW_THRESHOLD:
         duration, why = SLOW_BAN, "%d failed logins or keys in 24 hours" % slow
     elif fast >= FAST_THRESHOLD:
@@ -95,8 +108,7 @@ def consider(session: Session, address: str, channels) -> AccessRule | None:
     else:
         return None
 
-    # One IPv6 customer holds a whole /64, so banning a single address of it would change nothing.
-    cidr = "%s/32" % address if ip.version == 4 else str(ipaddress.ip_network("%s/64" % address, strict=False))
+    cidr = "%s/32" % address if ip.version == 4 else str(unit)
     rule = AccessRule(
         kind=access_control.BLOCK, cidr=cidr, note="auto-ban: " + why,
         created_by=CREATED_BY, expires_at=now + duration,
