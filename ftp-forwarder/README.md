@@ -173,14 +173,16 @@ not restarted, on re-provisioning, because a restart flushes every current ban.
 
 ### Whitelist and blacklist from loader
 
-Loader's Security box keeps a **whitelist** and a **blacklist** of IPv4
-addresses/ranges (see loader's README, "Address control"). The box learns them
+Loader's Security box keeps a **whitelist** and a **blacklist** of IPv4 and
+IPv6 addresses/ranges (see loader's README, "Address control"). The box learns them
 from the reply to each heartbeat (`access`: `version`, `allow`, `block`) and
 `access_rules.py` applies them, at most once per version and again after a
 restart (the firewall chain lives in memory):
 
 - **Blacklist**: dropped at the firewall, on every port (FTP, SFTP, SSH) -- a
-  dedicated iptables chain `LOADER-ACCESS`, jumped to first in `INPUT`.
+  dedicated iptables chain `LOADER-ACCESS`, jumped to first in `INPUT`; IPv6
+  entries go to the same-named chain in ip6tables (touched only when there are
+  IPv6 entries, so a box without ip6tables is fine until one is added).
 - **Whitelist**: written into fail2ban's `ignoreip` for every jail
   (`/etc/fail2ban/jail.d/zz-loader-access.local`, read after the per-jail files
   so it overrides them), fail2ban reloaded when that changes, and any ban a
@@ -189,8 +191,8 @@ restart (the firewall chain lives in memory):
   blocked range is not dropped.
 
 It is config for a root process built from data that crossed the network, so it
-is re-validated here, independently of loader: IPv4 only, nothing wider than a
-/8, nothing overlapping loopback, at most 500 entries per list; any bad entry
+is re-validated here, independently of loader: nothing wider than a
+/8 (IPv4) or /32 (IPv6), nothing overlapping loopback or IPv4-mapped IPv6, at most 500 entries per list; any bad entry
 refuses the whole set and leaves what is in force alone. Commands are argument
 lists, never a shell. The firewall part is applied first, so a fail2ban problem
 cannot leave blocks unapplied; on any failure the version stays unapplied (loader

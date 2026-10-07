@@ -105,7 +105,10 @@ def test_a_rule_is_stored_in_canonical_form_with_who_added_it_and_a_clean_note(s
     assert access_control.add_rule(session, ALLOW, "198.51.100.7/24").cidr == "198.51.100.0/24"
 
 
-@pytest.mark.parametrize("bad", ["", "not-an-ip", "300.1.1.1", "2001:db8::1", "10.0.0.0/7", "0.0.0.0/0", "127.0.0.1", "127.0.0.0/8", "1.2.3.4; rm"])
+@pytest.mark.parametrize("bad", [
+    "", "not-an-ip", "300.1.1.1", "10.0.0.0/7", "0.0.0.0/0", "127.0.0.1", "127.0.0.0/8", "1.2.3.4; rm",
+    "2000::/16", "::/0", "2001:db8::/31", "::1", "::", "::ffff:1.2.3.4", "::ffff:0:0/96", "2001:db8::1; rm", "[2001:db8::1]",
+])
 def test_things_that_are_not_a_listable_address_or_range_are_refused(session, bad):
     for kind in (BLOCK, ALLOW):
         with pytest.raises(AccessError):
@@ -244,6 +247,106 @@ def test_a_database_error_with_nothing_cached_blocks_and_admits_nobody(monkeypat
     monkeypatch.setattr(db, "SessionLocal", lambda: Broken())
     access_control.invalidate()
     assert access_control.cached_snapshot().verdict("203.0.113.9") is None
+
+
+# -- IPv6 ---------------------------------------------------------------------------------
+
+V6 = "2001:db8:abcd::5"  # a documentation address: perfectly good for a rule (they are only exempt from auto-bans)
+
+
+def test_ipv6_rules_are_stored_in_canonical_form(session):
+    assert access_control.add_rule(session, BLOCK, "2001:DB8::1").cidr == "2001:db8::1/128"
+    assert access_control.add_rule(session, ALLOW, "2001:db8:1:2::9/64").cidr == "2001:db8:1:2::/64"  # a host with a prefix -> its network
+    assert access_control.add_rule(session, BLOCK, "2001:db8::/32").cidr == "2001:db8::/32"  # exactly the limit
+
+
+def test_ipv6_ranges_are_judged_independently_of_ipv4_ones(session):
+    access_control.add_rule(session, BLOCK, "2001:db8::/32")
+    access_control.add_rule(session, ALLOW, "2001:db8:1::/48")
+    snap = access_control.snapshot(session)
+    assert snap.verdict("2001:db8:2::7") == BLOCK
+    assert snap.verdict("2001:db8:1::7") == ALLOW  # the whitelist still wins, in IPv6 too
+    assert snap.verdict("2001:db9::1") is None
+    assert snap.verdict("203.0.113.9") is None  # a v6 rule never matches a v4 address, nor the reverse
+    access_control.add_rule(session, BLOCK, "203.0.113.0/24")
+    snap = access_control.snapshot(session)
+    assert snap.verdict("203.0.113.9") == BLOCK and snap.verdict("2001:db8:2::7") == BLOCK
+
+
+def test_an_ipv4_mapped_ipv6_address_is_judged_as_the_ipv4_address_it_wraps(session):
+    access_control.add_rule(session, BLOCK, "203.0.113.0/24")
+    snap = access_control.snapshot(session)
+    assert snap.verdict("::ffff:203.0.113.9") == BLOCK  # writing it that way is no way round a rule
+    assert snap.verdict("::ffff:198.51.100.9") is None
+
+
+def test_you_cannot_blacklist_your_own_ipv6_address_or_the_boxs(session, _isolated_db):
+    with pytest.raises(AccessError, match="your own address"):
+        access_control.add_rule(session, BLOCK, "2001:db8:abcd::/48", requester=V6)
+    _add_box(_isolated_db, address="2001:db8:ffff::1")
+    with pytest.raises(AccessError, match="FTP box"):
+        access_control.add_rule(session, BLOCK, "2001:db8:ffff::/48")
+    access_control.add_rule(session, ALLOW, V6)
+    access_control.add_rule(session, BLOCK, "2001:db8:abcd::/48", requester=V6)  # whitelisted: fine
+
+
+def test_moving_an_ipv6_entry_between_lists(session):
+    access_control.add_rule(session, BLOCK, "2001:db8::/32", note="a scanner network")
+    moved = access_control.move(session, "2001:db8::/32", ALLOW, created_by="maria")
+    assert (moved.kind, moved.cidr) == (ALLOW, "2001:db8::/32")
+    assert access_control.snapshot(session).block == ()
+
+
+def test_a_blacklisted_ipv6_client_gets_the_403_even_behind_the_gateways_bracketed_format(machine, session):
+    access_control.add_rule(session, BLOCK, "2001:db8:abcd::/48")
+    behind_gateway = {"X-Forwarded-For": "[%s]:5555, 10.0.0.4" % V6}  # how a v6 client appears: bracketed, with a port
+    assert machine.get("/health", headers=behind_gateway).status_code == 403
+    assert machine.get("/health", headers={"X-Forwarded-For": "[2001:db9::1]:5555, 10.0.0.4"}).status_code == 200
+
+
+def test_a_whitelisted_ipv6_address_gets_through_a_blocked_range(machine, session):
+    access_control.add_rule(session, BLOCK, "2001:db8::/32")
+    access_control.add_rule(session, ALLOW, V6)
+    assert machine.get("/health", headers={"X-Forwarded-For": "[%s]:5555, 10.0.0.4" % V6}).status_code == 200
+    assert machine.get("/health", headers={"X-Forwarded-For": "[2001:db8:abcd::6]:5555, 10.0.0.4"}).status_code == 403
+
+
+def test_the_box_is_told_about_ipv6_rules_too(session):
+    access_control.add_rule(session, BLOCK, "2001:db8::/32")
+    access_control.add_rule(session, ALLOW, V6)
+    payload = access_control.box_payload(session)
+    assert payload["block"] == ["2001:db8::/32"] and payload["allow"] == [V6 + "/128"]
+
+
+def test_the_page_adds_and_shows_ipv6_entries_without_mangling_a_slash_32_network(admin, session):
+    admin.post("/admin/security/rules", data={"kind": "block", "cidr": "2001:db8::/32", "note": "a v6 range"})
+    admin.post("/admin/security/rules", data={"kind": "allow", "cidr": V6})
+    html = admin.get(PAGE).text
+    black = html.split('id="blacklist"', 1)[1].split("</section>", 1)[0]
+    white = html.split('id="whitelist"', 1)[1].split("</section>", 1)[0]
+    assert "<code>2001:db8::/32</code>" in black  # the /32 is a real prefix here, not a host suffix
+    assert "<code>%s/128</code>" % V6 in white
+    assert 'name="cidr" value="2001:db8::/32"' in black  # so the menu's actions act on the right entry
+    assert "<code>2001:db8::/32</code>" in html.split('id="history"', 1)[1] or "2001:db8::/32" in html.split('id="history"', 1)[1]
+
+
+@pytest.mark.parametrize("cidr, shown", [
+    ("203.0.113.9/32", "203.0.113.9"), ("203.0.113.0/24", "203.0.113.0/24"),
+    ("2001:db8::1/128", "2001:db8::1"), ("2001:db8::/32", "2001:db8::/32"), ("2001:db8::/64", "2001:db8::/64"),
+    ("garbage", "garbage"),
+])
+def test_a_host_loses_its_prefix_but_a_range_never_does(cidr, shown):
+    assert access_control.host_form(cidr) == shown
+
+
+def test_the_address_filter_matches_a_whole_ipv6_address_exactly(admin, machine):
+    machine.post("/admin/ftp-login-attempts", headers=SYNC_HEADERS, json={"hostname": "box1", "attempts": [
+        {"at": int(datetime.datetime.now(datetime.timezone.utc).timestamp()) - 30, "ip": ip, "port": 2222, "username": "root", "code": 530}
+        for ip in ("2001:db8::1", "2001:db8::10", "2001:db8::1000")]})
+    lines = lambda q: len(admin.get("/admin/security/failed-logins.csv?" + q).text.splitlines()) - 1
+    assert lines("address=2001:db8::1") == 1  # that address, not 2001:db8::10 and ::1000 as well
+    assert lines("address=2001:0db8:0:0:0:0:0:1") == 1  # however it is spelled
+    assert lines("address=2001:db8::") == 3  # a prefix still works
 
 
 # -- editing a rule -----------------------------------------------------------------------

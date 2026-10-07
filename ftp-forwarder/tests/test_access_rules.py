@@ -15,11 +15,13 @@ def _done(returncode=0, stdout="", stderr=""):
 class FakeSystem:
     """Stands in for iptables and fail2ban-client: remembers the commands, answers like the real thing."""
 
-    def __init__(self, banned=(), chain_exists=False, jump_exists=False, fail=None):
+    def __init__(self, banned=(), chain_exists=False, jump_exists=False, fail=None, chain6_exists=False):
         self.calls = []
         self.banned = list(banned)
         self.chain_exists = chain_exists
         self.jump_exists = jump_exists
+        self.chain6_exists = chain6_exists
+        self.jump6_exists = False
         self.fail = fail  # a substring of a command to make fail
 
     def __call__(self, cmd):
@@ -27,6 +29,16 @@ class FakeSystem:
         text = " ".join(cmd)
         if self.fail and self.fail in text:
             return _done(1, stderr="boom")
+        if cmd[0] == "ip6tables":
+            if cmd[1] == "-S":
+                return _done(0 if self.chain6_exists else 1)
+            if cmd[1] == "-N":
+                self.chain6_exists = True
+            if cmd[:3] == ["ip6tables", "-C", "INPUT"]:
+                return _done(0 if self.jump6_exists else 1)
+            if cmd[:3] == ["ip6tables", "-I", "INPUT"]:
+                self.jump6_exists = True
+            return _done(0)
         if cmd[:2] == ["iptables", "-S"]:
             return _done(0 if self.chain_exists else 1)
         if cmd[:2] == ["iptables", "-N"]:
@@ -46,8 +58,14 @@ class FakeSystem:
     def iptables(self):
         return [c for c in self.calls if c[0] == "iptables"]
 
+    def ip6tables(self):
+        return [c for c in self.calls if c[0] == "ip6tables"]
+
     def rules(self):
         return [c[3:] for c in self.calls if c[:2] == ["iptables", "-A"]]
+
+    def rules6(self):
+        return [c[3:] for c in self.calls if c[:2] == ["ip6tables", "-A"]]
 
 
 def _enforcer(tmp_path, system):
@@ -68,14 +86,22 @@ def test_no_access_object_means_nothing_to_do():
 @pytest.mark.parametrize("bad", [
     "text", [], {"allow": [], "block": []}, {"version": "", "allow": []}, {"version": "x y", "allow": []},
     {"version": "v", "allow": "1.2.3.4"}, {"version": "v", "block": [None]},
-    {"version": "v", "block": ["2001:db8::/32"]}, {"version": "v", "block": ["0.0.0.0/0"]}, {"version": "v", "block": ["10.0.0.0/7"]},
+    {"version": "v", "block": ["2000::/16"]}, {"version": "v", "block": ["::/0"]}, {"version": "v", "block": ["2001:db8::/31"]},
+    {"version": "v", "block": ["0.0.0.0/0"]}, {"version": "v", "block": ["10.0.0.0/7"]},
     {"version": "v", "allow": ["127.0.0.1"]}, {"version": "v", "allow": ["127.0.0.0/8"]},
+    {"version": "v", "allow": ["::1"]}, {"version": "v", "block": ["::"]}, {"version": "v", "block": ["::ffff:1.2.3.4"]},
+    {"version": "v", "block": ["::ffff:0:0/96"]}, {"version": "v", "block": ["2001:db8::1; reboot"]},
     {"version": "v", "block": ["1.2.3.4; reboot"]}, {"version": "v", "block": ["1.2.3.4\nDROP"]},
     {"version": "v", "block": ["203.0.113.1", "not-an-ip"]},  # one bad entry refuses the whole set
 ])
 def test_anything_malformed_or_dangerous_refuses_the_whole_set(bad):
     with pytest.raises(AccessError):
         parse(bad)
+
+
+def test_ipv6_entries_are_accepted_and_canonicalised():
+    got = parse({"version": "v6", "allow": ["2001:DB8:1::5"], "block": ["2001:db8::/32", "2001:db8:ffff::9/64"]})
+    assert got.allow == ("2001:db8:1::5/128",) and got.block == ("2001:db8::/32", "2001:db8:ffff::/64")
 
 
 def test_the_size_is_capped():
@@ -114,6 +140,72 @@ def test_commands_are_argument_lists_with_validated_values_only(tmp_path):
     system = FakeSystem()
     _enforcer(tmp_path, system).apply(Access("v1", block=("203.0.113.9/32",)))
     assert all(isinstance(c, list) and all(isinstance(a, str) for a in c) for c in system.calls)
+
+
+# -- IPv6: the same chain in ip6tables ------------------------------------------------
+
+def test_ipv6_entries_go_to_ip6tables_and_ipv4_entries_to_iptables_never_mixed(tmp_path):
+    system = FakeSystem()
+    _enforcer(tmp_path, system).apply(Access(
+        "v1", allow=("198.51.100.7/32", "2001:db8:1::5/128"), block=("203.0.113.0/24", "2001:db8::/32"),
+    ))
+    assert system.rules() == [["-s", "198.51.100.7/32", "-j", "RETURN"], ["-s", "203.0.113.0/24", "-j", "DROP"]]
+    assert system.rules6() == [["-s", "2001:db8:1::5/128", "-j", "RETURN"], ["-s", "2001:db8::/32", "-j", "DROP"]]  # trusted first here too
+
+
+def test_the_ipv6_chain_is_created_hooked_in_first_and_cleared_before_filling(tmp_path):
+    system = FakeSystem()
+    _enforcer(tmp_path, system).apply(Access("v1", block=("2001:db8::/32",)))
+    assert system.ip6tables()[:4] == [
+        ["ip6tables", "-S", "LOADER-ACCESS"], ["ip6tables", "-N", "LOADER-ACCESS"],
+        ["ip6tables", "-C", "INPUT", "-j", "LOADER-ACCESS"], ["ip6tables", "-I", "INPUT", "1", "-j", "LOADER-ACCESS"],
+    ]
+    assert ["ip6tables", "-F", "LOADER-ACCESS"] in system.ip6tables()
+
+
+def test_the_whitelist_puts_ipv6_entries_in_fail2bans_ignore_list_too(tmp_path):
+    system = FakeSystem()
+    _enforcer(tmp_path, system).apply(Access("v1", allow=("198.51.100.7/32", "2001:db8:1::5/128")))
+    assert "ignoreip = 127.0.0.1/8 ::1 198.51.100.7/32 2001:db8:1::5/128\n" in (tmp_path / "access.local").read_text()
+
+
+def test_a_banned_ipv6_address_that_is_now_trusted_is_let_go(tmp_path):
+    system = FakeSystem(banned=["2001:db8:1::5", "2001:db8:2::5", "198.51.100.200"])
+    _enforcer(tmp_path, system).apply(Access("v1", allow=("2001:db8:1::/48",)))
+    assert sorted(system.banned) == ["198.51.100.200", "2001:db8:2::5"]
+
+
+def test_with_no_ipv6_rules_ip6tables_is_not_needed_at_all(tmp_path):
+    system = FakeSystem()
+    _enforcer(tmp_path, system).apply(Access("v1", block=("203.0.113.9/32",)))
+    assert not [c for c in system.ip6tables() if c[1] in ("-N", "-I", "-A")]  # never created, hooked or filled
+
+
+def test_a_box_without_ip6tables_is_fine_while_there_are_no_ipv6_rules(tmp_path):
+    def run(cmd):
+        if cmd[0] == "ip6tables":
+            raise FileNotFoundError("ip6tables")
+        return FakeSystem()(cmd)
+
+    enforcer = Enforcer(jails=JAILS, f2b_conf=str(tmp_path / "x.local"), run=run)
+    assert enforcer.apply(Access("v1", block=("203.0.113.9/32",))) is True
+
+
+def test_removing_the_last_ipv6_rule_empties_the_ipv6_chain(tmp_path):
+    system = FakeSystem()
+    enforcer = _enforcer(tmp_path, system)
+    enforcer.apply(Access("v1", block=("2001:db8::/32",)))
+    system.calls.clear()
+    enforcer.apply(Access("v2", block=("203.0.113.9/32",)))
+    assert ["ip6tables", "-F", "LOADER-ACCESS"] in system.ip6tables() and not system.rules6()
+
+
+def test_an_ip6tables_failure_with_ipv6_rules_is_an_error_and_the_version_stays_unapplied(tmp_path):
+    system = FakeSystem(fail="ip6tables -A")
+    enforcer = _enforcer(tmp_path, system)
+    with pytest.raises(AccessError, match="blocking 2001:db8::/32"):
+        enforcer.apply(Access("v1", block=("2001:db8::/32",)))
+    assert enforcer.applied_version is None
 
 
 # -- fail2ban ------------------------------------------------------------------------

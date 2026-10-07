@@ -3,7 +3,7 @@
 {% block title %}Edit an entry -- loader.data.gov.gr{% endblock %}
 {% block content %}
   <div class="panel">
-    <h1>Edit <code>{{ rule.cidr.replace('/32', '') }}</code> on the {{ list_name }}</h1>
+    <h1>Edit <code>{{ rule.cidr|host }}</code> on the {{ list_name }}</h1>
     <p class="subtitle">
       Change the note and when it ends. The address and the list stay as they are -- to change those, use
       <em>Move to</em> in the entry's menu, or remove it and add it again.

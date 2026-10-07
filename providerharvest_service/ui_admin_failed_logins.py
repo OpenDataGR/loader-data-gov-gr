@@ -38,7 +38,6 @@ from sqlalchemy.orm import Session
 from providerharvest_service import access_control, admin_session, build_info, failed_auth, nav
 from providerharvest_service.admin_ftp import SFTP_SCP
 from providerharvest_service.client_addr import sender_address
-from providerharvest_service.sender_allowlist import normalize_cidr
 from providerharvest_service.db import get_session
 from providerharvest_service.models import AccessRule, FtpBoxStatus, FtpLoginAttempt, FtpUnbanRequest
 
@@ -126,6 +125,7 @@ def _method_of(attempt: FtpLoginAttempt) -> str:
 
 
 templates.env.filters["method"] = _method_of
+templates.env.filters["host"] = access_control.host_form
 templates.env.filters["utc"] = lambda value: value.strftime("%Y-%m-%d %H:%M:%S") if value else ""
 templates.env.filters["short_utc"] = lambda value: value.strftime("%m-%d %H:%M") if value else ""
 
@@ -201,11 +201,16 @@ def _read_filters(request: Request) -> Filters:
     )
 
 
-def _is_full_ipv4(text: str) -> bool:
+def _whole_address(text: str) -> str | None:
+    """``text`` as the canonical form we store, if it is a complete IPv4 or IPv6 address (a prefix
+    being typed -- "1.2.3." or "2001:db8:" -- is not), else None. In IPv6 "2001:db8::" is a valid address
+    but is what someone types to mean "everything starting 2001:db8", so a trailing colon means a prefix."""
+    if text.endswith(":"):
+        return None
     try:
-        return isinstance(ipaddress.ip_address(text), ipaddress.IPv4Address)
+        return str(ipaddress.ip_address(text))
     except ValueError:
-        return False
+        return None
 
 
 def _conditions(f: Filters, banned: set[str] | None = None) -> list:
@@ -214,8 +219,9 @@ def _conditions(f: Filters, banned: set[str] | None = None) -> list:
     if since is not None:
         conditions.append(FtpLoginAttempt.at >= since)
     if f.address:
-        if _is_full_ipv4(f.address):
-            conditions.append(FtpLoginAttempt.ip == f.address)  # a whole address: that one, not 1.2.3.4x as well
+        whole = _whole_address(f.address)
+        if whole is not None:
+            conditions.append(FtpLoginAttempt.ip == whole)  # a whole address: that one, not 1.2.3.4x as well
         else:
             conditions.append(FtpLoginAttempt.ip.startswith(f.address, autoescape=True))
     if f.method:
@@ -258,7 +264,7 @@ def _banned_now(session: Session) -> set[str]:
     banned: set[str] = set()
     for box in session.scalars(select(FtpBoxStatus)).all():
         banned.update(box.banned)
-    banned.update(r.cidr.removesuffix("/32") for r in access_control.rules(session) if r.created_by == access_control.AUTO_BAN_BY)
+    banned.update(access_control.host_form(r.cidr) for r in access_control.rules(session) if r.created_by == access_control.AUTO_BAN_BY)
     return banned
 
 
@@ -298,7 +304,7 @@ def _confirm_block(request: Request, session: Session, form, action: str):
     if form.get("confirm") == "1":
         return None
     try:
-        cidr = normalize_cidr(str(form.get("cidr") or ""))
+        cidr = access_control.normalize_network(str(form.get("cidr") or ""))
     except ValueError:
         return None
     affected = access_control.affected_sources(session, cidr)
@@ -426,7 +432,7 @@ async def edit_rule(rule_id: str, request: Request, session: Session = Depends(g
         return _back(str(exc), "error", request)
     if rule is None:
         return _back("No such rule (it may already have been removed or expired).", "error", request)
-    return _back("Updated %s on the %s." % (rule.cidr.removesuffix("/32"), LIST_NAME[rule.kind]), request=request)
+    return _back("Updated %s on the %s." % (access_control.host_form(rule.cidr), LIST_NAME[rule.kind]), request=request)
 
 
 @router.post("/rules/{rule_id}/delete")
@@ -435,7 +441,7 @@ def delete_rule(rule_id: str, request: Request, session: Session = Depends(get_s
     if rule is None:
         return _back("No such rule (it may already have been removed or expired).", "error", request)
     if rule.created_by == access_control.AUTO_BAN_BY:
-        return _back("Lifted the automatic ban on %s." % rule.cidr.removesuffix("/32"), request=request)
+        return _back("Lifted the automatic ban on %s." % access_control.host_form(rule.cidr), request=request)
     return _back("Removed %s from the %s." % (rule.cidr, LIST_NAME.get(rule.kind, "list")), request=request)
 
 

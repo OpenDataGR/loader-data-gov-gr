@@ -4,8 +4,9 @@ Loader sends the active rules in the reply to every heartbeat (``access``:
 ``version``, ``allow``, ``block``) and this module applies them:
 
 * **block (blacklist)** -- the source address is dropped at the firewall: a
-  dedicated iptables chain, ``LOADER-ACCESS``, jumped to first in ``INPUT``. It
-  covers every port (FTP, SFTP, SSH), not just the ones with a login to guess.
+  dedicated iptables chain, ``LOADER-ACCESS``, jumped to first in ``INPUT`` (and the
+  same chain in ip6tables for IPv6 entries). It covers every port (FTP, SFTP, SSH),
+  not just the ones with a login to guess.
 * **allow (whitelist)** -- the address is never banned: it goes into fail2ban's
   ``ignoreip`` for every jail (a generated ``jail.d`` file), any ban it
   currently has is lifted, and, inside the same chain, a ``RETURN`` rule comes
@@ -16,9 +17,9 @@ applied, loader shows "applied" or "waiting"), and again after a restart, since
 the chain lives in memory and the process starts with nothing applied.
 
 This is config for a root process built from data that crossed the network, so it
-is checked here independently of loader: IPv4 only, nothing narrower than a /8
-(a mistake must not blackhole or whitelist the internet), nothing overlapping
-loopback, a size cap -- and any bad entry refuses the whole set, leaving what is
+is checked here independently of loader: nothing wider than a /8 (IPv4) or a /32
+(IPv6) (a mistake must not blackhole or whitelist the internet), nothing overlapping
+loopback, the unspecified address or IPv4-mapped IPv6, a size cap -- and any bad entry refuses the whole set, leaving what is
 in force untouched. Commands are argument lists, never a shell. ``run`` is
 injectable so tests need no iptables or fail2ban.
 """
@@ -39,10 +40,12 @@ logger = logging.getLogger(__name__)
 
 F2B_CONF_PATH = "/etc/fail2ban/jail.d/zz-loader-access.local"  # "zz": read after, so it overrides, the per-jail files
 CHAIN = "LOADER-ACCESS"
-MIN_PREFIX = 8
+MIN_PREFIX = 8  # IPv4
+MIN_PREFIX_V6 = 32
 MAX_ENTRIES = 500
 _BASE_IGNORE = "127.0.0.1/8 ::1"
-_LOOPBACK = ipaddress.ip_network("127.0.0.0/8")
+# Never listable: loopback, the unspecified address, and IPv4-mapped IPv6 (an IPv4 address in disguise).
+_UNLISTABLE = tuple(ipaddress.ip_network(n) for n in ("127.0.0.0/8", "::1/128", "::/128", "::ffff:0:0/96"))
 _VERSION = re.compile(r"^[A-Za-z0-9]{1,64}$")
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess]
@@ -68,12 +71,11 @@ def _canonical(entry: object, list_name: str) -> str:
         network = ipaddress.ip_network(str(entry).strip(), strict=False)
     except ValueError as exc:
         raise AccessError("%s: not an address or range: %r" % (list_name, entry)) from exc
-    if network.version != 4:
-        raise AccessError("%s: only IPv4 is supported, got %r" % (list_name, entry))
-    if network.prefixlen < MIN_PREFIX:
-        raise AccessError("%s: %s is wider than a /%d" % (list_name, network, MIN_PREFIX))
-    if network.overlaps(_LOOPBACK):
-        raise AccessError("%s: %s overlaps loopback" % (list_name, network))
+    limit = MIN_PREFIX if network.version == 4 else MIN_PREFIX_V6
+    if network.prefixlen < limit:
+        raise AccessError("%s: %s is wider than a /%d" % (list_name, network, limit))
+    if any(network.version == bad.version and network.overlaps(bad) for bad in _UNLISTABLE):
+        raise AccessError("%s: %s overlaps loopback, the unspecified address or IPv4-mapped IPv6" % (list_name, network))
     return str(network)
 
 
@@ -149,18 +151,41 @@ class Enforcer:
         if result.returncode != 0:
             raise AccessError("%s: %s" % (what, (result.stderr or result.stdout or "failed").strip()[:300]))
 
-    def _firewall(self, access: Access) -> None:
+    def _chain_with(self, tool: str, allow: list[str], block: list[str]) -> None:
+        """Make ``tool``'s (iptables or ip6tables) LOADER-ACCESS chain hold exactly these rules."""
         chain = self._chain
-        if self._run(["iptables", "-S", chain]).returncode != 0:  # no such chain yet
-            self._must(["iptables", "-N", chain], "creating the %s chain" % chain)
-        if self._run(["iptables", "-C", "INPUT", "-j", chain]).returncode != 0:
-            self._must(["iptables", "-I", "INPUT", "1", "-j", chain], "hooking the %s chain into INPUT" % chain)
-        self._must(["iptables", "-F", chain], "clearing the %s chain" % chain)
+        if self._run([tool, "-S", chain]).returncode != 0:  # no such chain yet
+            self._must([tool, "-N", chain], "creating the %s chain (%s)" % (chain, tool))
+        if self._run([tool, "-C", "INPUT", "-j", chain]).returncode != 0:
+            self._must([tool, "-I", "INPUT", "1", "-j", chain], "hooking the %s chain into INPUT (%s)" % (chain, tool))
+        self._must([tool, "-F", chain], "clearing the %s chain (%s)" % (chain, tool))
         # Trusted first: RETURN leaves the chain, so a whitelisted address inside a blocked range is not dropped.
-        for cidr in access.allow:
-            self._must(["iptables", "-A", chain, "-s", cidr, "-j", "RETURN"], "allowing %s" % cidr)
-        for cidr in access.block:
-            self._must(["iptables", "-A", chain, "-s", cidr, "-j", "DROP"], "blocking %s" % cidr)
+        for cidr in allow:
+            self._must([tool, "-A", chain, "-s", cidr, "-j", "RETURN"], "allowing %s" % cidr)
+        for cidr in block:
+            self._must([tool, "-A", chain, "-s", cidr, "-j", "DROP"], "blocking %s" % cidr)
+
+    def _clear_ipv6_chain(self) -> None:
+        """No IPv6 rules (any more): empty the IPv6 chain if one was ever made. Best effort and silent --
+        a box without ip6tables, and nothing to put in it, is fine."""
+        try:
+            if self._run(["ip6tables", "-S", self._chain]).returncode == 0:
+                self._run(["ip6tables", "-F", self._chain])
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    def _firewall(self, access: Access) -> None:
+        def split(entries):
+            v4 = [c for c in entries if ipaddress.ip_network(c).version == 4]
+            return v4, [c for c in entries if c not in v4]
+
+        allow4, allow6 = split(access.allow)
+        block4, block6 = split(access.block)
+        self._chain_with("iptables", allow4, block4)
+        if allow6 or block6:
+            self._chain_with("ip6tables", allow6, block6)  # IPv6 rules need ip6tables; failing is an error, not a skip
+        else:
+            self._clear_ipv6_chain()
 
     def _whitelist(self, access: Access) -> None:
         wanted = render_fail2ban(access.allow, self._jails)

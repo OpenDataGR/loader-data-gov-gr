@@ -12,11 +12,16 @@ The box never needs a new way in: it learns the rules from the reply to its
 regular heartbeat (``admin_ftp.report_ftp_box_status``) and says which version
 it has applied, which the page shows as "applied" or "waiting".
 
-IPv4 only (the box's rules and sender tracking are IPv4), and the guards are on
-purpose: nothing narrower than a /8 can be listed (a typo must not blacklist
-the internet or whitelist it), and a block may not cover the person making the
-request or the FTP box's own address -- an admin locking themselves, or the
-relay, out is the one mistake that cannot be undone from the page.
+IPv4 and IPv6 both (IPv6 is enforced on the box with ip6tables and fail2ban's
+``ignoreip``). The per-source and per-account allowed-sender lists stay IPv4 only:
+they become ProFTPD ``Allow`` rules, which this box cannot express for IPv6.
+
+The guards are on purpose: nothing wider than a /8 (IPv4) or a /32 (IPv6) can be
+listed (a typo must not blacklist the internet or whitelist it), and a block may
+not cover the person making the request or the FTP box's own address -- an
+admin locking themselves, or the relay, out is the one mistake that cannot be
+undone from the page. An IPv4-mapped IPv6 address (``::ffff:1.2.3.4``) is the
+IPv4 address it wraps, so a rule cannot be dodged by writing it that way.
 """
 
 from __future__ import annotations
@@ -35,7 +40,6 @@ from sqlalchemy.orm import Session
 
 from providerharvest_service import db
 from providerharvest_service.models import AccessLog, AccessRule, FtpAccount, FtpBoxStatus, ProviderSource
-from providerharvest_service.sender_allowlist import normalize_cidr
 
 logger = logging.getLogger(__name__)
 
@@ -57,11 +61,48 @@ DURATIONS = (
 )
 _DURATION = {key: delta for key, _, delta in DURATIONS}
 
-_LOOPBACK = ipaddress.ip_network("127.0.0.0/8")
+MIN_PREFIX_V6 = 32
+
+# Never listable: loopback, the unspecified address, and the IPv4-mapped range (those are IPv4 addresses
+# in disguise -- list the IPv4 address instead).
+_UNLISTABLE = tuple(ipaddress.ip_network(n) for n in ("127.0.0.0/8", "::1/128", "::/128", "::ffff:0:0/96"))
 
 
 class AccessError(ValueError):
     """A rule that cannot be added; the message is shown to the admin."""
+
+
+def normalize_network(text: str) -> str:
+    """An IPv4 or IPv6 address or range in canonical form ("203.0.113.9" -> "203.0.113.9/32",
+    "2001:DB8::1/64" -> "2001:db8::/64"). Raises ValueError with a message fit to show an admin."""
+    try:
+        return str(ipaddress.ip_network((text or "").strip(), strict=False))
+    except ValueError as exc:
+        raise ValueError("not a valid IP address or CIDR range: %r" % text) from exc
+
+
+def host_form(cidr: str) -> str:
+    """A rule's address as people write it: a single host without its "/32" (IPv4) or "/128" (IPv6), a
+    range unchanged. Not a string strip -- "2001:db8::/32" is a real IPv6 network and must stay."""
+    try:
+        network = ipaddress.ip_network(cidr)
+    except ValueError:
+        return cidr
+    return str(network.network_address) if network.prefixlen == network.max_prefixlen else cidr
+
+
+def _as_ip(address: str | None):
+    """The address as an ``ip_address``, with an IPv4-mapped IPv6 address reduced to the IPv4 one it
+    wraps (so ``::ffff:1.2.3.4`` is judged as 1.2.3.4). None if it is not an address."""
+    if not address:
+        return None
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return None
+    if ip.version == 6 and ip.ipv4_mapped is not None:
+        return ip.ipv4_mapped
+    return ip
 
 
 def _now() -> datetime.datetime:
@@ -93,14 +134,10 @@ class Snapshot:
 
     def verdict(self, address: str | None) -> str | None:
         """"allow", "block", or None for an address no rule mentions. Allow wins."""
-        if not address:
+        ip = _as_ip(address)
+        if ip is None:
             return None
-        try:
-            ip = ipaddress.ip_address(address)
-        except ValueError:
-            return None
-        if ip.version != 4:
-            return None
+        # (an address is never "in" a network of the other IP version, so one list serves both)
         if any(ip in net for net in self._allow_nets):
             return ALLOW
         if any(ip in net for net in self._block_nets):
@@ -215,7 +252,7 @@ def affected_accounts(session: Session, cidr: str) -> list[AffectedAccount]:
 
 
 def _block_context(session: Session, cidr: str):
-    network = ipaddress.ip_network(normalize_cidr(cidr))
+    network = ipaddress.ip_network(normalize_network(cidr))
     trusted = [ipaddress.ip_network(c) for c in snapshot(session).allow if c != str(network)]
     return network, trusted
 
@@ -229,7 +266,10 @@ def _overlapping(entries, network, trusted) -> tuple[str, ...]:
             net = ipaddress.ip_network(entry, strict=False)
         except ValueError:
             continue
-        if net.version == 4 and net.overlaps(network) and not any(net.subnet_of(t) for t in trusted):
+        # (the lists these entries come from are IPv4 only, so a v6 block never overlaps one)
+        if net.version == network.version and net.overlaps(network) and not any(
+            t.version == net.version and net.subnet_of(t) for t in trusted
+        ):
             hit.append(str(net))
     return tuple(sorted(hit))
 
@@ -268,14 +308,15 @@ def add_rule(
     if kind not in KINDS:
         raise AccessError("that is not a list")
     try:
-        cidr = normalize_cidr(text)
+        cidr = normalize_network(text)
     except ValueError as exc:
         raise AccessError(str(exc)) from None
     network = ipaddress.ip_network(cidr)
-    if network.prefixlen < MIN_PREFIX:
-        raise AccessError("%s is too wide -- ranges narrower than a /%d only (a typo must not cover the internet)" % (cidr, MIN_PREFIX))
-    if network.overlaps(_LOOPBACK):
-        raise AccessError("%s overlaps the loopback range, which cannot be listed" % cidr)
+    limit = MIN_PREFIX if network.version == 4 else MIN_PREFIX_V6
+    if network.prefixlen < limit:
+        raise AccessError("%s is too wide -- ranges narrower than a /%d only (a typo must not cover the internet)" % (cidr, limit))
+    if any(network.version == bad.version and network.overlaps(bad) for bad in _UNLISTABLE):
+        raise AccessError("%s overlaps a range that cannot be listed (loopback, the unspecified address, or IPv4-mapped IPv6 -- list the IPv4 address instead)" % cidr)
     if duration not in _DURATION:
         raise AccessError("unknown duration")
 
@@ -295,11 +336,10 @@ def add_rule(
             covered.append(("your own address", requester))
         covered.extend(("the FTP box's address", address) for address in _box_addresses(session))
         for what, address in covered:
-            try:
-                ip = ipaddress.ip_address(address)
-            except ValueError:
+            ip = _as_ip(address)
+            if ip is None:
                 continue
-            if ip.version == 4 and ip in network and allow_now.verdict(address) != ALLOW:
+            if ip in network and allow_now.verdict(address) != ALLOW:
                 raise AccessError("%s covers %s (%s) -- that would lock it out. Whitelist it first, or narrow the range." % (cidr, what, address))
 
     expires = None if _DURATION[duration] is None else _now() + _DURATION[duration]
@@ -394,7 +434,7 @@ def move(
     if it is there; ``to="none"`` just takes it off whichever list holds it. If the
     new list refuses it, the old entry is left exactly as it was."""
     try:
-        cidr = normalize_cidr(text)
+        cidr = normalize_network(text)
     except ValueError as exc:
         raise AccessError(str(exc)) from None
     if to == "none":

@@ -85,7 +85,7 @@
 
   {# One automatic web ban (auto_ban.py): lift it, make it a real blacklist entry, or trust the address. #}
   {% macro auto_entry(rule, first) -%}
-    {% set ip = rule.cidr.replace('/32', '') %}
+    {% set ip = rule.cidr|host %}
     <div class="entry{% if first %} first{% endif %}">
       <span class="info"><code>{{ ip }}</code><span class="muted">{{ rule.note|replace('auto-ban: ', '') }}{% if rule.expires_at %} &middot; until {{ rule.expires_at|short_utc }} UTC{% endif %}</span></span>
       {% call menu() %}
@@ -224,7 +224,7 @@
 
       <form class="add-rule" method="post" action="/admin/security/rules">
         <strong style="font-size:0.85rem;">Add</strong>
-        <input type="text" name="cidr" placeholder="203.0.113.9 or 198.51.100.0/24" aria-label="Address or range" required>
+        <input type="text" name="cidr" placeholder="203.0.113.9, 198.51.100.0/24 or 2001:db8::/48" aria-label="Address or range" required>
         <select name="kind" aria-label="List">
           <option value="block">to the blacklist</option>
           <option value="allow">to the whitelist</option>
@@ -235,13 +235,13 @@
         <input type="text" name="note" maxlength="200" placeholder="Note (optional)" aria-label="Note">
         <button type="submit" class="btn-sm">Add</button>
       </form>
-      <p class="muted" style="margin:0.4rem 0 0;">IPv4 addresses and ranges (nothing wider than a /8). You can't blacklist your own address or the FTP box's.
+      <p class="muted" style="margin:0.4rem 0 0;">IPv4 or IPv6 addresses and ranges (nothing wider than a /8, or a /32 for IPv6). You can't blacklist your own address or the FTP box's.
         Changes reach loader within a few seconds and the FTP box within about a minute:</p>
       <details class="more" id="history" style="margin-top:0.7rem;">
         <summary>Recent changes <span class="count">{{ history|length }}</span></summary>
         {% for h in history %}
           {% set list_name = 'blacklist' if h.kind == 'block' else 'whitelist' %}
-          {% set ip = h.cidr.replace('/32', '') %}
+          {% set ip = h.cidr|host %}
           <div class="entry{% if loop.first %} first{% endif %}">
             <span class="info">
               <span class="muted" title="{{ h.at|utc }} UTC">{{ h.at|short_utc }}</span>
