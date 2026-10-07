@@ -94,9 +94,26 @@ def test_non_public_addresses_are_never_banned(session, ip):
     assert _consider(session, ip) is None
 
 
-@pytest.mark.parametrize("ip", ["2001:4860:4860::8888", "not-an-ip", "", "8.8.4"])
-def test_ipv6_and_garbage_are_never_banned(session, ip):
+@pytest.mark.parametrize("ip", ["not-an-ip", "", "8.8.4", "::1", "fe80::1", "fd00::5", "2001:db8::1", "::ffff:8.8.4.4"])
+def test_garbage_and_non_public_ipv6_are_never_banned(session, ip):
+    if ip:
+        _fail(session, ip, 100)
     assert auto_ban.consider(session, ip, failed_auth.AUTO_BAN_CHANNELS) is None
+
+
+def test_a_public_ipv6_address_is_banned_as_its_whole_slash_64(session):
+    ip = "2001:4860:4860::8888"
+    _fail(session, ip, 10)
+    rule = _consider(session, ip)
+    assert (rule.kind, rule.cidr, rule.created_by) == (BLOCK, "2001:4860:4860::/64", "auto-ban")
+    assert access_control.snapshot(session).verdict("2001:4860:4860:0:1:2:3:4") == BLOCK  # a neighbour in the /64 too
+    assert access_control.snapshot(session).verdict("2001:4860:4861::1") is None
+
+
+def test_a_whitelisted_ipv6_address_is_never_banned(session):
+    access_control.add_rule(session, ALLOW, "2001:4860:4860::8888")
+    _fail(session, "2001:4860:4860::8888", 100)
+    assert _consider(session, "2001:4860:4860::8888") is None
 
 
 def test_a_whitelisted_address_is_never_banned_however_often_it_fails(session):

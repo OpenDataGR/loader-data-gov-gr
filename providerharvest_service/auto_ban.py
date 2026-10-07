@@ -78,7 +78,7 @@ def consider(session: Session, address: str, channels) -> AccessRule | None:
         ip = ipaddress.ip_address(address)
     except ValueError:
         return None
-    if ip.version != 4 or not ip.is_global:
+    if not ip.is_global or (ip.version == 6 and ip.ipv4_mapped is not None):
         return None
     if access_control.snapshot(session).verdict(address) is not None:
         return None  # whitelisted (never banned), or already blocked
@@ -95,8 +95,10 @@ def consider(session: Session, address: str, channels) -> AccessRule | None:
     else:
         return None
 
+    # One IPv6 customer holds a whole /64, so banning a single address of it would change nothing.
+    cidr = "%s/32" % address if ip.version == 4 else str(ipaddress.ip_network("%s/64" % address, strict=False))
     rule = AccessRule(
-        kind=access_control.BLOCK, cidr="%s/32" % address, note="auto-ban: " + why,
+        kind=access_control.BLOCK, cidr=cidr, note="auto-ban: " + why,
         created_by=CREATED_BY, expires_at=now + duration,
     )
     session.add(rule)
