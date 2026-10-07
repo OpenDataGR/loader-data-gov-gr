@@ -247,10 +247,41 @@ class FtpBoxStatus(Base):
     # box says it has applied; compared with the current one to show "applied" or
     # "waiting". NULL: a box that doesn't report it.
     access_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    # The box's own load / memory / disk / sessions figures from its last report, as JSON
+    # (see ftp-forwarder's box_resources.py). NULL: a box that doesn't report them.
+    resources: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    @property
+    def resource_figures(self) -> dict:
+        try:
+            data = json.loads(self.resources) if self.resources else {}
+        except ValueError:
+            return {}
+        return data if isinstance(data, dict) else {}
 
     @property
     def banned(self) -> list[str]:
         return json.loads(self.banned_ips) if self.banned_ips else []
+
+
+class FtpBoxCommand(Base):
+    """An action an admin asked an FTP box to run (restart a service, take a diagnostic
+    snapshot -- see box_commands.py). Loader can't reach the box, so it waits here until the
+    box's next heartbeat collects it ("sent"), and the box's answer arrives in a later one."""
+
+    __tablename__ = "ftp_box_command"
+    __table_args__ = (Index("ix_ftp_box_command_host_at", "hostname", "requested_at"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_new_id)
+    hostname: Mapped[str] = mapped_column(String, nullable=False)
+    action: Mapped[str] = mapped_column(String, nullable=False)
+    requested_by: Mapped[str] = mapped_column(String, nullable=False, default="")
+    requested_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
+    # pending (waiting for the box) | sent (handed over, no answer yet) | ok | failed | expired
+    state: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    sent_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    output: Mapped[str] = mapped_column(String, nullable=False, default="")
 
 
 class AccessLog(Base):

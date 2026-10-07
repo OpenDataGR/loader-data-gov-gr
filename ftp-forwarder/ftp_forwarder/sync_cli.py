@@ -15,10 +15,22 @@ import time
 
 import requests
 
-from ftp_forwarder import access_rules, account_sync, box_health, ip_limits
+from ftp_forwarder import access_rules, account_sync, box_commands, box_health, box_resources, ip_limits
 from ftp_forwarder.attempts_log import AttemptsLogTail
 from ftp_forwarder.auth_log import AuthLogTail
 from ftp_forwarder.ssh_log import JournalSshTail
+
+
+def _resources(args) -> dict | None:
+    """Load, memory, disk and sessions for loader's box page. Never raises: a monitoring
+    figure must not be the reason the heartbeat does not go out."""
+    try:
+        return box_resources.collect(
+            disks=("/", args.upload_root or ""), ftp_port=args.ftp_port, sftp_port=args.sftp_port,
+        )
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).exception("could not collect resource figures")
+        return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -117,6 +129,14 @@ def main(argv: list[str] | None = None) -> int:
     # Starts with nothing applied: the chain lives in memory, so after a restart (or a
     # reboot) loader's rules are put back at the first heartbeat.
     enforcer = access_rules.Enforcer(jails=jails)
+    executor = box_commands.Executor(
+        proftpd_unit=args.proftpd_unit, relay_unit=args.relay_unit, fail2ban_unit=args.fail2ban_unit,
+    )
+    # Results of actions run but not yet accepted by loader -- re-sent until they are, never re-run.
+    pending_results: dict[str, dict] = {}
+    # Actions already run (ids), so a repeated reply cannot run one twice. Loader sends each at most once,
+    # this is the second lock.
+    ran: set[str] = set()
 
     while True:
         pending_logins.update(auth_tail.poll())
@@ -150,9 +170,23 @@ def main(argv: list[str] | None = None) -> int:
             clients=[{"username": login.username, "ip": login.ip} for login in pending_logins.values()],
             banned_ips=box_health.read_banned_in(jails),
             access_version=enforcer.applied_version or "",
+            resources=_resources(args),
+            command_results=list(pending_results.values()),
         )
         if report.accepted:
             pending_logins.clear()
+            pending_results.clear()
+            # Actions an admin asked for: run the ones on this box's own list, once each; the
+            # result goes back with the next heartbeat.
+            for command in report.commands:
+                command_id = command.get("id") if isinstance(command, dict) else None
+                if command_id in ran:
+                    continue
+                result = executor.execute(command)
+                if result is not None:
+                    ran.add(result.id)
+                    pending_results[result.id] = result.as_payload()
+                    logger.info("ran %r at an admin's request: %s", command.get("action"), "ok" if result.ok else "failed")
             # Loader's whitelist and blacklist. Any problem leaves what is in force alone and
             # shows as "waiting" on loader's side, until the next heartbeat tries again.
             try:

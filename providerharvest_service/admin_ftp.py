@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from providerharvest_service import access_control
+from providerharvest_service import access_control, box_commands
 from providerharvest_service.admin_auth import require_admin_key, require_ftp_sync_key
 from providerharvest_service.client_addr import sender_address
 from providerharvest_service.db import get_session
@@ -343,8 +343,38 @@ class ClientSeen(BaseModel):
     ip: str
 
 
+class CommandResultIn(BaseModel):
+    """The box's answer to an action an admin asked for (see box_commands.py)."""
+
+    id: str
+    ok: bool
+    output: str = ""
+
+
+class DiskIn(BaseModel):
+    path: str = Field(max_length=200)
+    total_mb: int | None = None
+    used_mb: int | None = None
+
+
+class ResourcesIn(BaseModel):
+    """The box's own figures (see ftp-forwarder's box_resources.py); each may be missing."""
+
+    load: list[float] | None = Field(default=None, max_length=3)
+    cpus: int | None = None
+    mem_total_mb: int | None = None
+    mem_available_mb: int | None = None
+    swap_used_mb: int | None = None
+    uptime_s: int | None = None
+    disks: list[DiskIn] = Field(default=[], max_length=8)
+    ftp_sessions: int | None = None
+    sftp_sessions: int | None = None
+
+
 class FtpBoxStatusIn(_BoxStatusFields):
     clients: list[ClientSeen] = []
+    resources: ResourcesIn | None = None
+    command_results: list[CommandResultIn] = Field(default=[], max_length=20)
     # The box's fail2ban state; both optional so a box on older code still reports.
     banned_ips: list[str] | None = None
     fail2ban_active: bool | None = None
@@ -368,6 +398,8 @@ class FtpBoxStatusOut(_BoxStatusFields):
     # now -- how a request made here reaches a box that loader can't call.
     unban: list[str] = []
     access: AccessOut | None = None
+    # Actions an admin asked this box to run (an id and an action name each; see box_commands.py).
+    commands: list[dict] = []
 
 
 # A request the box never acts on (it's down, or fail2ban is) shouldn't sit
@@ -400,11 +432,15 @@ def report_ftp_box_status(
         row.banned_ips = json.dumps(sorted(a for a in addresses if a))
     row.fail2ban_active = payload.fail2ban_active
     row.access_version = payload.access_version
+    if payload.resources is not None:
+        row.resources = payload.resources.model_dump_json()
+    box_commands.record_results(session, payload.hostname, payload.command_results)
     # Where this report came from: the one address no block may ever cover.
     row.address = sender_address(request) or row.address
     for client in payload.clients:
         _record_sender(session, client.username, client.ip)
     pending = _collect_unban_requests(session, row)
+    to_run = box_commands.collect_for(session, payload.hostname)
     session.commit()
     session.refresh(row)
     return FtpBoxStatusOut(
@@ -419,6 +455,7 @@ def report_ftp_box_status(
         reported_at=row.reported_at,
         unban=pending,
         access=AccessOut(**access_control.box_payload(session)),
+        commands=to_run,
     )
 
 

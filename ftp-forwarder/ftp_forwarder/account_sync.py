@@ -191,6 +191,8 @@ class Report:
     unban: tuple[str, ...] = ()
     # Loader's whitelist/blacklist as sent (not yet validated -- see access_rules.parse).
     access: object = None
+    # Actions an admin asked this box to run (see box_commands.py), as sent: not yet validated.
+    commands: tuple = ()
 
     def __bool__(self) -> bool:
         return self.accepted
@@ -209,6 +211,8 @@ def report_status(
     clients: list[dict] | None = None,
     banned_ips: list[str] | None = None,
     access_version: str | None = None,
+    resources: dict | None = None,
+    command_results: list[dict] | None = None,
     timeout_s: float = 30.0,
 ) -> Report:
     """Best-effort: a failed heartbeat is logged, never raised -- this
@@ -237,6 +241,10 @@ def report_status(
         payload["banned_ips"] = banned_ips
     if access_version is not None:
         payload["access_version"] = access_version  # "" until a set of rules has been applied
+    if resources is not None:
+        payload["resources"] = resources
+    if command_results:
+        payload["command_results"] = command_results
     try:
         resp = session.put(url, json=payload, headers={"X-Ftp-Sync-Key": sync_key}, timeout=timeout_s)
         if resp.status_code != 200:
@@ -252,10 +260,12 @@ def report_status(
     unban = body.get("unban") if isinstance(body, dict) else None
     if not isinstance(unban, list):
         unban = []
+    commands = body.get("commands") if isinstance(body, dict) else None
     return Report(
         accepted=True,
         unban=tuple(a for a in unban if isinstance(a, str)),
         access=body.get("access") if isinstance(body, dict) else None,
+        commands=tuple(commands) if isinstance(commands, list) else (),
     )
 
 

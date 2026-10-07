@@ -174,6 +174,18 @@ provider's uploads until they switch), and for an HTTPS push source **Rotate API
 key** (`/provider/sources/{id}/rotate-key`: the old key stops working immediately;
 before this a lost key meant deleting and re-registering the source).
 
+**FTP box resources and actions.** The FTP box page shows each box's own figures
+(load, memory, disk, uptime, open FTP/SFTP sessions -- reported in the heartbeat and
+stored as `FtpBoxStatus.resources`) and a "..." menu of **actions**: restart ProFTPD,
+restart the file relay, reload fail2ban, run diagnostics (a read-only snapshot with
+recent log lines). Loader cannot reach a box, so a request (`FtpBoxCommand`, with who
+asked and what the box answered, kept 30 days) waits until the box's next heartbeat
+collects it -- about a minute -- and the answer returns in the one after. The box runs
+only what is on **its own** fixed list (loader sends an action name, never a command
+line); each request is handed over at most once, and one nobody collects in 15 minutes
+expires. A disruptive action asks for confirmation. There is no shell in the browser:
+that stays on SSH (`box_commands.py`, `ftp-forwarder/ftp_forwarder/box_commands.py`).
+
 **Automatic web bans (`auto_ban.py`).** Loader bans an address that keeps failing to
 authenticate, like fail2ban does on the FTP box: **10 failures in 10 minutes -> an hour**,
 **30 in 24 hours -> a day**. Counted: failed web logins and admin, FTP-box-sync and

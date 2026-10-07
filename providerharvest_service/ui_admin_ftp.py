@@ -43,7 +43,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from providerharvest_service import build_info, nav
+from providerharvest_service import admin_session, box_commands, build_info, nav
 from providerharvest_service.admin_ftp import generate_password, hash_password, normalize_allowed_cidr
 from providerharvest_service.ftp_credentials import password_problem
 from providerharvest_service.db import get_session
@@ -55,6 +55,8 @@ templates.env.globals["build_info"] = build_info.get_build_info()
 templates.env.globals["changelog"] = build_info.get_changelog()
 templates.env.globals["now"] = datetime.datetime.now
 templates.env.globals["pending_approvals"] = nav.pending_approvals
+templates.env.filters["utc"] = lambda value: value.strftime("%Y-%m-%d %H:%M:%S") if value else ""
+templates.env.filters["short_utc"] = lambda value: value.strftime("%m-%d %H:%M") if value else ""
 
 # A box that hasn't reported in this long is shown as stale rather than
 # trusted at face value -- the account-sync cycle this relies on runs
@@ -94,6 +96,53 @@ def _utcnow() -> datetime.datetime:
     return datetime.datetime.now(datetime.timezone.utc)
 
 
+def _gb(mb: int | None) -> str:
+    return "?" if mb is None else ("%.1f GB" % (mb / 1024) if mb >= 1024 else "%d MB" % mb)
+
+
+def _span(seconds: int | None) -> str:
+    if seconds is None:
+        return "unknown"
+    days, rest = divmod(int(seconds), 86400)
+    hours, rest = divmod(rest, 3600)
+    return "%dd %dh" % (days, hours) if days else "%dh %dm" % (hours, rest // 60)
+
+
+def _level(percent: float, warn: float = 80, bad: float = 92) -> str:
+    return "bad" if percent >= bad else "warn" if percent >= warn else "ok"
+
+
+def resource_view(box: FtpBoxStatus) -> list[dict]:
+    """The box's reported figures as rows for the page: a label, a text, and -- for what has a
+    limit -- a percentage and how worrying it is ("ok" | "warn" | "bad"). Empty for a box that
+    does not report them (older code), so the page just omits the section."""
+    r = box.resource_figures
+    if not r:
+        return []
+    rows: list[dict] = []
+    load, cpus = r.get("load"), r.get("cpus") or 1
+    if isinstance(load, list) and len(load) == 3:
+        busy = 100 * load[0] / cpus  # 100 means every CPU has work queued
+        rows.append({"label": "Load", "text": "%.2f  %.2f  %.2f  (%d CPU%s)" % (*load, cpus, "" if cpus == 1 else "s"),
+                     "percent": min(100.0, busy), "level": _level(busy, 100, 150)})
+    total, avail = r.get("mem_total_mb"), r.get("mem_available_mb")
+    if total and avail is not None:
+        percent = 100 * (total - avail) / total
+        swap = r.get("swap_used_mb")
+        rows.append({"label": "Memory", "text": "%s of %s in use%s" % (_gb(total - avail), _gb(total),
+                     "" if not swap else ", swap %s" % _gb(swap)), "percent": percent, "level": _level(percent)})
+    for disk in r.get("disks") or []:
+        if disk.get("total_mb"):
+            percent = 100 * (disk.get("used_mb") or 0) / disk["total_mb"]
+            rows.append({"label": "Disk " + str(disk.get("path")), "text": "%s of %s used" % (_gb(disk.get("used_mb")), _gb(disk["total_mb"])),
+                         "percent": percent, "level": _level(percent)})
+    if r.get("ftp_sessions") is not None or r.get("sftp_sessions") is not None:
+        rows.append({"label": "Open sessions", "text": "%s FTP, %s SFTP" % (r.get("ftp_sessions", "?"), r.get("sftp_sessions", "?")), "percent": None, "level": "ok"})
+    if r.get("uptime_s") is not None:
+        rows.append({"label": "Up for", "text": _span(r.get("uptime_s")), "percent": None, "level": "ok"})
+    return rows
+
+
 @router.get("", response_class=HTMLResponse)
 def ftp_overview(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
     accounts = list(session.scalars(select(FtpAccount)).all())
@@ -104,15 +153,35 @@ def ftp_overview(request: Request, session: Session = Depends(get_session)) -> H
         if reported_at.tzinfo is None:
             reported_at = reported_at.replace(tzinfo=datetime.timezone.utc)
         box.is_stale = (now - reported_at) > _STALE_AFTER  # type: ignore[attr-defined]
+        box.resource_rows = resource_view(box)  # type: ignore[attr-defined]
+        box.commands = box_commands.recent(session, box.hostname)  # type: ignore[attr-defined]
+    session.commit()  # (recent() records requests that went unanswered as expired)
     return templates.TemplateResponse(
         request,
         "admin/ftp.html",
         {
             "accounts": accounts,
             "boxes": boxes,
+            "box_actions": list(box_commands.ACTIONS.values()),
             "flash": request.query_params.get("flash"),
             "flash_kind": request.query_params.get("flash_kind", "success"),
         },
+    )
+
+
+@router.post("/boxes/{hostname}/actions/{action}")
+def ask_box_to_run(request: Request, hostname: str, action: str, session: Session = Depends(get_session)):
+    """Queue one of the box actions (see box_commands.py). It runs within about a minute, at the
+    box's next heartbeat -- loader cannot reach the box itself."""
+    who = admin_session.verify_session_cookie(request.cookies.get(admin_session.COOKIE_NAME, "")) or ""
+    try:
+        box_commands.request(session, hostname, action, who)
+    except box_commands.CommandError as exc:
+        return RedirectResponse("/admin/ftp?%s" % urlencode({"flash": str(exc), "flash_kind": "error"}), status_code=303)
+    label = box_commands.ACTIONS[action].label
+    return RedirectResponse(
+        "/admin/ftp?%s" % urlencode({"flash": "%s requested for %s. The box picks it up within about a minute." % (label, hostname)}),
+        status_code=303,
     )
 
 

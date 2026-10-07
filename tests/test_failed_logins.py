@@ -419,7 +419,7 @@ def test_the_page_says_so_when_nobody_is_banned(admin, _isolated_db):
 def test_the_ban_list_is_no_longer_on_the_ftp_subsystem_page(admin, _isolated_db):
     _add_ban_box(_isolated_db, banned=["84.205.215.132"])
     text = admin.get("/admin/ftp").text
-    assert 'action="/admin/ftp/boxes/' not in text and "Banned addresses" not in text
+    assert "/unban" not in text and "Banned addresses" not in text  # (the box actions live there now, but not Unban)
     assert 'href="%s"' % PAGE in text  # but it points to where it went
 
 

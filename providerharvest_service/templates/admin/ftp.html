@@ -47,6 +47,67 @@
         </tbody>
       </table>
 
+      <style>
+        .box-detail { margin-top: 1.4rem; padding-top: 1rem; border-top: 1px solid var(--color-border); }
+        .box-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+        .box-detail-head h2 { margin: 0; font-size: 1.05rem; }
+        .meter-row { display: grid; grid-template-columns: 9rem minmax(8rem, 16rem) 1fr; gap: 0.7rem; align-items: center; padding: 0.25rem 0; font-size: 0.9rem; }
+        .meter { height: 8px; border-radius: 4px; background: var(--color-border); overflow: hidden; }
+        .meter > span { display: block; height: 100%; background: var(--status-active); }
+        .meter.warn > span { background: var(--status-pending); }
+        .meter.bad > span { background: var(--status-rejected); }
+        .cmd-list { margin: 0.6rem 0 0; padding: 0; list-style: none; font-size: 0.88rem; }
+        .cmd-list li { padding: 0.3rem 0; border-top: 1px solid var(--color-border); }
+        .cmd-list pre { margin: 0.4rem 0 0.2rem; padding: 0.6rem; max-height: 22rem; overflow: auto; white-space: pre-wrap; word-break: break-word; background: var(--color-bg); border: 1px solid var(--color-border); border-radius: var(--radius); font-size: 0.8rem; }
+        @media (max-width: 640px) { .meter-row { grid-template-columns: 1fr; } }
+      </style>
+      {% for box in boxes %}
+      <div class="box-detail">
+        <div class="box-detail-head">
+          <h2>{{ box.hostname }}</h2>
+          {% call macros.dots_menu() %}
+            {% for a in box_actions %}
+              {{ macros.dots_item("/admin/ftp/boxes/" ~ box.hostname ~ "/actions/" ~ a.key, a.label, {}, a.confirm) }}
+            {% endfor %}
+          {% endcall %}
+        </div>
+        {% if box.resource_rows %}
+          {% for row in box.resource_rows %}
+            <div class="meter-row">
+              <span>{{ row.label }}</span>
+              {% if row.percent is not none %}<div class="meter {{ row.level if row.level != 'ok' else '' }}" title="{{ '%.0f' % row.percent }}%"><span style="width:{{ '%.0f' % row.percent }}%"></span></div>{% else %}<span></span>{% endif %}
+              <span class="{{ 'muted' if row.level == 'ok' else '' }}">{{ row.text }}</span>
+            </div>
+          {% endfor %}
+          <p class="muted" style="margin:0.4rem 0 0;">As of the box's last report, {{ box.reported_at|short_utc }} UTC.</p>
+        {% else %}
+          <p class="muted" style="margin:0.6rem 0 0;">This box does not report its resources yet (it needs the latest box code).</p>
+        {% endif %}
+        {% if box.commands %}
+          <ul class="cmd-list">
+            {% for c in box.commands %}
+              <li>
+                <strong>{{ box_actions|selectattr("key", "equalto", c.action)|map(attribute="label")|first|default(c.action) }}</strong>
+                <span class="muted">-- {{ c.requested_by or "an admin" }}, {{ c.requested_at|short_utc }} UTC</span>
+                {% if c.state == "pending" %}<span class="badge badge-pending"><span>waiting for the box</span></span>
+                {% elif c.state == "sent" %}<span class="badge badge-pending"><span>running</span></span>
+                {% elif c.state == "ok" %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>done</span></span>
+                {% elif c.state == "failed" %}<span class="badge badge-error">{{ macros.icon("rejected", 13) }}<span>failed</span></span>
+                {% else %}<span class="badge badge-error"><span>no answer</span></span>{% endif %}
+                {% if c.output %}
+                  <details{% if c.state == "failed" or c.action == "diagnostics" and loop.first %} open{% endif %}><summary class="muted">Output</summary><pre>{{ c.output }}</pre></details>
+                {% endif %}
+              </li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+      </div>
+      {% endfor %}
+      <p class="subtitle" style="margin:0.8rem 0 0;">
+        Actions run within about a minute -- loader cannot reach a box, so the box collects them at its next check-in
+        and reports back. For anything else, SSH to the box as usual.
+      </p>
+
       <p class="subtitle" style="margin:1.2rem 0 0;">
         Failed logins and the list of banned addresses (with Unban) are on the
         <a href="/admin/security/failed-logins">Security box</a> page.

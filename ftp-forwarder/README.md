@@ -241,6 +241,25 @@ the only way in, they are locked out until it is updated here.
 
 Plain FTP (port 21, unencrypted) stays open for now: a provider depends on it.
 
+### Resources and actions from loader's FTP box page
+
+Every heartbeat also carries the box's own figures (`box_resources.py`: load, memory,
+swap, disk for `/` and the upload root, uptime, open FTP/SFTP sessions -- read from
+`/proc` and `shutil.disk_usage`, only the session count asks `ss`; a figure that cannot
+be read is left out, never a reason for the heartbeat to fail), shown as meters on loader's
+FTP box page.
+
+An admin can also ask the box to run an **action** from that page. Loader cannot connect
+here, so the request waits on loader; the heartbeat reply hands it over (`commands`:
+an id and an action *name*), `box_commands.py` runs it, and the answer goes back in the
+next heartbeat (`command_results`). What may run is decided **on this box**, from a fixed
+list -- restart ProFTPD, restart the file relay, reload fail2ban, and a read-only
+diagnostics snapshot (uptime, memory, disk, unit states, recent log lines). Loader never
+sends a command line, every command is an argument list (no shell), unknown names are
+refused, and output is cut to 6000 characters. Each request is run at most once (a lost
+reply does not repeat a restart); one nobody collected within 15 minutes expires. There is
+deliberately no shell or arbitrary command here: that stays on SSH.
+
 ## One-time setup on the box itself
 
 `.github/workflows/provision-ftp-box.yml` (idempotent, safe to re-run)
