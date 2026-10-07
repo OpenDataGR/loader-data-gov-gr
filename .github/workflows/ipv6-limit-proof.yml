@@ -13,6 +13,10 @@ name: Prove IPv6 login limits in ProFTPD (one-off)
 # The live service on 21/2222 is not touched. Deleted again afterwards.
 on:
   workflow_dispatch:
+    inputs:
+      useipv6:
+        description: "UseIPv6 on or off"
+        default: "on"
 
 jobs:
   prove:
@@ -40,7 +44,7 @@ jobs:
           ServerType standalone
           DefaultServer on
           Port 2291
-          UseIPv6 on
+          UseIPv6 ${{ inputs.useipv6 }}
           PidFile /tmp/v6limit/proftpd.pid
           ScoreboardFile /tmp/v6limit/scoreboard
           SystemLog /tmp/v6limit/system.log
@@ -122,7 +126,7 @@ jobs:
 
       - name: What did ProFTPD log?
         if: always()
-        run: sudo -n tail -30 /tmp/v6limit/system.log || true
+        run: sudo -n ls -la /tmp/v6limit/ || true
 
       - name: Tear the throwaway server down
         if: always()
