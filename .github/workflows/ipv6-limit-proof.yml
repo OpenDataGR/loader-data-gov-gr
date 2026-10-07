@@ -132,7 +132,7 @@ jobs:
         if: always()
         run: |
           sudo -n ls -la /tmp/v6limit/ || true
-          sudo -n grep -iE "v4-other|LOGIN|denied|Limit|IfUser|ifsession" /tmp/v6limit/server.out | cut -c1-260 | head -70 || true
+          sudo -n grep -E "0\.0\.0\.0 \(localhost" /tmp/v6limit/server.out | grep -iE "v4-other|ifsession/|denied|Limit|refus|authenticat|Login" | grep -v "dispatching" | sed "s/^.*proftpd\[[0-9]*\] //" | cut -c1-220 | head -60 || true
           sudo -n proftpd -V 2>&1 | head -3
 
       - name: Tear the throwaway server down
