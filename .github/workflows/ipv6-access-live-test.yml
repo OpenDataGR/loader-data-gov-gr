@@ -1,0 +1,68 @@
+name: IPv6 access rules live test (one-off)
+
+# One-off. Adds a documentation-range IPv6 blacklist and whitelist entry (2001:db8::/32 space,
+# never real traffic) on loader, waits for the FTP box to apply them via its heartbeat, shows
+# the ip6tables chain and fail2ban ignoreip, then removes the rules and checks the chain empties.
+# Deleted afterwards.
+on:
+  workflow_dispatch:
+
+jobs:
+  add:
+    runs-on: [self-hosted, loader]
+    steps:
+      - run: |
+          python3 - <<'PY'
+          import datetime, sqlite3, uuid
+          conn = sqlite3.connect("/opt/data-projects/loader-data-gov-gr/data/loader.db")
+          now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+          fmt = "%Y-%m-%d %H:%M:%S.%f"
+          for kind, cidr in (("block", "2001:db8:dead::/48"), ("allow", "2001:db8:beef::5/128")):
+              conn.execute("INSERT OR REPLACE INTO access_rule (id, kind, cidr, note, created_by, created_at, expires_at) VALUES (?,?,?,?,?,?,?)",
+                           (str(uuid.uuid4()), kind, cidr, "live test", "live-test", now.strftime(fmt), (now + datetime.timedelta(minutes=15)).strftime(fmt)))
+          conn.commit()
+          print("added")
+          PY
+
+  box:
+    needs: add
+    runs-on: [self-hosted, loader-ftp]
+    steps:
+      - name: Wait for the box to apply them
+        run: |
+          for i in $(seq 1 24); do
+            if sudo -n ip6tables -S LOADER-ACCESS 2>/dev/null | grep -q 2001:db8:dead; then break; fi
+            sleep 10
+          done
+          echo "--- ip6tables"; sudo -n ip6tables -S LOADER-ACCESS || true
+          echo "--- iptables (v4 chain, for contrast)"; sudo -n iptables -S LOADER-ACCESS || true
+          echo "--- fail2ban ignoreip"; grep ignoreip /etc/fail2ban/jail.d/zz-loader-access.local || true
+          echo "--- jails"; sudo -n fail2ban-client status || true
+          sudo -n ip6tables -S LOADER-ACCESS | grep -q "2001:db8:beef::5/128 -j RETURN" && sudo -n ip6tables -S LOADER-ACCESS | grep -q "2001:db8:dead::/48 -j DROP"
+
+  remove:
+    needs: [add, box]
+    if: always()
+    runs-on: [self-hosted, loader]
+    steps:
+      - run: |
+          python3 - <<'PY'
+          import sqlite3
+          conn = sqlite3.connect("/opt/data-projects/loader-data-gov-gr/data/loader.db")
+          conn.execute("DELETE FROM access_rule WHERE created_by = 'live-test'")
+          conn.commit()
+          print("removed")
+          PY
+
+  box-cleared:
+    needs: remove
+    if: always()
+    runs-on: [self-hosted, loader-ftp]
+    steps:
+      - run: |
+          for i in $(seq 1 24); do
+            if ! sudo -n ip6tables -S LOADER-ACCESS 2>/dev/null | grep -q 2001:db8; then break; fi
+            sleep 10
+          done
+          sudo -n ip6tables -S LOADER-ACCESS || true
+          ! sudo -n ip6tables -S LOADER-ACCESS | grep -q 2001:db8
