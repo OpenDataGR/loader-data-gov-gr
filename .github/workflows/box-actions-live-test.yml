@@ -1,0 +1,50 @@
+name: FTP box actions live test (one-off)
+
+# One-off, run on the loader VM against loader's own database: waits for the box to report its
+# resources, then queues a read-only "diagnostics" request exactly as the web page would and waits for the
+# box to collect it, run it and answer. Nothing is restarted. Deleted afterwards.
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: [self-hosted, loader]
+    steps:
+      - run: |
+          python3 - <<'PY'
+          import datetime, json, sqlite3, sys, time, uuid
+
+          conn = sqlite3.connect("/opt/data-projects/loader-data-gov-gr/data/loader.db", timeout=30)
+          now = lambda: datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+          fmt = "%Y-%m-%d %H:%M:%S.%f"
+
+          print("-- resources as the box last reported them")
+          for _ in range(30):
+              row = conn.execute("SELECT hostname, resources FROM ftp_box_status").fetchone()
+              if row and row[1]:
+                  break
+              time.sleep(10)
+          if not row or not row[1]:
+              sys.exit("the box has not reported resources (is it on the new code?)")
+          print(row[0], json.dumps(json.loads(row[1]), indent=1))
+
+          print("-- asking for diagnostics")
+          cid = str(uuid.uuid4())
+          conn.execute("INSERT INTO ftp_box_command (id, hostname, action, requested_by, requested_at, state, output) VALUES (?,?,?,?,?,?,?)",
+                       (cid, row[0], "diagnostics", "live-test", now().strftime(fmt), "pending", ""))
+          conn.commit()
+          try:
+              for _ in range(30):
+                  state, output = conn.execute("SELECT state, output FROM ftp_box_command WHERE id = ?", (cid,)).fetchone()
+                  if state in ("ok", "failed", "expired"):
+                      break
+                  time.sleep(10)
+              print("state:", state)
+              print(output[:2500])
+              if state != "ok":
+                  sys.exit("the box did not answer ok")
+          finally:
+              conn.execute("DELETE FROM ftp_box_command WHERE id = ?", (cid,))
+              conn.commit()
+          print("ALL OK")
+          PY
