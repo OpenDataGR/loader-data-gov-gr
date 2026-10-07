@@ -339,7 +339,7 @@ def test_an_invalid_sender_list_is_a_form_error_and_registers_nothing(client, _i
 def test_a_hostname_is_resolved_when_registering_and_its_addresses_stored(client, _isolated_db, monkeypatch):
     from providerharvest_service import sender_allowlist
 
-    monkeypatch.setattr(sender_allowlist, "_resolve_ipv4", lambda host: ["203.0.113.9"] if host == "sender.example.gr" else [])
+    monkeypatch.setattr(sender_allowlist, "_resolve", lambda host: ["203.0.113.9"] if host == "sender.example.gr" else [])
     _, api_key = _register_and_activate_push_source(client, _isolated_db, allowed_senders="https://sender.example.gr/upload")
     assert _config(_isolated_db)["allowed_senders"] == ["203.0.113.9/32"]
     assert _upload(client, api_key, **_from("203.0.113.9")).status_code == 200

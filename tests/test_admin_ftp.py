@@ -186,11 +186,11 @@ def test_allowed_ips_crud_and_validation(client):
     )
     assert bad.status_code == 422
 
-    # IPv6 is refused: the box enforces the list with IPv4 ProFTPD rules.
-    v6 = client.post(
-        "/admin/ftp-accounts/%s/allowed-ips" % account_id, json={"cidr": "2001:db8::/32"}, headers=AUTH_HEADERS
+    # IPv6 is accepted (canonical form), but an IPv4 address written as IPv6 is not.
+    mapped = client.post(
+        "/admin/ftp-accounts/%s/allowed-ips" % account_id, json={"cidr": "::ffff:203.0.113.9"}, headers=AUTH_HEADERS
     )
-    assert v6.status_code == 422
+    assert mapped.status_code == 422
 
     added = client.post(
         "/admin/ftp-accounts/%s/allowed-ips" % account_id,

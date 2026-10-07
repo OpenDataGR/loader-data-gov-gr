@@ -36,8 +36,8 @@ def test_only_limited_accounts_are_named_and_the_output_is_stable():
     assert render(list(reversed(accounts))) == text  # same file whatever the order
 
 
-@pytest.mark.parametrize("bad", ["2001:db8::/32", "not-an-ip", "", "1.2.3.4; reboot", "300.1.1.1", "any", "1.2.3.4\nDenyAll"])
-def test_a_value_that_is_not_an_ipv4_address_or_range_fails_the_whole_render(bad):
+@pytest.mark.parametrize("bad", ["::ffff:1.2.3.4", "not-an-ip", "", "1.2.3.4; reboot", "300.1.1.1", "any", "1.2.3.4\nDenyAll"])
+def test_a_value_that_is_not_an_address_or_range_fails_the_whole_render(bad):
     with pytest.raises(IpLimitError):
         render([{"username": "acme", "allowed_ips": ["203.0.113.9", bad]}])
 
@@ -102,10 +102,15 @@ def test_a_bad_account_list_touches_nothing(tmp_path):
     conf = str(tmp_path / "limits.conf")
     calls = []
     with pytest.raises(IpLimitError):
-        apply([{"username": "acme", "allowed_ips": ["2001:db8::1"]}], conf, run=lambda c: calls.append(c) or _done())
+        apply([{"username": "acme", "allowed_ips": ["not-an-ip"]}], conf, run=lambda c: calls.append(c) or _done())
     assert calls == [] and not (tmp_path / "limits.conf").exists()
 
 
 def test_the_default_path_sorts_before_the_sftp_config():
     # <Global> must be read before the SFTP <VirtualHost>, as in the proof on the box.
     assert ip_limits.DEFAULT_CONF_PATH.rsplit("/", 1)[1] < "loader-sftp.conf"
+
+
+def test_ipv6_entries_are_written_as_allow_rules_beside_ipv4_ones_in_a_stable_order():
+    text = render([{"username": "acme", "allowed_ips": ["2001:DB8:5::/48", "2001:db8::9/128", "203.0.113.9", "198.51.100.0/24"]}])
+    assert "      Allow 198.51.100.0/24 203.0.113.9 2001:db8::9 2001:db8:5::/48\n" in text

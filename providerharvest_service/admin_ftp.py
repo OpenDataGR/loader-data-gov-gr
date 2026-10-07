@@ -90,10 +90,8 @@ class ForwardTargetUpdate(BaseModel):
     push_target_source_name: str | None
 
 
-#: An address or range an account may log in from, in canonical form. IPv4 only,
-#: deliberately: the box enforces the list with ProFTPD ``Allow`` rules, and an
-#: account whose whole list the box could not express would be locked out
-#: entirely. Raises ValueError with a message fit to show an admin. (Defined in
+#: An address or range an account may log in from, in canonical form. IPv4 or
+#: IPv6: the box enforces the list with ProFTPD ``Allow`` rules, which take both. Raises ValueError with a message fit to show an admin. (Defined in
 #: sender_allowlist, which the push-source registration shares.)
 normalize_allowed_cidr = normalize_cidr
 

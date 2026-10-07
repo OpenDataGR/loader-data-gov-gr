@@ -202,7 +202,7 @@ the version applied (`access_version`; empty until the first apply).
 ### Per-account login limits (allowed addresses)
 
 On loader's **FTP box** page each account has an *Allowed from* list. Empty
-(the default) means the account works from anywhere. Once any IPv4 address or
+(the default) means the account works from anywhere. Once any IPv4 or IPv6 address or
 range is listed, the account works **only** from those -- over FTP and SFTP/SCP
 alike -- and is refused from everywhere else even with the right password. A
 change takes effect within about a minute of the box's next sync.
@@ -224,8 +224,12 @@ leaves the previous file in force, the new file is kept only if `proftpd -t`
 accepts the whole configuration, and ProFTPD is reloaded only when the rules
 actually changed. A failure shows as the box's *Sync: failing* with the reason.
 The limits are applied *before* the account database is updated, so an account
-is never loginable from anywhere for a moment ahead of its limit. IPv4 only for
-now (loader refuses IPv6, which the box could not express).
+is never loginable from anywhere for a moment ahead of its limit. IPv4 and IPv6 both:
+ProFTPD (running with `UseIPv6 on`, as here) takes either in `Allow`, proven on this
+box for FTP and SFTP over IPv6 and IPv4 (a dual-stack listener shows an IPv4 client as
+an IPv4 address, so IPv4 entries keep working). An IPv4 address written as IPv6
+(`::ffff:1.2.3.4`) is refused. Without `UseIPv6 on` an IPv6 entry is a fatal config
+error, which `proftpd -t` catches before anything is reloaded.
 
 For a provider's own account the list comes from the **allowed senders** of
 its push source (set when the provider registers or edits it) and is shown

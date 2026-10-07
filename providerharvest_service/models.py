@@ -273,7 +273,7 @@ class AccessLog(Base):
 
 class AccessRule(Base):
     """One entry of the Security box's whitelist ("allow") or blacklist ("block"):
-    an IPv4 address or range. Enforced by loader itself on every HTTP request and,
+    an IPv4 or IPv6 address or range. Enforced by loader itself on every HTTP request and,
     through the box's heartbeat reply, by the FTP box (see access_control.py). A
     rule may carry an expiry (a temporary block); expired rules are ignored."""
 

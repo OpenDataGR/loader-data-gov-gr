@@ -7,7 +7,7 @@ DNS = {
     "sender.example.gr": ["203.0.113.9"],
     "two.example.gr": ["198.51.100.7", "198.51.100.8"],
     "big.example.gr": ["10.0.0.%d" % i for i in range(1, 30)],
-    "v6only.example.gr": [],
+    "empty.example.gr": [],
 }
 
 
@@ -46,8 +46,8 @@ def test_a_url_or_host_with_a_port_or_path_is_reduced_to_its_host():
 
 @pytest.mark.parametrize("bad", [
     "not an address",  # becomes two tokens, "not" has no dot
-    "any", "all", "localhost", "*", "0", "300.1.1.1", "203.0.113.0/99", "2001:db8::1", "2001:db8::/32",
-    "[::1]:21", "-bad.example.gr", "bad_.example.gr", "a..b.gr", "1.2.3.4;reboot x",
+    "any", "all", "localhost", "*", "0", "300.1.1.1", "203.0.113.0/99", "2001:db8::/129", "::ffff:203.0.113.9",
+    "[::1]:21x", "-bad.example.gr", "bad_.example.gr", "a..b.gr", "1.2.3.4;reboot x",
 ])
 def test_things_that_are_not_an_address_range_or_hostname_are_refused_with_a_message(bad):
     with pytest.raises(AllowlistError) as err:
@@ -55,11 +55,11 @@ def test_things_that_are_not_an_address_range_or_hostname_are_refused_with_a_mes
     assert str(err.value)
 
 
-def test_a_hostname_that_does_not_resolve_or_has_no_ipv4_is_refused():
+def test_a_hostname_that_does_not_resolve_or_has_no_address_is_refused():
     with pytest.raises(AllowlistError, match="look up"):
         parse("nowhere.example.gr", resolve=fake_resolve)
-    with pytest.raises(AllowlistError, match="no IPv4"):
-        parse("v6only.example.gr", resolve=fake_resolve)
+    with pytest.raises(AllowlistError, match="no IP address"):
+        parse("empty.example.gr", resolve=fake_resolve)
 
 
 def test_a_hostname_pointing_at_very_many_addresses_is_refused_not_truncated():
@@ -95,7 +95,19 @@ def test_a_list_lets_in_only_its_addresses():
     assert not permits(allowed, "8.8.8.8")
 
 
-def test_an_address_that_cannot_be_determined_or_is_not_ipv4_is_refused_when_there_is_a_list():
+def test_an_address_that_cannot_be_determined_is_refused_when_there_is_a_list():
     allowed = ["203.0.113.9/32"]
-    for address in (None, "", "garbage", "2001:db8::1", "203.0.113.9; drop"):
+    for address in (None, "", "garbage", "203.0.113.9; drop"):
         assert not permits(allowed, address), address
+
+
+def test_ipv6_addresses_ranges_and_mapped_senders():
+    assert parse("2001:DB8::1, 2001:db8:5::/48 203.0.113.9") == ["203.0.113.9/32", "2001:db8::1/128", "2001:db8:5::/48"]
+    allowed = ["203.0.113.9/32", "2001:db8:5::/48"]
+    assert permits(allowed, "2001:db8:5::77") and not permits(allowed, "2001:db8:6::1")
+    assert permits(allowed, "::ffff:203.0.113.9") and not permits(allowed, "::ffff:203.0.113.10")  # a dual-stack listener's view of IPv4
+    assert not permits(["2001:db8:5::/48"], "203.0.113.9")
+
+
+def test_a_hostname_gives_all_its_addresses_both_families():
+    assert parse("sender.example.gr", resolve=lambda h: ["203.0.113.9", "2001:db8::9"]) == ["203.0.113.9/32", "2001:db8::9/128"]

@@ -40,6 +40,7 @@ DEFAULT_CONF_PATH = "/etc/proftpd/conf.d/loader-ip-limits.conf"
 
 # What loader allows for a username (3-32 letters, digits, - and _) -- re-checked
 # here because it ends up inside a config file read by a root process.
+_MAPPED = ipaddress.ip_network("::ffff:0:0/96")
 _USERNAME = re.compile(r"^[A-Za-z0-9_-]{3,32}$")
 
 _HEADER = (
@@ -60,16 +61,17 @@ def _default_run(cmd: list[str]) -> subprocess.CompletedProcess:
 
 def _canonical(entry: object) -> str:
     """One allowed address as ProFTPD's ``Allow`` wants it: a host without a
-    prefix, a range in CIDR form. IPv4 only -- loader refuses anything else,
-    and an entry this box could not express must not become a silent no-op
-    (the rest of the list would then lock the account out)."""
+    prefix, a range in CIDR form. IPv4 or IPv6 (ProFTPD takes both when it runs with
+    ``UseIPv6 on``, which ``proftpd -t`` enforces; without it an IPv6 entry is a fatal
+    config error, never a silent no-op, which would lock the account out). IPv4-mapped
+    IPv6 is refused: the IPv4 address is what to write."""
     try:
         network = ipaddress.ip_network(str(entry).strip(), strict=False)
     except ValueError as exc:
         raise IpLimitError("not an address or range: %r" % (entry,)) from exc
-    if network.version != 4:
-        raise IpLimitError("only IPv4 is supported, got %r" % (entry,))
-    return str(network.network_address) if network.prefixlen == 32 else str(network)
+    if network.version == 6 and network.overlaps(_MAPPED):
+        raise IpLimitError("an IPv4 address written as IPv6 is not accepted, got %r" % (entry,))
+    return str(network.network_address) if network.prefixlen == network.max_prefixlen else str(network)
 
 
 def render(accounts: Iterable[dict]) -> str:
@@ -81,7 +83,7 @@ def render(accounts: Iterable[dict]) -> str:
         username = account.get("username")
         if not isinstance(username, str) or not _USERNAME.match(username):
             raise IpLimitError("not a usable username: %r" % (username,))
-        allowed = sorted({_canonical(e) for e in entries}, key=lambda a: (ipaddress.ip_network(a).network_address, a))
+        allowed = sorted({_canonical(e) for e in entries}, key=lambda a: (ipaddress.ip_network(a).version, ipaddress.ip_network(a).network_address, a))
         blocks.append(
             "  <IfUser %s>\n"
             "    <Limit LOGIN>\n"

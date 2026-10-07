@@ -13,8 +13,8 @@ regular heartbeat (``admin_ftp.report_ftp_box_status``) and says which version
 it has applied, which the page shows as "applied" or "waiting".
 
 IPv4 and IPv6 both (IPv6 is enforced on the box with ip6tables and fail2ban's
-``ignoreip``). The per-source and per-account allowed-sender lists stay IPv4 only:
-they become ProFTPD ``Allow`` rules, which this box cannot express for IPv6.
+``ignoreip``). The per-source and per-account allowed-sender lists take IPv6 too:
+they become ProFTPD ``Allow`` rules, which take IPv6 (proven; see ip_limits.py).
 
 The guards are on purpose: nothing wider than a /8 (IPv4) or a /32 (IPv6) can be
 listed (a typo must not blacklist the internet or whitelist it), and a block may

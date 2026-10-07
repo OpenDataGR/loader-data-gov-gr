@@ -455,10 +455,10 @@ def test_allowing_the_same_address_twice_does_not_duplicate_it(client, _isolated
     assert _allowed(_isolated_db) == ["203.0.113.9/32"]
 
 
-def test_junk_and_ipv6_are_refused_with_a_message(client, _isolated_db):
+def test_junk_and_ipv4_in_ipv6_clothing_are_refused_with_a_message(client, _isolated_db):
     _add_admin_made_account(_isolated_db)
     account_id = _account_id(client)
-    for junk in ("", "not-an-ip", "300.1.1.1", "203.0.113.0/99", "2001:db8::/32", "1.2.3.4; reboot", "any"):
+    for junk in ("", "not-an-ip", "300.1.1.1", "203.0.113.0/99", "::ffff:1.2.3.4", "1.2.3.4; reboot", "any"):
         resp = _allow(client, account_id, junk)
         assert resp.status_code == 303 and "flash_kind=error" in resp.headers["location"], junk
     assert _allowed(_isolated_db) == []

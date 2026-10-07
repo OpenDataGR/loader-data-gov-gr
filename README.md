@@ -134,7 +134,7 @@ box last saw that provider log in from, carried in its heartbeat (loader
 never talks to the provider directly on that path).
 
 **Allowed senders.** A push source may be limited to its provider's own
-machine(s): the registration (and edit) form takes an optional list of IPv4
+machine(s): the registration (and edit) form takes an optional list of IPv4 or IPv6
 addresses, ranges (CIDR) or hostnames/URLs, stored in
 `config.allowed_senders` as canonical CIDRs (`sender_allowlist.py`).
 Everything else is refused, even with the right key or password; blank means
@@ -204,7 +204,7 @@ address*), and the FTP box drops its packets (see `ftp-forwarder/README.md`).
 address inside a blocked range gets through; on the box it goes into fail2ban's
 `ignoreip` and any current ban on it is lifted. IPv4 and IPv6 addresses and
 ranges, nothing wider than a /8 (IPv4) or a /32 (IPv6); a source's allowed
-senders stay IPv4-only (the FTP box's login limits can't express IPv6 yet). An
+senders take IPv6 too (proven against ProFTPD, FTP and SFTP). An
 automatic web ban of an IPv6 address bans its whole /64. And the guards that matter: you cannot blacklist your
 own address or the FTP box's (unless whitelisted first), since locking yourself or
 the relay out cannot be undone from the page. How they combine with a push
