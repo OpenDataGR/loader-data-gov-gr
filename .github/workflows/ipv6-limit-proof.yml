@@ -31,7 +31,7 @@ jobs:
           echo "box v6 address $A6, its /64 $NET6"
           UIDN=$(id -u); GIDN=$(id -g)
           HASH=$(openssl passwd -6 'test-pass-123')
-          USERS="v6-host v6-net v6-other mixed-in mixed-out v4-only"
+          USERS="v6-host v6-net v6-other mixed-in mixed-out v4-only v4-other"
           sqlite3 accounts.db "CREATE TABLE ftp_account (username TEXT PRIMARY KEY, password_hash TEXT, home_directory TEXT);
             CREATE TABLE groups (groupname TEXT PRIMARY KEY, gid INTEGER, members TEXT);"
           for u in $USERS; do sqlite3 accounts.db "INSERT INTO ftp_account VALUES ('$u','$HASH','/tmp/v6limit/home');"; done
@@ -65,6 +65,7 @@ jobs:
             [ "${{ inputs.useipv6 }}" = on ] && lim mixed-in "203.0.113.0/24 $NET6" || true
             [ "${{ inputs.useipv6 }}" = on ] && lim mixed-out "203.0.113.0/24 2001:db8::/32" || true
             lim v4-only "127.0.0.1"
+            lim v4-other "203.0.113.0/24"
             cat <<EOF
           </Global>
           <VirtualHost 0.0.0.0>
@@ -102,9 +103,10 @@ jobs:
           # (user, via, expected-in)
           cases = [("v6-host", A6, True), ("v6-net", A6, True), ("v6-other", A6, False),
                    ("mixed-in", A6, True), ("mixed-out", A6, False), ("v4-only", A6, False),
-                   ("v4-only", "127.0.0.1", True), ("v6-host", "127.0.0.1", False)]
+                   ("v4-only", "127.0.0.1", True), ("v6-host", "127.0.0.1", False),
+                   ("v4-other", "127.0.0.1", False)]
           if os.environ.get("V6ON") != "on":
-              cases = [c for c in cases if c[1] == "127.0.0.1" and c[0] == "v4-only"]
+              cases = [c for c in cases if c[1] == "127.0.0.1" and c[0].startswith("v4-")]
           ok = True
           for user, host, want in cases:
               for proto, port in (("FTP", 2291), ("SFTP", 2292)):
