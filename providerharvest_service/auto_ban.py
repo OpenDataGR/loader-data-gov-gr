@@ -100,6 +100,7 @@ def consider(session: Session, address: str, channels) -> AccessRule | None:
         created_by=CREATED_BY, expires_at=now + duration,
     )
     session.add(rule)
+    access_control._audit(session, CREATED_BY, "banned", access_control.BLOCK, rule.cidr, why)
     try:
         session.commit()
     except IntegrityError:  # another worker banned it a moment ago

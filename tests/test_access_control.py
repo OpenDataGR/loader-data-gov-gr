@@ -246,6 +246,101 @@ def test_a_database_error_with_nothing_cached_blocks_and_admits_nobody(monkeypat
     assert access_control.cached_snapshot().verdict("203.0.113.9") is None
 
 
+# -- the history of changes -----------------------------------------------------------------
+
+def _log(session):
+    return [(h.who, h.action, h.kind, h.cidr, h.detail) for h in access_control.history(session, 50)]
+
+
+def test_adding_a_rule_is_recorded_with_who_and_what(session):
+    access_control.add_rule(session, BLOCK, "203.0.113.9", note="scanner", created_by="kostas", duration="24h")
+    (who, action, kind, cidr, detail), = _log(session)
+    assert (who, action, kind, cidr) == ("kostas", "added", "block", "203.0.113.9/32")
+    assert "scanner" in detail and "until " in detail
+    access_control.add_rule(session, ALLOW, "198.51.100.7", created_by="kostas")
+    assert _log(session)[0][4] == "no expiry"  # newest first
+
+
+def test_a_rule_refused_leaves_no_trace_in_the_history(session):
+    for bad in ("not-an-ip", "10.0.0.0/4"):
+        with pytest.raises(AccessError):
+            access_control.add_rule(session, BLOCK, bad, created_by="kostas")
+    assert _log(session) == []
+
+
+def test_removing_is_recorded_and_so_is_who_did_it(session):
+    rule = access_control.add_rule(session, BLOCK, "203.0.113.9", created_by="kostas")
+    access_control.remove_rule(session, rule.id, who="maria")
+    assert [(w, a) for w, a, *_ in _log(session)] == [("maria", "removed"), ("kostas", "added")]
+
+
+def test_a_move_is_one_entry_not_a_removal_plus_an_addition(session):
+    access_control.add_rule(session, BLOCK, "203.0.113.9", note="was a scanner", created_by="kostas")
+    access_control.move(session, "203.0.113.9", ALLOW, created_by="maria")
+    newest = _log(session)[0]
+    assert (newest[0], newest[1], newest[2]) == ("maria", "moved", "allow") and "from the blacklist" in newest[4]
+    assert [a for _, a, *_ in _log(session)] == ["moved", "added"]  # exactly one new entry
+
+
+def test_moving_off_both_lists_is_a_removal(session):
+    access_control.add_rule(session, ALLOW, "203.0.113.9", created_by="kostas")
+    access_control.move(session, "203.0.113.9", "none", created_by="maria")
+    assert _log(session)[0][:2] == ("maria", "removed")
+
+
+def test_a_refused_move_records_nothing(session):
+    access_control.add_rule(session, ALLOW, "203.0.113.50", created_by="kostas")
+    with pytest.raises(AccessError):
+        access_control.move(session, "203.0.113.50", BLOCK, created_by="maria", requester="203.0.113.50")
+    assert len(_log(session)) == 1  # just the original "added"
+
+
+def test_automatic_bans_their_lifting_and_their_conversion_are_recorded(machine, admin, session):
+    for _ in range(10):
+        machine.post("/admin/login", data={"username": "root", "password": "nope"}, headers=_from("8.8.4.4"))
+    assert _log(session)[0][:2] == ("auto-ban", "banned") and "10 failed logins" in _log(session)[0][4]
+    rule_id = session.scalar(select(AccessRule.id))
+    admin.post("/admin/security/rules/%s/delete" % rule_id)
+    assert _log(session)[0][:2] == ("test-admin", "lifted")
+
+
+def test_converting_an_automatic_ban_is_recorded(machine, admin, session):
+    for _ in range(10):
+        machine.post("/admin/login", data={"username": "root", "password": "nope"}, headers=_from("8.8.4.4"))
+    admin.post("/admin/security/rules/move", data={"cidr": "8.8.4.4", "to": "block"})
+    assert _log(session)[0][:2] == ("test-admin", "converted")
+
+
+def test_the_history_is_newest_first_limited_and_old_entries_are_pruned(session):
+    for i in range(1, 21):
+        access_control.add_rule(session, BLOCK, "203.0.113.%d" % i, created_by="kostas")
+    assert len(access_control.history(session)) == 15 and access_control.history(session)[0].cidr == "203.0.113.20/32"
+    from providerharvest_service.models import AccessLog
+
+    session.add(AccessLog(who="x", action="added", kind="block", cidr="1.2.3.4/32",
+                          at=_now() - access_control.AUDIT_RETENTION - datetime.timedelta(days=1)))
+    session.commit()
+    access_control.add_rule(session, BLOCK, "203.0.113.99", created_by="kostas")  # writing prunes
+    assert "1.2.3.4/32" not in [h.cidr for h in access_control.history(session, 100)]
+
+
+def test_the_page_shows_recent_changes_with_who_and_what_and_escapes_them(admin, session):
+    admin.post("/admin/security/rules", data={"kind": "block", "cidr": "203.0.113.9", "note": "<script>x</script>"})
+    html = admin.get(PAGE).text
+    section = html.split('id="history"', 1)[1].split("</details>", 1)[0]
+    assert "test-admin" in section and "added <code>203.0.113.9</code> to the blacklist" in section
+    assert "<script>x</script>" not in section and "&lt;script&gt;" in section
+    assert 'Recent changes <span class="count">1</span>' in html
+
+
+def test_the_page_says_so_when_there_is_no_history(admin):
+    assert "No changes yet." in admin.get(PAGE).text
+
+
+def _now():
+    return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+
+
 # -- blocking an address a push source accepts data from ---------------------------------
 
 def _source(factory, name="acme-push", allowed="", transport="push", title=None, **extra):

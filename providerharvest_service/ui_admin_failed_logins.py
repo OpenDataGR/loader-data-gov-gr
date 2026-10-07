@@ -405,7 +405,7 @@ def _release_whitelisted_bans(session: Session, rule) -> int:
 
 @router.post("/rules/{rule_id}/delete")
 def delete_rule(rule_id: str, request: Request, session: Session = Depends(get_session)):
-    rule = access_control.remove_rule(session, rule_id)
+    rule = access_control.remove_rule(session, rule_id, who=_who(request))
     if rule is None:
         return _back("No such rule (it may already have been removed or expired).", "error", request)
     if rule.created_by == access_control.AUTO_BAN_BY:
@@ -522,6 +522,7 @@ def attempts_report(request: Request, page: int = 1, session: Session = Depends(
             "autobans": [r for r in all_rules if r.kind == access_control.BLOCK and r.created_by == access_control.AUTO_BAN_BY],
             "whitelist": [r for r in all_rules if r.kind == access_control.ALLOW],
             "durations": access_control.DURATIONS,
+            "history": access_control.history(session),
             "state_of": snap.verdict,
             "link": link,
             "sort_href": sort_href,

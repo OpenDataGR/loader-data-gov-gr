@@ -236,6 +236,30 @@
       </form>
       <p class="muted" style="margin:0.4rem 0 0;">IPv4 addresses and ranges (nothing wider than a /8). You can't blacklist your own address or the FTP box's.
         Changes reach loader within a few seconds and the FTP box within about a minute:</p>
+      <details class="more" id="history" style="margin-top:0.7rem;">
+        <summary>Recent changes <span class="count">{{ history|length }}</span></summary>
+        {% for h in history %}
+          {% set list_name = 'blacklist' if h.kind == 'block' else 'whitelist' %}
+          {% set ip = h.cidr.replace('/32', '') %}
+          <div class="entry{% if loop.first %} first{% endif %}">
+            <span class="info">
+              <span class="muted" title="{{ h.at|utc }} UTC">{{ h.at|short_utc }}</span>
+              <strong>{{ h.who or 'someone' }}</strong>
+              {% if h.action == 'added' %}added <code>{{ ip }}</code> to the {{ list_name }}
+              {% elif h.action == 'removed' %}removed <code>{{ ip }}</code> from the {{ list_name }}
+              {% elif h.action == 'moved' %}moved <code>{{ ip }}</code> to the {{ list_name }}
+              {% elif h.action == 'changed' %}changed <code>{{ ip }}</code> on the {{ list_name }}
+              {% elif h.action == 'converted' %}made the automatic ban on <code>{{ ip }}</code> a blacklist entry
+              {% elif h.action == 'banned' %}banned <code>{{ ip }}</code>
+              {% elif h.action == 'lifted' %}lifted the automatic ban on <code>{{ ip }}</code>
+              {% else %}{{ h.action }} <code>{{ ip }}</code>{% endif %}
+              {% if h.detail %}<span class="muted">{{ h.detail }}</span>{% endif %}
+            </span>
+          </div>
+        {% else %}
+          <p class="muted" style="margin:0.3rem 0 0;">No changes yet.</p>
+        {% endfor %}
+      </details>
       <p class="boxrules muted">
         {% for box in boxes %}
           <span style="margin-right:1rem;">{{ box.hostname }}:

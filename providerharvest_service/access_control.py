@@ -30,11 +30,11 @@ import threading
 import time
 from dataclasses import dataclass
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from providerharvest_service import db
-from providerharvest_service.models import AccessRule, FtpAccount, FtpBoxStatus, ProviderSource
+from providerharvest_service.models import AccessLog, AccessRule, FtpAccount, FtpBoxStatus, ProviderSource
 from providerharvest_service.sender_allowlist import normalize_cidr
 
 logger = logging.getLogger(__name__)
@@ -260,6 +260,7 @@ def add_rule(
     created_by: str = "",
     duration: str = "forever",
     requester: str | None = None,
+    audit: bool = True,
 ) -> AccessRule:
     """Adds one rule or raises ``AccessError`` with something to show the admin.
     ``requester`` is the address of whoever is asking (the guard against blocking
@@ -304,25 +305,55 @@ def add_rule(
     expires = None if _DURATION[duration] is None else _now() + _DURATION[duration]
     rule = AccessRule(kind=kind, cidr=cidr, note=_clean_note(note), created_by=_clean_note(created_by)[:100], expires_at=expires)
     session.add(rule)
+    if audit:
+        _audit(session, created_by, "added", kind, cidr, _describe(rule))
     session.commit()
     invalidate()
     return rule
 
 
-def remove_rule(session: Session, rule_id: str) -> AccessRule | None:
+# -- the history ---------------------------------------------------------------------
+
+AUDIT_RETENTION = datetime.timedelta(days=365)
+
+
+def _describe(rule: AccessRule) -> str:
+    """A rule in a few words for the history: its note and when it ends."""
+    parts = []
+    if rule.note:
+        parts.append(rule.note)
+    parts.append("until %s UTC" % rule.expires_at.strftime("%Y-%m-%d %H:%M") if rule.expires_at else "no expiry")
+    return " -- ".join(parts)
+
+
+def _audit(session: Session, who: str, action: str, kind: str, cidr: str, detail: str = "") -> None:
+    """Record a change, in the same transaction as the change itself (so neither exists without the other)."""
+    session.add(AccessLog(who=_clean_note(who)[:100], action=action, kind=kind, cidr=cidr, detail=_clean_note(detail)))
+    session.execute(delete(AccessLog).where(AccessLog.at < _now() - AUDIT_RETENTION))
+
+
+def history(session: Session, limit: int = 15) -> list[AccessLog]:
+    """The most recent changes, newest first."""
+    return list(session.scalars(select(AccessLog).order_by(AccessLog.at.desc(), AccessLog.id).limit(limit)).all())
+
+
+def remove_rule(session: Session, rule_id: str, *, who: str = "") -> AccessRule | None:
     rule = session.get(AccessRule, rule_id)
     if rule is None:
         return None
+    _audit(session, who, "lifted" if rule.created_by == AUTO_BAN_BY else "removed", rule.kind, rule.cidr, _describe(rule))
     session.delete(rule)
     session.commit()
     invalidate()
     return rule
 
 
-def remove_exact(session: Session, kind: str, cidr: str) -> AccessRule | None:
+def remove_exact(session: Session, kind: str, cidr: str, *, who: str = "", audit: bool = True) -> AccessRule | None:
     rule = session.scalar(select(AccessRule).where(AccessRule.kind == kind, AccessRule.cidr == cidr))
     if rule is None:
         return None
+    if audit:
+        _audit(session, who, "removed", kind, cidr, _describe(rule))
     session.delete(rule)
     session.commit()
     invalidate()
@@ -346,7 +377,7 @@ def move(
     except ValueError as exc:
         raise AccessError(str(exc)) from None
     if to == "none":
-        removed = [remove_exact(session, k, cidr) for k in KINDS]
+        removed = [remove_exact(session, k, cidr, who=created_by) for k in KINDS]
         if not any(removed):
             raise AccessError("%s is on neither list" % cidr)
         return None
@@ -362,6 +393,7 @@ def move(
             existing.created_by = _clean_note(created_by)[:100]
             existing.expires_at = None if _DURATION[duration] is None else _now() + _DURATION[duration]
             existing.note = ("was an automatic ban: " + existing.note.removeprefix("auto-ban: "))[:NOTE_MAX]
+            _audit(session, created_by, "converted", BLOCK, cidr, "automatic ban made a blacklist entry -- " + _describe(existing))
             session.commit()
             invalidate()
             return existing
@@ -373,9 +405,16 @@ def move(
         session.delete(previous)
         session.flush()
     try:
-        return add_rule(
-            session, to, cidr, note=kept[2] if kept else "", created_by=created_by, duration=duration, requester=requester,
+        rule = add_rule(
+            session, to, cidr, note=kept[2] if kept else "", created_by=created_by, duration=duration,
+            requester=requester, audit=False,  # one "moved" entry below, not an "added" as well
         )
     except AccessError:
         session.rollback()  # the old entry comes back untouched
         raise
+    _audit(
+        session, created_by, "moved" if kept else "added", to, cidr,
+        ("from the %s -- " % ("blacklist" if other == BLOCK else "whitelist") if kept else "") + _describe(rule),
+    )
+    session.commit()
+    return rule

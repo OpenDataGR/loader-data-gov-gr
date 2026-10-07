@@ -253,6 +253,24 @@ class FtpBoxStatus(Base):
         return json.loads(self.banned_ips) if self.banned_ips else []
 
 
+class AccessLog(Base):
+    """A record of a change to the whitelist/blacklist: who added, removed, moved or
+    changed an entry, and the automatic bans loader made. Shown as "Recent changes" in the
+    Security box, so removals and the system's own actions are not invisible. An entry
+    simply expiring is not logged (nothing happened that anyone did)."""
+
+    __tablename__ = "access_log"
+    __table_args__ = (Index("ix_access_log_at", "at"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_new_id)
+    at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
+    who: Mapped[str] = mapped_column(String, nullable=False, default="")  # the admin, or "auto-ban"
+    action: Mapped[str] = mapped_column(String, nullable=False)  # added | removed | moved | changed | converted | banned | lifted
+    kind: Mapped[str] = mapped_column(String, nullable=False)  # the list it concerns: "allow" | "block"
+    cidr: Mapped[str] = mapped_column(String, nullable=False)
+    detail: Mapped[str] = mapped_column(String, nullable=False, default="")
+
+
 class AccessRule(Base):
     """One entry of the Security box's whitelist ("allow") or blacklist ("block"):
     an IPv4 address or range. Enforced by loader itself on every HTTP request and,
