@@ -1,0 +1,71 @@
+name: Whitelist-beats-blacklist live test (one-off)
+
+# One-off. From the loader VM itself (so nobody's browser is touched) call the real public
+# site, and with temporary rules (each expires after 10 minutes on its own) check that:
+#   blacklisted               -> 403
+#   blacklisted + whitelisted -> 200   (the whitelist wins)
+#   whitelist removed         -> 403 again
+#   everything removed        -> 200
+# The VM's address as loader sees it is learnt from a marker login attempt. Deleted afterwards.
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: [self-hosted, loader]
+    steps:
+      - name: Run the sequence
+        run: |
+          python3 - <<'PY'
+          import datetime, sqlite3, subprocess, sys, time, uuid
+
+          DB = "/opt/data-projects/loader-data-gov-gr/data/loader.db"
+          URL = "https://loader.data.gov.gr/health"
+          marker = "live-test-" + uuid.uuid4().hex[:8]
+          conn = sqlite3.connect(DB)
+          now = lambda: datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+          fmt = "%Y-%m-%d %H:%M:%S.%f"
+          failed = []
+
+          def code():
+              out = subprocess.run(["curl", "-s", "-m", "20", "-o", "/dev/null", "-w", "%{http_code}", URL], capture_output=True, text=True)
+              return out.stdout.strip()
+
+          def add(kind, cidr):
+              conn.execute("INSERT OR REPLACE INTO access_rule (id, kind, cidr, note, created_by, created_at, expires_at) VALUES (?,?,?,?,?,?,?)",
+                           (str(uuid.uuid4()), kind, cidr, "live test", "live-test", now().strftime(fmt), (now() + datetime.timedelta(minutes=10)).strftime(fmt)))
+              conn.commit()
+
+          def remove(kind):
+              conn.execute("DELETE FROM access_rule WHERE created_by = 'live-test' AND kind = ?", (kind,))
+              conn.commit()
+
+          def check(step, expected):
+              time.sleep(8)  # each worker keeps the rules for up to 5 seconds
+              got = code()
+              print("%-34s expected %s, got %s  %s" % (step, expected, got, "ok" if got == expected else "WRONG"))
+              if got != expected:
+                  failed.append(step)
+
+          try:
+              print("before:", code())
+              subprocess.run(["curl", "-s", "-m", "20", "-o", "/dev/null", "-d", "username=%s&password=x" % marker, "https://loader.data.gov.gr/admin/login"])
+              row = conn.execute("SELECT ip FROM ftp_login_attempt WHERE username = ? ORDER BY at DESC LIMIT 1", (marker,)).fetchone()
+              if not row:
+                  sys.exit("could not learn this VM's address as loader sees it (the marker attempt was not recorded)")
+              ip = row[0]
+              print("this VM, as loader sees it:", ip)
+
+              add("block", ip + "/32");  check("blacklisted", "403")
+              add("allow", ip + "/32");  check("blacklisted AND whitelisted", "200")
+              remove("allow");           check("whitelist removed (blacklisted)", "403")
+              remove("block");           check("everything removed", "200")
+          finally:
+              conn.execute("DELETE FROM access_rule WHERE created_by = 'live-test'")
+              conn.execute("DELETE FROM ftp_login_attempt WHERE username LIKE 'live-test-%'")
+              conn.commit()
+              print("cleaned up; final:", code())
+          if failed:
+              sys.exit("FAILED: " + ", ".join(failed))
+          print("ALL OK: the whitelist beats the blacklist on the live site")
+          PY
