@@ -59,11 +59,11 @@ jobs:
           RequireValidShell off
           <Global>
           EOF
-            lim v6-host "$A6"
-            lim v6-net "$NET6"
-            lim v6-other "2001:db8::/32"
-            lim mixed-in "203.0.113.0/24 $NET6"
-            lim mixed-out "203.0.113.0/24 2001:db8::/32"
+            [ "${{ inputs.useipv6 }}" = on ] && lim v6-host "$A6" || true
+            [ "${{ inputs.useipv6 }}" = on ] && lim v6-net "$NET6" || true
+            [ "${{ inputs.useipv6 }}" = on ] && lim v6-other "2001:db8::/32" || true
+            [ "${{ inputs.useipv6 }}" = on ] && lim mixed-in "203.0.113.0/24 $NET6" || true
+            [ "${{ inputs.useipv6 }}" = on ] && lim mixed-out "203.0.113.0/24 2001:db8::/32" || true
             lim v4-only "127.0.0.1"
             cat <<EOF
           </Global>
@@ -103,6 +103,8 @@ jobs:
           cases = [("v6-host", A6, True), ("v6-net", A6, True), ("v6-other", A6, False),
                    ("mixed-in", A6, True), ("mixed-out", A6, False), ("v4-only", A6, False),
                    ("v4-only", "127.0.0.1", True), ("v6-host", "127.0.0.1", False)]
+          if os.environ.get("V6ON") != "on":
+              cases = [c for c in cases if c[1] == "127.0.0.1" and c[0] == "v4-only"]
           ok = True
           for user, host, want in cases:
               for proto, port in (("FTP", 2291), ("SFTP", 2292)):
@@ -122,7 +124,7 @@ jobs:
                   print("%-5s %-9s via %-40s expected %-7s -> %-9s [%s]" % (proto, user, host, "in" if want else "refused", note, "ok" if good else "WRONG"))
           sys.exit(0 if ok else 1)
           PY
-          A6=$A6 ./v/bin/python try.py
+          A6=$A6 V6ON=${{ inputs.useipv6 }} ./v/bin/python try.py
 
       - name: What did ProFTPD log?
         if: always()
