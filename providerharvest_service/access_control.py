@@ -34,7 +34,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from providerharvest_service import db
-from providerharvest_service.models import AccessRule, FtpBoxStatus, ProviderSource
+from providerharvest_service.models import AccessRule, FtpAccount, FtpBoxStatus, ProviderSource
 from providerharvest_service.sender_allowlist import normalize_cidr
 
 logger = logging.getLogger(__name__)
@@ -178,25 +178,60 @@ def affected_sources(session: Session, cidr: str) -> list[AffectedSource]:
     blacklist, so that address stays in and the block does not affect it -- except
     a whitelist entry for exactly ``cidr`` itself: blocking it means *moving* it
     off the whitelist, so it protects nothing once the block is in."""
-    network = ipaddress.ip_network(normalize_cidr(cidr))
-    trusted = [ipaddress.ip_network(c) for c in snapshot(session).allow if c != str(network)]
+    network, trusted = _block_context(session, cidr)
     found: list[AffectedSource] = []
     for source in session.scalars(select(ProviderSource).where(ProviderSource.transport_type == "push")).all():
         try:
             entries = json.loads(source.config or "{}").get("allowed_senders") or []
         except ValueError:
             continue
-        hit = []
-        for entry in entries:
-            try:
-                net = ipaddress.ip_network(entry, strict=False)
-            except ValueError:
-                continue
-            if net.version == 4 and net.overlaps(network) and not any(net.subnet_of(t) for t in trusted):
-                hit.append(str(net))
+        hit = _overlapping(entries, network, trusted)
         if hit:
-            found.append(AffectedSource(name=source.name, title=source.title, status=source.status, entries=tuple(sorted(hit))))
+            found.append(AffectedSource(name=source.name, title=source.title, status=source.status, entries=hit))
     return sorted(found, key=lambda s: s.name)
+
+
+@dataclass(frozen=True)
+class AffectedAccount:
+    """An FTP account an admin made by hand, whose own allowed-address list a block would cut off."""
+
+    username: str
+    enabled: bool
+    entries: tuple[str, ...]
+
+
+def affected_accounts(session: Session, cidr: str) -> list[AffectedAccount]:
+    """The same question as ``affected_sources`` for the FTP accounts that have no source
+    behind them (an admin made them, and set their "Allowed from" list by hand). A
+    provider's own account is not listed: its list mirrors its source's allowed
+    senders, which ``affected_sources`` already reports."""
+    network, trusted = _block_context(session, cidr)
+    found: list[AffectedAccount] = []
+    for account in session.scalars(select(FtpAccount).where(FtpAccount.managed_source_id.is_(None))).all():
+        hit = _overlapping([a.cidr for a in account.allowed_ips], network, trusted)
+        if hit:
+            found.append(AffectedAccount(username=account.username, enabled=account.enabled, entries=hit))
+    return sorted(found, key=lambda a: a.username)
+
+
+def _block_context(session: Session, cidr: str):
+    network = ipaddress.ip_network(normalize_cidr(cidr))
+    trusted = [ipaddress.ip_network(c) for c in snapshot(session).allow if c != str(network)]
+    return network, trusted
+
+
+def _overlapping(entries, network, trusted) -> tuple[str, ...]:
+    """The entries a block on ``network`` covers, leaving out any that lie wholly inside a
+    whitelisted range (those stay in)."""
+    hit = []
+    for entry in entries:
+        try:
+            net = ipaddress.ip_network(entry, strict=False)
+        except ValueError:
+            continue
+        if net.version == 4 and net.overlaps(network) and not any(net.subnet_of(t) for t in trusted):
+            hit.append(str(net))
+    return tuple(sorted(hit))
 
 
 def rules(session: Session) -> list[AccessRule]:

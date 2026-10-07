@@ -292,6 +292,61 @@ def test_every_status_counts_a_pending_source_will_be_approved_later(session, _i
     assert access_control.affected_sources(session, "203.0.113.9")[0].status == "pending"
 
 
+def _admin_account(factory, username="legacy-account", allowed=("203.0.113.9",), enabled=True):
+    from providerharvest_service.models import FtpAccount, FtpAllowedIp
+
+    with factory() as s:
+        account = FtpAccount(username=username, password_hash="$2a$x", home_directory="/srv/ftp/" + username,
+                             protocol="sftp", enabled=enabled)
+        account.allowed_ips = [FtpAllowedIp(cidr=c + "/32" if "/" not in c else c) for c in allowed]
+        s.add(account)
+        s.commit()
+
+
+def test_a_block_that_overlaps_an_admin_made_accounts_allowed_address_names_that_account(session, _isolated_db):
+    _admin_account(_isolated_db, "legacy-account", ("203.0.113.9", "198.51.100.0/24"))
+    got = access_control.affected_accounts(session, "203.0.113.0/24")
+    assert [(a.username, a.enabled, a.entries) for a in got] == [("legacy-account", True, ("203.0.113.9/32",))]
+    assert access_control.affected_accounts(session, "192.0.2.0/24") == []
+
+
+def test_a_providers_own_account_is_not_listed_twice(session, _isolated_db):
+    _source(_isolated_db, "acme-push", "203.0.113.9", transport="push", push_method="ftp")  # its account mirrors the source
+    assert [s.name for s in access_control.affected_sources(session, "203.0.113.9")] == ["acme-push"]
+    assert access_control.affected_accounts(session, "203.0.113.9") == []
+
+
+def test_accounts_without_allowed_addresses_or_wholly_inside_the_whitelist_are_not_affected(session, _isolated_db):
+    _admin_account(_isolated_db, "open-account", ())
+    _admin_account(_isolated_db, "trusted-account", ("203.0.113.9",))
+    access_control.add_rule(session, ALLOW, "203.0.113.0/24")
+    assert access_control.affected_accounts(session, "203.0.0.0/16") == []
+
+
+def test_blacklisting_an_admin_made_accounts_address_asks_first_and_names_it(admin, session, _isolated_db):
+    _admin_account(_isolated_db, "legacy-account", ("203.0.113.9",), enabled=False)
+    resp = _post_block(admin)
+    assert resp.status_code == 200 and "would cut off an FTP account" in resp.text
+    assert "legacy-account" in resp.text and "<code>203.0.113.9/32</code>" in resp.text and "disabled" in resp.text
+    assert session.scalar(select(AccessRule)) is None
+    assert _post_block(admin, confirm="1").status_code == 303 and session.scalar(select(AccessRule)) is not None
+
+
+def test_sources_and_accounts_together_are_counted_together(admin, session, _isolated_db):
+    _source(_isolated_db, "acme-push", "203.0.113.9")
+    _admin_account(_isolated_db, "legacy-account", ("203.0.113.77",))
+    text = _post_block(admin).text
+    assert "would cut off 2 providers and accounts" in text and "acme-push" in text and "legacy-account" in text
+
+
+def test_two_accounts_say_so_and_the_move_route_asks_too(admin, session, _isolated_db):
+    _admin_account(_isolated_db, "first-account", ("203.0.113.9",))
+    _admin_account(_isolated_db, "second-account", ("203.0.113.20",))
+    assert "would cut off 2 FTP accounts" in _post_block(admin).text
+    resp = admin.post("/admin/security/rules/move", data={"cidr": "203.0.113.0/24", "to": "block"}, follow_redirects=False)
+    assert resp.status_code == 200 and 'action="/admin/security/rules/move"' in resp.text
+
+
 def _post_block(admin, **extra):
     data = {"kind": "block", "cidr": "203.0.113.0/24"}
     data.update(extra)

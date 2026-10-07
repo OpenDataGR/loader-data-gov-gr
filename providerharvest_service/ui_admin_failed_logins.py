@@ -302,14 +302,24 @@ def _confirm_block(request: Request, session: Session, form, action: str):
     except ValueError:
         return None
     affected = access_control.affected_sources(session, cidr)
-    if not affected:
+    accounts = access_control.affected_accounts(session, cidr)
+    if not affected and not accounts:
         return None
+    count = len(affected) + len(accounts)
+    if not accounts:
+        what = "a provider" if count == 1 else "%d providers" % count
+    elif not affected:
+        what = "an FTP account" if count == 1 else "%d FTP accounts" % count
+    else:
+        what = "%d providers and accounts" % count
     return templates.TemplateResponse(
         request,
         "admin/access_confirm.html",
         {
             "cidr": cidr,
             "affected": affected,
+            "accounts": accounts,
+            "what": what,
             "action": action,
             "fields": {k: str(v) for k, v in form.items() if k != "confirm"},
             "cancel_url": _page_url(request),

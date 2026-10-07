@@ -3,29 +3,46 @@
 {% block title %}Confirm blacklisting -- loader.data.gov.gr{% endblock %}
 {% block content %}
   <div class="panel" style="border-left:4px solid var(--status-rejected);">
-    <h1>Blacklisting <code>{{ cidr }}</code> would cut off {{ 'a provider' if affected|length == 1 else affected|length ~ ' providers' }}</h1>
+    <h1>Blacklisting <code>{{ cidr }}</code> would cut off {{ what }}</h1>
     <p class="subtitle">
-      The blacklist beats a source's own list of allowed senders. Everything from <code>{{ cidr }}</code> would be refused --
-      uploads, FTP/SFTP logins and every page -- including from {{ 'this source' if affected|length == 1 else 'these sources' }},
-      each of which lists an address this covers as one it accepts data from:
+      The blacklist beats the allowed addresses a source or an FTP account lists. Everything from <code>{{ cidr }}</code>
+      would be refused -- uploads, FTP/SFTP logins and every page -- including from the ones below, each of which lists an
+      address this covers as one it accepts data from:
     </p>
 
-    <table>
-      <thead><tr><th>Source</th><th>Status</th><th>Allowed senders this covers</th></tr></thead>
-      <tbody>
-        {% for s in affected %}
-          <tr>
-            <td><div class="name-title">{{ s.title }}</div><div class="name-slug">{{ s.name }}</div></td>
-            <td>{{ macros.status_badge(s.status) }}</td>
-            <td>{% for entry in s.entries %}<code>{{ entry }}</code> {% endfor %}</td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    {% if affected %}
+      <table>
+        <thead><tr><th>Push source</th><th>Status</th><th>Allowed senders this covers</th></tr></thead>
+        <tbody>
+          {% for s in affected %}
+            <tr>
+              <td><div class="name-title">{{ s.title }}</div><div class="name-slug">{{ s.name }}</div></td>
+              <td>{{ macros.status_badge(s.status) }}</td>
+              <td>{% for entry in s.entries %}<code>{{ entry }}</code> {% endfor %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+
+    {% if accounts %}
+      <table {% if affected %}style="margin-top:1rem;"{% endif %}>
+        <thead><tr><th>FTP account (made by an admin)</th><th>Login</th><th>Allowed from this covers</th></tr></thead>
+        <tbody>
+          {% for a in accounts %}
+            <tr>
+              <td><div class="name-title">{{ a.username }}</div></td>
+              <td>{% if a.enabled %}<span class="badge badge-active"><span>enabled</span></span>{% else %}<span class="badge badge-paused"><span>disabled</span></span>{% endif %}</td>
+              <td>{% for entry in a.entries %}<code>{{ entry }}</code> {% endfor %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
 
     <p class="muted" style="margin-top:1rem;">
-      If that is what you want, confirm. To block only part of the range, or to keep one provider's address working,
-      cancel and whitelist their address first -- the whitelist wins over the blacklist.
+      If that is what you want, confirm. To block only part of the range, or to keep one address working,
+      cancel and whitelist that address first -- the whitelist wins over the blacklist.
     </p>
 
     <form method="post" action="{{ action }}" style="display:flex; gap:0.6rem; align-items:center; margin-top:0.8rem;">
