@@ -86,7 +86,7 @@ jobs:
           EOF
           } | sed 's/^          //' > proftpd.conf
           sudo -n proftpd -t -c /tmp/v6limit/proftpd.conf
-          sudo -n nohup proftpd -n -c /tmp/v6limit/proftpd.conf > server.out 2>&1 &
+          sudo -n nohup proftpd -n -d 10 -c /tmp/v6limit/proftpd.conf > server.out 2>&1 &
           sleep 4
           sudo -n ss -tlnp | grep -E ':2291 |:2292 ' || { echo "::error::throwaway server did not start"; cat server.out; exit 1; }
 
@@ -130,7 +130,10 @@ jobs:
 
       - name: What did ProFTPD log?
         if: always()
-        run: sudo -n ls -la /tmp/v6limit/ || true
+        run: |
+          sudo -n ls -la /tmp/v6limit/ || true
+          sudo -n grep -iE "v4-other|LOGIN|denied|Limit|IfUser|ifsession" /tmp/v6limit/server.out | cut -c1-260 | head -70 || true
+          sudo -n proftpd -V 2>&1 | head -3
 
       - name: Tear the throwaway server down
         if: always()
