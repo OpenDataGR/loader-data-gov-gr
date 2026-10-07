@@ -1,0 +1,19 @@
+name: FTP box IPv6 peek (one-off)
+
+# One-off, read-only: does the FTP box have public IPv6, are the listeners on it, is ProFTPD built with IPv6?
+on:
+  workflow_dispatch:
+
+jobs:
+  peek:
+    runs-on: [self-hosted, loader-ftp]
+    steps:
+      - run: |
+          echo "--- global ipv6 addresses"; ip -6 addr show scope global || true
+          echo "--- ipv6 default route"; ip -6 route show default || true
+          echo "--- listeners"; sudo -n ss -ltnp 2>/dev/null | grep -E ':(21|22|2222|7002)\b' || true
+          echo "--- proftpd build"; proftpd -V 2>&1 | grep -iE 'version|ipv6' || true
+          echo "--- proftpd -vv modules"; proftpd -vv 2>&1 | grep -iE 'ipv6|mod_sftp|mod_sql' || true
+          echo "--- UseIPv6 / bind config"; grep -rniE 'UseIPv6|DefaultAddress|SocketBindTight' /etc/proftpd/ 2>/dev/null || echo "(none set)"
+          echo "--- sysctl disable_ipv6"; sysctl net.ipv6.conf.all.disable_ipv6 || true
+          echo "--- outbound v6 reachability"; curl -6 -s -m 8 https://api64.ipify.org || echo "no outbound ipv6"
