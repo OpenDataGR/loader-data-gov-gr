@@ -35,6 +35,7 @@ jobs:
           lim() { printf '  <IfUser %s>\n    <Limit LOGIN>\n      Allow %s\n      DenyAll\n    </Limit>\n  </IfUser>\n' "$1" "$2"; }
           {
             cat <<EOF
+          Include /etc/proftpd/modules.conf
           ServerName "v6limit-proof"
           ServerType standalone
           DefaultServer on
