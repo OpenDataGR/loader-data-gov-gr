@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% import "_macros.html" as macros %}
+{% block title %}Edit an entry -- loader.data.gov.gr{% endblock %}
+{% block content %}
+  <div class="panel">
+    <h1>Edit <code>{{ rule.cidr.replace('/32', '') }}</code> on the {{ list_name }}</h1>
+    <p class="subtitle">
+      Change the note and when it ends. The address and the list stay as they are -- to change those, use
+      <em>Move to</em> in the entry's menu, or remove it and add it again.
+    </p>
+
+    <form method="post" action="/admin/security/rules/{{ rule.id }}/edit">
+      <label for="note">Note</label>
+      <input type="text" id="note" name="note" maxlength="200" value="{{ rule.note }}" placeholder="Why it is listed (optional)">
+
+      <label for="duration">Ends</label>
+      <select id="duration" name="duration">
+        <option value="keep" selected>
+          Keep as it is ({% if rule.expires_at %}until {{ rule.expires_at|utc }} UTC{% else %}no expiry{% endif %})
+        </option>
+        {% for key, label, _ in durations %}
+          <option value="{{ key }}">{{ label if key != 'forever' else 'Never (no expiry)' }}{% if key != 'forever' %} from now{% endif %}</option>
+        {% endfor %}
+      </select>
+
+      <div style="margin-top:1.2rem; display:flex; gap:0.6rem;">
+        <button type="submit">Save</button>
+        <a class="btn btn-secondary" href="{{ back }}">Cancel</a>
+      </div>
+    </form>
+  </div>
+{% endblock %}

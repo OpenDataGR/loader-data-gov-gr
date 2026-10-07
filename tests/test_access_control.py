@@ -246,6 +246,87 @@ def test_a_database_error_with_nothing_cached_blocks_and_admits_nobody(monkeypat
     assert access_control.cached_snapshot().verdict("203.0.113.9") is None
 
 
+# -- editing a rule -----------------------------------------------------------------------
+
+def test_editing_the_note_keeps_the_expiry_and_the_address(session):
+    rule = access_control.add_rule(session, BLOCK, "203.0.113.9", note="old", created_by="kostas", duration="24h")
+    expires = rule.expires_at
+    got = access_control.update_rule(session, rule.id, note="  a better note \x00 ", who="maria")
+    assert (got.note, got.cidr, got.kind, got.expires_at) == ("a better note", "203.0.113.9/32", BLOCK, expires)
+    assert _log(session)[0][:2] == ("maria", "changed") and "a better note" in _log(session)[0][4] and "was: old" in _log(session)[0][4]
+
+
+@pytest.mark.parametrize("duration, hours", [("1h", 1), ("24h", 24), ("7d", 168), ("30d", 720)])
+def test_the_expiry_can_be_set_from_now(session, duration, hours):
+    rule = access_control.add_rule(session, BLOCK, "203.0.113.9")
+    got = access_control.update_rule(session, rule.id, note="", duration=duration)
+    assert datetime.timedelta(hours=hours) - datetime.timedelta(minutes=2) < got.expires_at - _now() <= datetime.timedelta(hours=hours, seconds=5)
+
+
+def test_the_expiry_can_be_removed(session):
+    rule = access_control.add_rule(session, BLOCK, "203.0.113.9", duration="1h")
+    assert access_control.update_rule(session, rule.id, note="", duration="forever").expires_at is None
+
+
+def test_an_unknown_duration_is_refused_and_changes_nothing(session):
+    rule = access_control.add_rule(session, BLOCK, "203.0.113.9", note="keep me", duration="1h")
+    with pytest.raises(AccessError, match="duration"):
+        access_control.update_rule(session, rule.id, note="changed", duration="a fortnight")
+    session.refresh(rule)
+    assert rule.note == "keep me" and len(_log(session)) == 1
+
+
+def test_editing_a_missing_or_expired_rule_does_nothing(session):
+    assert access_control.update_rule(session, "no-such-rule", note="x") is None
+    rule = access_control.add_rule(session, BLOCK, "203.0.113.9", duration="1h")
+    rule.expires_at = _now() - datetime.timedelta(seconds=1)
+    session.commit()
+    assert access_control.update_rule(session, rule.id, note="x") is None
+
+
+def test_extending_a_temporary_block_takes_effect_on_the_site(machine, admin, session):
+    rule = access_control.add_rule(session, BLOCK, "203.0.113.9", duration="1h")
+    admin.post("/admin/security/rules/%s/edit" % rule.id, data={"note": "", "duration": "forever"})
+    session.refresh(rule)
+    assert rule.expires_at is None
+    assert machine.get("/health", headers=_from("203.0.113.9")).status_code == 403
+
+
+def test_the_edit_page_shows_the_current_values_and_the_menu_links_to_it(admin, session):
+    rule = access_control.add_rule(session, BLOCK, "203.0.113.9", note='say "hi" <b>', duration="7d")
+    menu = admin.get(PAGE).text.split('id="blacklist"', 1)[1].split("</section>", 1)[0]
+    assert 'href="/admin/security/rules/%s/edit"' % rule.id in menu and "Edit note / expiry" in menu
+    page = admin.get("/admin/security/rules/%s/edit" % rule.id).text
+    assert "203.0.113.9" in page and "blacklist" in page and "Keep as it is (until " in page
+    assert 'value="say &#34;hi&#34; &lt;b&gt;"' in page and "<b>" not in page.split("<h1>", 1)[1]  # escaped, quotes included
+
+
+def test_saving_the_edit_page_changes_the_rule_and_says_so(admin, session):
+    rule = access_control.add_rule(session, ALLOW, "203.0.113.9", note="old")
+    resp = admin.post("/admin/security/rules/%s/edit" % rule.id, data={"note": "the office", "duration": "keep"}, follow_redirects=False)
+    assert resp.status_code == 303 and "Updated+203.0.113.9+on+the+whitelist" in resp.headers["location"]
+    session.refresh(rule)
+    assert rule.note == "the office" and rule.created_by == ""  # who created it is not rewritten
+    assert _log(session)[0][:2] == ("test-admin", "changed")
+
+
+def test_a_bad_edit_is_refused_with_a_message(admin, session):
+    rule = access_control.add_rule(session, ALLOW, "203.0.113.9", note="old")
+    bad = admin.post("/admin/security/rules/%s/edit" % rule.id, data={"note": "new", "duration": "never-ever"}, follow_redirects=False)
+    assert "flash_kind=error" in bad.headers["location"]
+    gone = admin.post("/admin/security/rules/nope/edit", data={"note": "x"}, follow_redirects=False)
+    assert "flash_kind=error" in gone.headers["location"]
+    assert "flash_kind=error" in admin.get("/admin/security/rules/nope/edit", follow_redirects=False).headers["location"]
+    session.refresh(rule)
+    assert rule.note == "old"
+
+
+def test_the_edit_routes_need_the_login(machine):
+    for method, path in (("get", "/admin/security/rules/x/edit"), ("post", "/admin/security/rules/x/edit")):
+        resp = getattr(machine, method)(path, follow_redirects=False)
+        assert resp.status_code == 303 and resp.headers["location"].startswith("/admin/login"), path
+
+
 # -- the history of changes -----------------------------------------------------------------
 
 def _log(session):

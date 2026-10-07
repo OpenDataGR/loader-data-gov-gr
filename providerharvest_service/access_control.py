@@ -337,6 +337,27 @@ def history(session: Session, limit: int = 15) -> list[AccessLog]:
     return list(session.scalars(select(AccessLog).order_by(AccessLog.at.desc(), AccessLog.id).limit(limit)).all())
 
 
+def update_rule(session: Session, rule_id: str, *, note: str, duration: str = "keep", who: str = "") -> AccessRule | None:
+    """Change a rule's note and/or when it ends, keeping the entry (its address and list never
+    change here -- that is a move). ``duration`` is "keep" (leave the expiry alone), "forever",
+    or one of the preset lengths counted from now. Returns None for a rule that does not exist
+    or has already expired (it is no longer on the page). Raises ``AccessError`` for an unknown
+    duration."""
+    if duration != "keep" and duration not in _DURATION:
+        raise AccessError("unknown duration")
+    rule = session.get(AccessRule, rule_id)
+    if rule is None or (rule.expires_at is not None and rule.expires_at <= _now()):
+        return None
+    before = _describe(rule)
+    rule.note = _clean_note(note)
+    if duration != "keep":
+        rule.expires_at = None if _DURATION[duration] is None else _now() + _DURATION[duration]
+    _audit(session, who, "changed", rule.kind, rule.cidr, "now: %s (was: %s)" % (_describe(rule), before))
+    session.commit()
+    invalidate()
+    return rule
+
+
 def remove_rule(session: Session, rule_id: str, *, who: str = "") -> AccessRule | None:
     rule = session.get(AccessRule, rule_id)
     if rule is None:

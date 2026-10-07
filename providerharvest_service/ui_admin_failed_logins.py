@@ -40,7 +40,7 @@ from providerharvest_service.admin_ftp import SFTP_SCP
 from providerharvest_service.client_addr import sender_address
 from providerharvest_service.sender_allowlist import normalize_cidr
 from providerharvest_service.db import get_session
-from providerharvest_service.models import FtpBoxStatus, FtpLoginAttempt, FtpUnbanRequest
+from providerharvest_service.models import AccessRule, FtpBoxStatus, FtpLoginAttempt, FtpUnbanRequest
 
 router = APIRouter(prefix="/admin/security", tags=["security-ui"])
 templates = Jinja2Templates(directory="providerharvest_service/templates")
@@ -401,6 +401,32 @@ def _release_whitelisted_bans(session: Session, rule) -> int:
     if made:
         session.commit()
     return made
+
+
+@router.get("/rules/{rule_id}/edit", response_class=HTMLResponse)
+def edit_rule_form(rule_id: str, request: Request, session: Session = Depends(get_session)):
+    rule = session.get(AccessRule, rule_id)
+    if rule is None:
+        return _back("No such rule (it may already have been removed or expired).", "error", request)
+    return templates.TemplateResponse(
+        request, "admin/access_rule_edit.html",
+        {"rule": rule, "durations": access_control.DURATIONS, "list_name": LIST_NAME[rule.kind], "error": None, "back": PAGE},
+    )
+
+
+@router.post("/rules/{rule_id}/edit")
+async def edit_rule(rule_id: str, request: Request, session: Session = Depends(get_session)):
+    """Change a rule's note and when it ends (not its address or list -- that is a move)."""
+    form = await request.form()
+    try:
+        rule = access_control.update_rule(
+            session, rule_id, note=str(form.get("note") or ""), duration=str(form.get("duration") or "keep"), who=_who(request),
+        )
+    except access_control.AccessError as exc:
+        return _back(str(exc), "error", request)
+    if rule is None:
+        return _back("No such rule (it may already have been removed or expired).", "error", request)
+    return _back("Updated %s on the %s." % (rule.cidr.removesuffix("/32"), LIST_NAME[rule.kind]), request=request)
 
 
 @router.post("/rules/{rule_id}/delete")

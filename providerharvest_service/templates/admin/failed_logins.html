@@ -101,6 +101,7 @@
     <div class="entry{% if first %} first{% endif %}">
       <span class="info"><code>{{ rule.cidr }}</code><span class="muted">{% if rule.note %}{{ rule.note }} &middot; {% endif %}{% if rule.expires_at %}until {{ rule.expires_at|short_utc }} UTC{% else %}no expiry{% endif %}{% if rule.created_by %} &middot; {{ rule.created_by }}{% endif %}</span></span>
       {% call menu() %}
+        <a href="/admin/security/rules/{{ rule.id }}/edit">Edit note / expiry&hellip;</a>
         {% if kind == 'block' %}
           {{ item("/admin/security/rules/move", "Move to whitelist", {"cidr": rule.cidr, "to": "allow"}) }}
         {% else %}
