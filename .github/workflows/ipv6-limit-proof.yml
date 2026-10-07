@@ -112,13 +112,21 @@ jobs:
               for proto, port in (("FTP", 2291), ("SFTP", 2292)):
                   try:
                       if proto == "FTP":
-                          f = ftplib.FTP(); f.connect(host, port, timeout=15); f.login(user, PW); f.quit()
+                          f = ftplib.FTP(); f.connect(host, port, timeout=15)
+                          try:
+                              f.login(user, PW); f.quit(); got, note = True, "LOGGED IN"
+                          except (ftplib.error_perm, EOFError, ConnectionError):
+                              got, note = False, "refused"
                       else:
                           c = paramiko.SSHClient(); c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                          c.connect(host, port, username=user, password=PW, allow_agent=False, look_for_keys=False, timeout=15); c.close()
-                      got, note = True, "LOGGED IN"
-                  except (ftplib.error_perm, paramiko.AuthenticationException) as e:
-                      got, note = False, "refused"
+                          try:
+                              c.connect(host, port, username=user, password=PW, allow_agent=False, look_for_keys=False, timeout=15)
+                              c.open_sftp().listdir(".")  # a refused login closes the session right after the SSH-level success
+                              got, note = True, "LOGGED IN"
+                          except (paramiko.AuthenticationException, paramiko.SSHException, EOFError, ConnectionError):
+                              got, note = False, "refused"
+                          finally:
+                              c.close()
                   except Exception as e:
                       got, note = None, "ERROR %r" % e
                   good = got == want
