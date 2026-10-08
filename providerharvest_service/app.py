@@ -20,7 +20,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, status
 
-from providerharvest_service import db, harvest_db, scheduler
+from providerharvest_service import box_history, db, harvest_db, scheduler
 from providerharvest_service.access_middleware import AccessControlMiddleware
 from providerharvest_service.admin_auth import require_admin_key
 from providerharvest_service.admin_ftp import router as ftp_accounts_router
@@ -51,10 +51,12 @@ async def lifespan(app: FastAPI):
     harvest-scheduler thread running underneath it.
     """
     thread = scheduler.start_background_thread(db.SessionLocal, harvest_db.get_session_factory)
+    sampler = box_history.start_sampler(db.SessionLocal)  # the HTTP box's own figures, for its charts
     yield
-    if thread is not None:
-        thread.stop_event.set()
-        thread.join(timeout=5)
+    for background in (thread, sampler):
+        if background is not None:
+            background.stop_event.set()
+            background.join(timeout=5)
 
 
 app = FastAPI(title="providerharvest-service", lifespan=lifespan)

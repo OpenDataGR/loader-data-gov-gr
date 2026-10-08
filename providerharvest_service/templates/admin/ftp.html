@@ -3,7 +3,7 @@
 {% block title %}Data boxes -- loader.data.gov.gr{% endblock %}
 
 {# One box's figures (meters), its actions menu and its recent actions. Used for the HTTP box and every FTP box. #}
-{% macro box_detail(name, rows, commands, actions, url_base, asof="", missing="", log_url="", log_services=[]) %}
+{% macro box_detail(name, rows, commands, actions, url_base, asof="", missing="", log_url="", log_services=[], charts=[], table=[]) %}
   <div class="box-detail">
     <div class="box-detail-head">
       <h2>{{ name }}</h2>
@@ -32,6 +32,32 @@
       {% if asof %}<p class="muted" style="margin:0.4rem 0 0;">{{ asof }}</p>{% endif %}
     {% else %}
       <p class="muted" style="margin:0.6rem 0 0;">{{ missing }}</p>
+    {% endif %}
+    {% if charts %}
+      <div class="spark-grid">
+        {% for c in charts %}
+          <figure class="spark-card"{% if c.empty %} title="No readings yet in this period"{% endif %}>
+            <figcaption>
+              <span class="spark-title">{{ c.title }}</span>
+              <span class="spark-now">{% if c.legend|length > 1 %}{% for name, colour in c.legend %}<span class="spark-key" style="--k: {{ colour }}"></span>{{ name }} {{ c.now[name] }}{% if not loop.last %}  {% endif %}{% endfor %}{% else %}{{ c.now[c.legend[0][0]] }}{% endif %}</span>
+            </figcaption>
+            <div class="spark-wrap" data-points='{{ c.points|tojson }}' data-colors='{{ c.legend|tojson }}' data-unit="{{ c.unit }}">
+              {{ c.svg|safe }}
+              <div class="spark-tip" hidden></div>
+            </div>
+            <div class="spark-axis"><span>{{ c.start }}</span><span>peak {{ c.peak }}</span><span>{{ c.end }}</span></div>
+          </figure>
+        {% endfor %}
+      </div>
+      {% if table %}
+        <details class="spark-table">
+          <summary class="muted">Show the latest readings as a table</summary>
+          <table>
+            <thead><tr><th>UTC</th><th>Load</th><th>Memory</th><th>Disk /</th><th>In</th><th>Out</th><th>Connections</th></tr></thead>
+            <tbody>{% for r in table %}<tr><td>{{ r.at }}</td><td>{{ r.load }}</td><td>{{ r.mem }}</td><td>{{ r.disk }}</td><td>{{ r.rx }}</td><td>{{ r.tx }}</td><td>{{ r.sessions }}</td></tr>{% endfor %}</tbody>
+          </table>
+        </details>
+      {% endif %}
     {% endif %}
     {% if commands %}
       <ul class="cmd-list">
@@ -62,6 +88,19 @@
     .box-detail-head h2 { margin: 0; font-size: 1.05rem; }
     .log-form { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0 0.2rem; font-size: 0.88rem; }
     .log-form select { width: auto; margin: 0; padding: 0.3rem 0.5rem; }
+    .window-links { font-size: 0.85rem; margin: 0 0 0.4rem; }
+    .window-links a { margin-right: 0.6rem; }
+    .window-links a.current { font-weight: 600; text-decoration: none; color: var(--color-text); }
+    .spark-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: 0.8rem 1.2rem; margin: 0.8rem 0 0.4rem; }
+    .spark-card { margin: 0; }
+    .spark-card figcaption { display: flex; justify-content: space-between; gap: 0.5rem; font-size: 0.82rem; }
+    .spark-title { color: var(--color-gray-700); }
+    .spark-now { font-weight: 600; white-space: pre; }
+    .spark-key { display: inline-block; width: 0.55rem; height: 0.55rem; border-radius: 50%; background: var(--k); margin-right: 0.25rem; }
+    .spark-wrap { position: relative; }
+    .spark { width: 100%; height: 3.4rem; display: block; }
+    .spark-tip { position: absolute; top: -1.6rem; padding: 0.15rem 0.45rem; font-size: 0.75rem; background: var(--color-text); color: #fff; border-radius: 4px; white-space: pre; pointer-events: none; transform: translateX(-50%); z-index: 5; }
+    .spark-axis { display: flex; justify-content: space-between; font-size: 0.7rem; color: var(--color-gray-700); }
     .meter-row { display: grid; grid-template-columns: 9rem minmax(8rem, 16rem) 1fr; gap: 0.7rem; align-items: center; padding: 0.25rem 0; font-size: 0.9rem; }
     .meter { height: 8px; border-radius: 4px; background: var(--color-border); overflow: hidden; }
     .meter > span { display: block; height: 100%; background: var(--status-active); }
@@ -74,6 +113,9 @@
   </style>
 
   <div id="live-boxes">
+    <p class="window-links muted">Charts show the last
+      {% for w in windows %}<a href="?window={{ w }}"{% if w == window %} class="current" aria-current="true"{% endif %}>{{ {"6h": "6 hours", "24h": "24 hours", "7d": "7 days"}[w] }}</a>{% endfor %}
+    </p>
   <div class="panel">
     <h1>HTTP box</h1>
     <p class="subtitle">
@@ -81,7 +123,7 @@
       machine, which is shared with other projects, so load, memory and disk are the whole machine's.
     </p>
     {{ box_detail(http_box.name, http_box.rows, http_box.commands, http_box.actions, "/admin/ftp/http-box/actions/",
-                  "Read just now.", "Figures are not available here.", "/admin/ftp/http-box/logs", http_box.log_services) }}
+                  "Read just now.", "Figures are not available here.", "/admin/ftp/http-box/logs", http_box.log_services, http_box.charts, http_box.table) }}
     <p class="subtitle" style="margin:0.8rem 0 0;">
       <strong>Reload workers</strong> is safe at any time: loader's worker processes are replaced one by one and nothing is dropped.
       <strong>Restart the whole service</strong> restarts all of loader -- the pages, the API, pushes and the FTP boxes' check-ins are
@@ -138,7 +180,7 @@
         {{ box_detail(box.hostname, box.resource_rows, box.commands, box_actions, "/admin/ftp/boxes/" ~ box.hostname ~ "/actions/",
                       "As of the box's last report, " ~ (box.reported_at|short_utc) ~ " UTC.",
                       "This box does not report its resources yet (it needs the latest box code).",
-                      "/admin/ftp/boxes/" ~ box.hostname ~ "/logs", box_log_services) }}
+                      "/admin/ftp/boxes/" ~ box.hostname ~ "/logs", box_log_services, box.charts, box.table) }}
       {% endfor %}
       <p class="subtitle" style="margin:0.8rem 0 0;">
         Actions run within about a minute -- loader cannot reach a box, so the box collects them at its next check-in
@@ -245,12 +287,41 @@
   <script>
     // The two box panels refresh themselves, so the figures stay current without a reload. Not while
     // someone is reading: an opened output, an open actions menu or a hidden tab all skip a round.
+    // Hover on a chart: a vertical line and the reading (nearest sample) -- one handler for all charts,
+    // delegated, so it keeps working after the panels refresh themselves.
+    (function () {
+      var root = document.getElementById('live-boxes');
+      if (!root) return;
+      root.addEventListener('mousemove', function (e) {
+        var wrap = e.target.closest ? e.target.closest('.spark-wrap') : null;
+        if (!wrap) return;
+        var tip = wrap.querySelector('.spark-tip'), cursor = wrap.querySelector('.spark-cursor'), svg = wrap.querySelector('svg');
+        var data = JSON.parse(wrap.getAttribute('data-points') || '{}'), rect = svg.getBoundingClientRect();
+        var names = Object.keys(data), all = [];
+        names.forEach(function (n) { data[n].forEach(function (p) { all.push(p[0]); }); });
+        if (!all.length) return;
+        var times = all.filter(function (t, i) { return all.indexOf(t) === i; }).sort();
+        var frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)), t = times[Math.round(frac * (times.length - 1))];
+        var unit = wrap.getAttribute('data-unit') || '';
+        var text = t + (names.length > 1 ? '' : '  ');
+        names.forEach(function (n) {
+          var hit = data[n].filter(function (p) { return p[0] === t; })[0];
+          if (hit) text += (names.length > 1 ? '  ' + n + ' ' : '') + (unit === 'B/s' ? Math.round(hit[1]) + ' B/s' : hit[1] + (unit === '%' ? '%' : ''));
+        });
+        tip.textContent = text; tip.hidden = false; tip.style.left = Math.min(Math.max(e.clientX - rect.left, 60), rect.width - 60) + 'px';
+        cursor.style.display = ''; cursor.setAttribute('x1', frac * 240); cursor.setAttribute('x2', frac * 240);
+      });
+      root.addEventListener('mouseleave', function () {
+        root.querySelectorAll('.spark-tip').forEach(function (t) { t.hidden = true; });
+        root.querySelectorAll('.spark-cursor').forEach(function (c) { c.style.display = 'none'; });
+      });
+    })();
     (function () {
       var box = document.getElementById('live-boxes');
       if (!box) return;
       setInterval(function () {
         if (document.hidden || box.querySelector('details[open]') || box.querySelector('.actions-menu-list.open, .actions-menu.open')) return;
-        fetch(window.location.pathname, { credentials: 'same-origin', headers: { 'X-Requested-With': 'live' } })
+        fetch(window.location.pathname + window.location.search, { credentials: 'same-origin', headers: { 'X-Requested-With': 'live' } })
           .then(function (r) { return r.ok ? r.text() : null; })
           .then(function (html) {
             if (!html) return;

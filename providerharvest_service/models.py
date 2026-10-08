@@ -15,7 +15,7 @@ import datetime
 import json
 import uuid
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, LargeBinary, String
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -262,6 +262,25 @@ class FtpBoxStatus(Base):
     @property
     def banned(self) -> list[str]:
         return json.loads(self.banned_ips) if self.banned_ips else []
+
+
+class BoxSample(Base):
+    """One reading of a box's figures, kept for the small charts on the Data boxes page (see
+    box_history.py): at most one per box per five-minute bucket, kept seven days."""
+
+    __tablename__ = "box_sample"
+    __table_args__ = (Index("ix_box_sample_host_bucket", "hostname", "bucket", unique=True),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_new_id)
+    hostname: Mapped[str] = mapped_column(String, nullable=False)
+    bucket: Mapped[int] = mapped_column(Integer, nullable=False)  # unix time // 300
+    at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)
+    load_pct: Mapped[float | None] = mapped_column(Float, nullable=True)  # one-minute load as % of the CPUs
+    mem_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    disk_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rx_bps: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tx_bps: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sessions: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class FtpBoxCommand(Base):

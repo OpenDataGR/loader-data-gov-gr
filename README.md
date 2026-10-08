@@ -192,7 +192,12 @@ On the **HTTP box** (`http_box.py`) the actions run here, now: *Run diagnostics*
 time); and *Restart the whole service* (`SIGTERM` to the master, as a deploy does -- systemd starts
 it again, and ALL of loader is unavailable for ~15 s, including the FTP boxes' check-ins and any
 harvest in progress; it asks first and is refused twice within two minutes). The signal goes out
-only after the response is sent, and only to a gunicorn master that is this process's own parent. A **log viewer** sits on each box: pick a service (FTP box: proftpd, sync, relay, fail2ban, sshd;
+only after the response is sent, and only to a gunicorn master that is this process's own parent. Each box also has **history charts** (`box_history.py`): load, memory, root disk, network in/out and open
+connections over the last 6 hours, 24 hours or 7 days, drawn as small inline-SVG charts with a hover readout and a
+table of the latest readings. One sample per box per five minutes (`BoxSample`, kept seven days): an FTP box's comes
+with its heartbeat, the HTTP box's from a small thread in each loader worker (all try, a unique index lets one win;
+`LOADER_BOX_HISTORY=0` turns it off). A stretch with no readings is drawn as a gap, never as a line over nothing.
+A **log viewer** sits on each box: pick a service (FTP box: proftpd, sync, relay, fail2ban, sshd;
 HTTP box: loader, nginx) and 50/100/200/500 lines. It is not free text -- the request is a name
 like `logs-proftpd-100` from those fixed lists, the box maps the word to its own journal unit and
 runs `journalctl` itself (output up to 40 kB, newest lines kept); the HTTP box reads its own journal

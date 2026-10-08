@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from providerharvest_service import access_control, box_commands
+from providerharvest_service import access_control, box_commands, box_history
 from providerharvest_service.admin_auth import require_admin_key, require_ftp_sync_key
 from providerharvest_service.client_addr import sender_address
 from providerharvest_service.db import get_session
@@ -453,6 +453,8 @@ def report_ftp_box_status(
     if payload.resources is not None:
         row.resources = payload.resources.model_dump_json()
     box_commands.record_results(session, payload.hostname, payload.command_results)
+    if payload.resources is not None:
+        box_history.record(session, payload.hostname, payload.resources.model_dump())
     # Where this report came from: the one address no block may ever cover.
     row.address = sender_address(request) or row.address
     for client in payload.clients:

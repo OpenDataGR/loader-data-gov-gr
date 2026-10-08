@@ -43,7 +43,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from providerharvest_service import admin_session, box_commands, build_info, http_box, nav
+from providerharvest_service import admin_session, box_commands, box_history, build_info, http_box, nav
 from providerharvest_service.admin_ftp import generate_password, hash_password, normalize_allowed_cidr
 from providerharvest_service.ftp_credentials import password_problem
 from providerharvest_service.db import get_session
@@ -189,7 +189,17 @@ def ftp_overview(request: Request, session: Session = Depends(get_session)) -> H
         box.resource_rows = resource_view(box)  # type: ignore[attr-defined]
         box.commands = box_commands.recent(session, box.hostname)  # type: ignore[attr-defined]
     session.commit()  # (recent() records requests that went unanswered as expired)
+    window = request.query_params.get("window")
+    window = window if window in box_history.WINDOWS else box_history.DEFAULT_WINDOW
+    hours = box_history.WINDOWS[window]
+    for box in boxes:
+        readings = box_history.samples(session, box.hostname, hours)
+        box.charts = box_history.charts(readings, hours)  # type: ignore[attr-defined]
+        box.table = box_history.table(readings)  # type: ignore[attr-defined]
+    own = box_history.samples(session, http_box.NAME, hours)
     local = {
+        "charts": box_history.charts(own, hours),
+        "table": box_history.table(own),
         "name": http_box.NAME,
         "rows": resource_rows(http_box.collect_resources(disks=("/",))),
         "commands": box_commands.recent(session, http_box.NAME),
@@ -203,6 +213,8 @@ def ftp_overview(request: Request, session: Session = Depends(get_session)) -> H
             "accounts": accounts,
             "boxes": boxes,
             "http_box": local,
+            "windows": list(box_history.WINDOWS),
+            "window": window,
             "box_actions": list(box_commands.ACTIONS.values()),
             "box_log_services": list(box_commands.FTP_LOG_SERVICES),
             "log_lines": list(box_commands.LOG_LINES),
