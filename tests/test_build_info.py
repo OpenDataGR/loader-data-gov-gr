@@ -1,3 +1,4 @@
+import pytest
 import subprocess
 
 from providerharvest_service import build_info
@@ -43,10 +44,13 @@ def test_get_changelog_reads_real_commit_history_in_this_repo():
         assert entry["message"]
 
     # Cross-check against git directly, rather than just asserting shape.
-    expected_first_message = subprocess.check_output(
-        ["git", "log", "-1", "--format=%s"], cwd=build_info._REPO_ROOT
-    ).decode().strip()
-    assert entries[0]["message"] == expected_first_message
+    subjects = subprocess.check_output(
+        ["git", "log", "-n", "30", "--format=%s"], cwd=build_info._REPO_ROOT
+    ).decode().splitlines()
+    shown = [s[2:] if s.startswith("@ ") else s for s in subjects]
+    expected_first_message = next((s for s in shown if not build_info.is_scaffolding(s)), None)
+    if expected_first_message is not None:
+        assert entries[0]["message"] == expected_first_message
 
 
 def test_get_changelog_falls_back_to_an_empty_list_outside_a_git_checkout(monkeypatch, tmp_path):
@@ -60,3 +64,28 @@ def test_get_changelog_falls_back_to_an_empty_list_when_git_binary_is_missing(mo
 
     monkeypatch.setattr(build_info.subprocess, "check_output", fake_check_output)
     assert build_info.get_changelog() == []
+
+
+@pytest.mark.parametrize("message", [
+    "One-off: live test of box resources and actions", "One-off proof: add a v4 deny case", "one-off: lower case",
+    "Remove the one-off IPv6 limit proof", "Remove a stray scratch script", "  Remove the one-off box actions live test",
+])
+def test_throwaway_workflow_commits_are_recognised(message):
+    assert build_info.is_scaffolding(message)
+
+
+@pytest.mark.parametrize("message", [
+    "Allowed senders accept IPv6", "Remove the old login page", "Add a one-off import option", "Fix one-off bug in sync",
+])
+def test_real_changes_are_never_hidden(message):
+    assert not build_info.is_scaffolding(message)
+
+
+def test_the_changelog_hides_scaffolding_strips_a_stray_at_and_still_fills_the_limit(monkeypatch):
+    log = "\n".join([
+        "2026-10-08\x1fOne-off: a live test", "2026-10-08\x1fRemove the one-off live test",
+        "2026-10-08\x1f@ Data boxes: the HTTP box", "2026-10-07\x1fReal change A", "2026-10-07\x1fReal change B",
+    ])
+    monkeypatch.setattr(build_info.subprocess, "check_output", lambda *a, **k: log.encode())
+    entries = build_info.get_changelog(limit=2)
+    assert [e["message"] for e in entries] == ["Data boxes: the HTTP box", "Real change A"]

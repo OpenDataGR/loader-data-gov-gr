@@ -51,15 +51,26 @@ def get_build_info() -> dict:
     }
 
 
+# Commits that only add or remove a throwaway test workflow: useful in git, noise to an admin reading
+# "what changed". Matched on the start of the subject, case-insensitively.
+_SCAFFOLDING = ("one-off", "remove the one-off", "remove a stray", "remove a one-off")
+
+
+def is_scaffolding(message: str) -> bool:
+    return message.strip().lower().startswith(_SCAFFOLDING)
+
+
 def get_changelog(limit: int = 50) -> list[dict]:
     """The last ``limit`` commits' own date + one-line message, for the
     footer's changelog modal -- shown in-app instead of sending an
     admin off to GitHub. Same "read straight from the deployed clone's
     own .git" approach as ``get_build_info``; an empty list (never a
-    crash) if this isn't running from a git checkout at all."""
+    crash) if this isn't running from a git checkout at all. Commits that
+    only add or remove a throwaway test workflow are left out (see
+    ``is_scaffolding``); more are read than shown so the list still fills."""
     try:
         output = subprocess.check_output(
-            ["git", "log", "-n", str(limit), "--format=%ad\x1f%s", "--date=format:%Y-%m-%d"],
+            ["git", "log", "-n", str(limit * 3), "--format=%ad\x1f%s", "--date=format:%Y-%m-%d"],
             cwd=_REPO_ROOT,
             stderr=subprocess.DEVNULL,
         ).decode()
@@ -71,5 +82,9 @@ def get_changelog(limit: int = 50) -> list[dict]:
         if not line:
             continue
         date, _, message = line.partition("\x1f")
+        if message.startswith("@ "):  # a commit message that began with a stray "@" (a quoting slip)
+            message = message[2:]
+        if is_scaffolding(message):
+            continue
         entries.append({"date": date, "message": message})
-    return entries
+    return entries[:limit]
