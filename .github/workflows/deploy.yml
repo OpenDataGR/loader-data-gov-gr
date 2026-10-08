@@ -5,9 +5,20 @@ on:
     branches: [master]
   workflow_dispatch:
 
+# Two runners carry the "loader" label on the same VM, so two jobs of this repo can run at once
+# (e.g. the tests of one push while another push deploys). What they share is kept safe:
+#   * each run's tests get their own scratch checkout, named after the run, and clean it up;
+#   * everything that touches the shared git clone's worktree list or the shared virtualenv
+#     (`git worktree`, `pip install`) goes through one lock, `flock`;
+#   * deploys take turns -- the `concurrency` group on the deploy job -- and a newer waiting deploy
+#     replaces an older waiting one, which is fine: a deploy always pulls the latest master.
+
 jobs:
   test:
     runs-on: [self-hosted, loader]
+    env:
+      CI_DIR: ${{ format('{0}/ci/loader-{1}-{2}', '/home/localadmin', github.run_id, github.run_attempt) }}
+      LOCK: /home/localadmin/ci/.shared.lock
     steps:
       # The tests take minutes, so they must NOT run in the live directory after a
       # `git pull`: the running server (old code, already in memory) would then serve
@@ -18,23 +29,27 @@ jobs:
       # touched by the deploy job, right before the restart.
       - name: Check out this commit in its own scratch directory
         run: |
-          cd /opt/data-projects/loader-data-gov-gr
-          git fetch origin master
-          CI="$HOME/ci/loader-data-gov-gr"
           mkdir -p "$HOME/ci"
-          git worktree prune
-          if [ -d "$CI" ]; then git worktree remove --force "$CI"; fi
-          git worktree add --detach "$CI" "${{ github.sha }}"
-          git -C "$CI" log --oneline -1
+          cd /opt/data-projects/loader-data-gov-gr
+          flock "$LOCK" bash -c '
+            git fetch origin master
+            git worktree prune
+            # the single shared scratch directory older runs used: gone, so it cannot confuse a run
+            if [ -d "$HOME/ci/loader-data-gov-gr" ]; then git worktree remove --force "$HOME/ci/loader-data-gov-gr"; fi
+            if [ -d "$CI_DIR" ]; then git worktree remove --force "$CI_DIR"; fi
+            git worktree add --detach "$CI_DIR" "${{ github.sha }}"
+          '
+          git -C "$CI_DIR" log --oneline -1
 
       - name: Install dependencies
         run: |
           source /opt/data-projects/loader-data-gov-gr/venv/bin/activate
-          pip install -r "$HOME/ci/loader-data-gov-gr/requirements.txt"
+          # one pip at a time in the shared virtualenv
+          flock "$LOCK" pip install -r "$CI_DIR/requirements.txt"
 
       - name: Run tests
         run: |
-          CI="$HOME/ci/loader-data-gov-gr"
+          CI="$CI_DIR"
           source /opt/data-projects/loader-data-gov-gr/venv/bin/activate
           cd "$CI"
           echo "runner: $(nproc) CPU(s), $(free -m | awk '/^Mem:/ {print $2}') MB RAM"  # for judging whether parallel tests would pay
@@ -44,20 +59,35 @@ jobs:
           test "$where" = "$CI" || { echo "::error::tests would import $where, not $CI"; exit 1; }
           python -m pytest tests -q
 
+      - name: Remove this run's scratch checkout
+        if: always()
+        run: |
+          cd /opt/data-projects/loader-data-gov-gr
+          flock "$LOCK" bash -c 'git worktree remove --force "$CI_DIR" || true; git worktree prune'
+
   deploy:
     needs: test
     runs-on: [self-hosted, loader]
+    # One deploy at a time: a second one waits (and a newer one replaces an older one that is still
+    # waiting, since a deploy pulls the latest master anyway). Never cancels one that is running.
+    concurrency:
+      group: loader-deploy
+      cancel-in-progress: false
+    env:
+      LOCK: /home/localadmin/ci/.shared.lock
     steps:
       - name: Pull latest code
         run: |
           cd /opt/data-projects/loader-data-gov-gr
-          git pull
+          mkdir -p "$HOME/ci"
+          flock "$LOCK" git pull   # (a test job of another run may be fetching into the same clone)
 
       - name: Install dependencies
         run: |
           cd /opt/data-projects/loader-data-gov-gr
           source venv/bin/activate
-          pip install -r requirements.txt
+          mkdir -p "$HOME/ci"
+          flock "$LOCK" pip install -r requirements.txt
 
       - name: Reload service
         run: |

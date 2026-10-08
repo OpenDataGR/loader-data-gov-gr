@@ -384,3 +384,37 @@ the reload step dumps `journalctl` if the service didn't come back
 healthy. Once confirmed, every push to `master` deploys automatically
 (this workflow already has the `push` trigger, unlike the earlier
 SSH-based draft which was deliberately manual-only).
+
+## A second self-hosted runner for this repo (parallel jobs)
+
+One runner means one job at a time, so a push (tests, then deploy), a second push, or a one-off
+workflow queue behind each other. The loader VM (MIN01RG96PVM02: 4 CPUs, 16 GB, mostly idle --
+checked 2026-10-08) has room for a second runner with the **same `loader` label, on the same VM**, so
+a job lands on whichever is free and every job still runs against the same live directory. (This is
+not the two-runners-on-two-VMs situation in the `shared-vm-cicd-deploy` pitfalls, where it is
+unpredictable *which VM* deploys; here both are one VM.)
+
+`deploy.yml` is already safe for it: each run's tests get their own scratch checkout
+(`~/ci/loader-<run id>-<attempt>`, removed afterwards), `git worktree`, `git pull` and `pip install` in
+the shared clone/virtualenv go through one `flock`, and deploys take turns (`concurrency: loader-deploy`).
+Other workflows that run on the `loader` label are read-only, or short and independent.
+
+Register it (as for the first one, see the skill; GitHub -> repo Settings -> Actions -> Runners -> New
+self-hosted runner -> Linux/x64 gives the download commands and a short-lived token):
+
+```bash
+sudo -iu localadmin
+mkdir actions-runner-loader-2 && cd actions-runner-loader-2
+# ...paste the download/extract commands GitHub shows...
+./config.sh --url https://github.com/OpenDataGR/loader-data-gov-gr --token <TOKEN>   --labels self-hosted,loader --name loader-runner-pvm02-b
+exit
+sudo -i
+cd /home/localadmin/actions-runner-loader-2
+./svc.sh install localadmin
+./svc.sh start
+./svc.sh status
+```
+
+Confirm both are online with `gh api repos/OpenDataGR/loader-data-gov-gr/actions/runners`, then push two
+small commits close together: the two test jobs should run side by side and the deploys one after the other.
+To undo: `./svc.sh stop && ./svc.sh uninstall` in that directory, then `./config.sh remove --token <TOKEN>`.
