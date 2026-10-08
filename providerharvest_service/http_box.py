@@ -4,7 +4,7 @@ Same idea as an FTP box -- see how loaded it is, run a few actions -- but this o
 process serving the page, so it is local rather than a heartbeat away:
 
 * **resources** are read live from ``/proc`` (the VM is shared with other projects, so load,
-  memory and disk are the VM's), plus loader's own: workers and open HTTPS connections;
+  memory and disk are the VM's), plus loader's own: workers and open connections to nginx (port 80: TLS ends at the Azure gateway);
 * **diagnostics** runs here, now, and its snapshot is stored like an FTP box's;
 * **reload workers** sends gunicorn's master ``SIGHUP``: new workers start, the old ones finish
   their requests and leave. Nothing is unavailable, nothing is dropped;
@@ -137,10 +137,11 @@ def network(*, proc: str = "/proc", sleep=time.sleep, clock=time.monotonic) -> d
     return {"iface": iface, "rx_bytes": counters[0], "tx_bytes": counters[1], "rx_bps": rx_bps, "tx_bps": tx_bps}
 
 
-def own_addresses(*, run=None) -> list[str]:
+def own_addresses(*, run=None, iface: str | None = None) -> list[str]:
+    """The machine's global addresses on the main interface (not the Docker bridges)."""
     run = run or _default_run
     try:
-        out = run(["ip", "-o", "addr", "show", "scope", "global"])
+        out = run(["ip", "-o", "addr", "show", "scope", "global"] + (["dev", iface] if iface else []))
     except (OSError, subprocess.SubprocessError):
         return []
     found: list[str] = []
@@ -169,7 +170,7 @@ def _meminfo(proc: str) -> dict[str, int]:
 
 
 def collect_resources(*, disks=("/",), proc: str = "/proc", run: Runner = _default_run, master: int | None = None) -> dict:
-    """The same figures an FTP box reports, plus loader's workers and open HTTPS connections."""
+    """The same figures an FTP box reports, plus loader's workers and open connections to nginx (port 80: TLS ends at the Azure gateway)."""
     import shutil
 
     load = None
@@ -193,11 +194,11 @@ def collect_resources(*, disks=("/",), proc: str = "/proc", run: Runner = _defau
         if path not in [d["path"] for d in seen]:
             seen.append({"path": path, "total_mb": usage.total // 1048576, "used_mb": usage.used // 1048576})
 
-    https = workers = None
+    http_conns = workers = None
     try:
         out = run(["ss", "-Htn", "state", "established"])
         if out.returncode == 0:
-            https = sum(1 for line in out.stdout.splitlines() if line.split()[2:3] and line.split()[2].rsplit(":", 1)[-1] == "443")
+            http_conns = sum(1 for line in out.stdout.splitlines() if line.split()[2:3] and line.split()[2].rsplit(":", 1)[-1] == "80")
     except (OSError, subprocess.SubprocessError, IndexError):
         pass
     master = gunicorn_master(proc=proc) if master is None else master
@@ -215,8 +216,8 @@ def collect_resources(*, disks=("/",), proc: str = "/proc", run: Runner = _defau
     return {
         "load": load, "cpus": os.cpu_count(), "mem_total_mb": mem.get("MemTotal"), "mem_available_mb": mem.get("MemAvailable"),
         "swap_used_mb": (swap_total - swap_free) if swap_total is not None and swap_free is not None else None,
-        "uptime_s": uptime, "disks": seen, "https_connections": https, "workers": workers, "service_up_s": since,
-        "addresses": own_addresses(run=run), "net": network(proc=proc),
+        "uptime_s": uptime, "disks": seen, "http_connections": http_conns, "workers": workers, "service_up_s": since,
+        "addresses": own_addresses(run=run, iface=_default_interface(proc)), "net": network(proc=proc),
     }
 
 

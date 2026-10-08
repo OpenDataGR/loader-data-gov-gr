@@ -164,8 +164,8 @@ def resource_rows(r: dict, public: str | None = None) -> list[dict]:
                          _speed(net.get("rx_bps")), _speed(net.get("tx_bps")), _size(net.get("rx_bytes")), _size(net.get("tx_bytes")))})
     if r.get("ftp_sessions") is not None or r.get("sftp_sessions") is not None:
         rows.append({"label": "Open sessions", "text": "%s FTP, %s SFTP" % (r.get("ftp_sessions", "?"), r.get("sftp_sessions", "?")), "percent": None, "level": "ok"})
-    if r.get("https_connections") is not None:
-        rows.append({"label": "HTTPS connections", "text": "%d open" % r["https_connections"], "percent": None, "level": "ok"})
+    if r.get("http_connections") is not None:
+        rows.append({"label": "Open connections", "text": "%d to nginx" % r["http_connections"], "percent": None, "level": "ok"})
     if r.get("workers") is not None:
         rows.append({"label": "Loader workers", "text": "%d running" % r["workers"], "percent": None, "level": "ok"})
     if r.get("service_up_s") is not None:

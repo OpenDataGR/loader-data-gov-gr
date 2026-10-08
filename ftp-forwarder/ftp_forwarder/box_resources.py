@@ -124,10 +124,11 @@ def net_counters(iface: str, proc: str = "/proc") -> tuple[int, int] | None:
     return None
 
 
-def addresses(*, run: Runner = _default_run) -> list[str]:
-    """This machine's own global (non-link-local, non-loopback) addresses, IPv4 and IPv6."""
+def addresses(*, run: Runner = _default_run, iface: str | None = None) -> list[str]:
+    """This machine's own global (non-link-local, non-loopback) addresses, IPv4 and IPv6 -- on ``iface``
+    (the main one) when given, so container bridges do not clutter the list."""
     try:
-        result = run(["ip", "-o", "addr", "show", "scope", "global"])
+        result = run(["ip", "-o", "addr", "show", "scope", "global"] + (["dev", iface] if iface else []))
     except (OSError, subprocess.SubprocessError):
         return []
     found: list[str] = []
@@ -186,6 +187,6 @@ def collect(
         "disks": seen,
         "ftp_sessions": sessions.get(ftp_port) if sessions else None,
         "sftp_sessions": sessions.get(sftp_port) if sessions else None,
-        "addresses": addresses(run=run),
+        "addresses": addresses(run=run, iface=default_interface(proc)),
         "net": _net(proc, rate),
     }
