@@ -36,20 +36,24 @@ def test_get_changelog_reads_real_commit_history_in_this_repo():
     # Not "== 5" -- CI's own checkout is shallow (fetch-depth: 1), so
     # there may genuinely be only one commit available to read, same
     # as production's full clone would only ever have fewer than
-    # `limit` right after this repo's very first commit.
+    # `limit` right after this repo's very first commit. And that one
+    # commit may be a throwaway-workflow commit, which the changelog
+    # hides on purpose, so even an empty list can be right.
     entries = build_info.get_changelog(limit=5)
-    assert 1 <= len(entries) <= 5
+    assert len(entries) <= 5
     for entry in entries:
         assert entry["date"]
         assert entry["message"]
 
     # Cross-check against git directly, rather than just asserting shape.
     subjects = subprocess.check_output(
-        ["git", "log", "-n", "30", "--format=%s"], cwd=build_info._REPO_ROOT
+        ["git", "log", "-n", "15", "--format=%s"], cwd=build_info._REPO_ROOT
     ).decode().splitlines()
     shown = [s[2:] if s.startswith("@ ") else s for s in subjects]
     expected_first_message = next((s for s in shown if not build_info.is_scaffolding(s)), None)
-    if expected_first_message is not None:
+    if expected_first_message is None:
+        assert entries == []  # nothing but scaffolding in view: nothing to show
+    else:
         assert entries[0]["message"] == expected_first_message
 
 
