@@ -1,0 +1,31 @@
+name: HTTP box live test (one-off)
+
+# One-off, read-only, on the loader VM: calls the HTTP box's own code with the service's Python,
+# as the service user, to see that the live figures and the diagnostics snapshot work here
+# (/proc, ss, ip, systemctl, journalctl). It sends no signal and restarts nothing.
+# Deleted afterwards.
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: [self-hosted, loader]
+    steps:
+      - run: |
+          cd /opt/data-projects/loader-data-gov-gr
+          # the service's master is found from a worker's parent; from here, use the real master of the unit
+          MASTER=$(systemctl show -p MainPID --value loader-data-gov-gr)
+          echo "gunicorn master pid: $MASTER"
+          venv/bin/python - "$MASTER" <<'PY'
+          import json, sys
+          from providerharvest_service import http_box
+          master = int(sys.argv[1])
+          print("detected as a gunicorn master of this app:", http_box.gunicorn_master(pid=master))
+          figures = http_box.collect_resources(disks=("/",), master=master)
+          print(json.dumps(figures, indent=1))
+          from providerharvest_service.ui_admin_ftp import resource_rows
+          for row in resource_rows(figures):
+              print("%-22s %s" % (row["label"], row["text"]))
+          print()
+          print(http_box.diagnostics()[:3500])
+          PY
