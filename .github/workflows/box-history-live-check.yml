@@ -11,17 +11,24 @@ jobs:
     runs-on: [self-hosted, loader]
     steps:
       - run: |
-          for i in $(seq 1 14); do
-            n=$(sqlite3 /opt/data-projects/loader-data-gov-gr/data/loader.db "SELECT count(DISTINCT hostname) FROM box_sample" 2>/dev/null || echo 0)
-            [ "$n" -ge 2 ] && break
-            sleep 30
-          done
-          echo "--- samples per box"
-          sqlite3 -header -column /opt/data-projects/loader-data-gov-gr/data/loader.db "SELECT hostname, count(*) AS samples, min(at) AS first, max(at) AS last FROM box_sample GROUP BY hostname"
-          echo "--- latest rows"
-          sqlite3 -header -column /opt/data-projects/loader-data-gov-gr/data/loader.db "SELECT hostname, at, load_pct, mem_pct, disk_pct, rx_bps, tx_bps, sessions FROM box_sample ORDER BY at DESC LIMIT 6"
-          echo "--- sampler threads in the service (box-history)"
-          pid=$(systemctl show -p MainPID --value loader-data-gov-gr)
-          ls /proc/$pid/task | wc -l | xargs echo "threads in the master:"
-          journalctl -u loader-data-gov-gr --since "-20min" --no-pager | grep -i "box history" || echo "(no sampler errors logged)"
-          [ "$n" -ge 2 ]
+          python3 - <<'PY'
+          import sqlite3, subprocess, sys, time
+          conn = sqlite3.connect("/opt/data-projects/loader-data-gov-gr/data/loader.db", timeout=30)
+          for _ in range(14):
+              n = conn.execute("SELECT count(DISTINCT hostname) FROM box_sample").fetchone()[0]
+              if n >= 2:
+                  break
+              time.sleep(30)
+          print("--- samples per box")
+          for row in conn.execute("SELECT hostname, count(*), min(at), max(at) FROM box_sample GROUP BY hostname"):
+              print(row)
+          print("--- latest rows (host, at, load%, mem%, disk%, rx, tx, sessions)")
+          for row in conn.execute("SELECT hostname, at, load_pct, mem_pct, disk_pct, rx_bps, tx_bps, sessions FROM box_sample ORDER BY at DESC LIMIT 6"):
+              print(row)
+          pid = subprocess.run(["systemctl", "show", "-p", "MainPID", "--value", "loader-data-gov-gr"], capture_output=True, text=True).stdout.strip()
+          threads = subprocess.run("ls /proc/%s/task | wc -l" % pid, shell=True, capture_output=True, text=True).stdout.strip()
+          print("--- threads in the gunicorn master:", threads)
+          log = subprocess.run("journalctl -u loader-data-gov-gr --since '-20min' --no-pager | grep -i 'box history' || true", shell=True, capture_output=True, text=True).stdout.strip()
+          print("--- sampler errors logged:", log or "none")
+          sys.exit(0 if n >= 2 else 1)
+          PY
