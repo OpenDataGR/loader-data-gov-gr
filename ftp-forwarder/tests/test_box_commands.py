@@ -111,3 +111,45 @@ def test_a_huge_log_cannot_push_the_start_of_the_diagnostics_out():
     out = Executor(run=Loud()).execute({"id": "c1", "action": "diagnostics"}).output
     assert out.startswith("== uptime") and "== memory" in out and "== fail2ban" in out  # the head survives
     assert "== log loader-ftp-forwarder" in out and len(out) < box_commands.MAX_OUTPUT
+
+
+# -- log viewing -------------------------------------------------------------------------
+
+@pytest.mark.parametrize("service, unit", [
+    ("proftpd", "proftpd"), ("sync", "loader-ftp-forwarder-sync"), ("relay", "loader-ftp-forwarder"),
+    ("fail2ban", "fail2ban"), ("sshd", "ssh"),
+])
+@pytest.mark.parametrize("lines", [50, 100, 200, 500])
+def test_a_log_request_reads_that_units_journal_and_nothing_else(service, unit, lines):
+    fake = Fake()
+    result = Executor(run=fake).execute({"id": "c1", "action": "logs-%s-%d" % (service, lines)})
+    assert fake.calls == [["journalctl", "-u", unit, "-n", str(lines), "--no-pager", "-o", "short"]]
+    assert result.ok and ("last %d lines of %s" % (lines, unit)) in result.output
+
+
+@pytest.mark.parametrize("action", [
+    "logs-proftpd-75", "logs-proftpd-5000", "logs-nginx-100", "logs-proftpd-100; reboot", "logs--100",
+    "logs-proftpd-", "logs-ProFTPD-100", "logs-../etc-100", "logs-proftpd-0100", "log-proftpd-100",
+])
+def test_anything_but_an_exact_service_and_line_count_is_refused_and_runs_nothing(action):
+    fake = Fake()
+    result = Executor(run=fake).execute({"id": "c1", "action": action})
+    assert result.ok is False and "does not run" in result.output and fake.calls == []
+
+
+def test_a_failing_journalctl_is_a_failure_with_the_reason():
+    result = Executor(run=Fake(fail="journalctl")).execute({"id": "c1", "action": "logs-proftpd-50"})
+    assert result.ok is False and "boom" in result.output
+
+
+def test_a_log_view_gets_more_room_than_other_output_and_keeps_the_end():
+    class Loud(Fake):
+        def __call__(self, cmd):
+            return subprocess.CompletedProcess(cmd, 0, "A" * 100000 + "THE-NEWEST-LINE", "")
+
+    out = Executor(run=Loud()).execute({"id": "c1", "action": "logs-sync-500"}).output
+    assert box_commands.MAX_OUTPUT < len(out) <= box_commands.LOG_OUTPUT + 20 and out.endswith("THE-NEWEST-LINE")
+
+
+def test_the_log_services_are_exactly_these():
+    assert Executor(run=Fake()).log_services == ("proftpd", "sync", "relay", "fail2ban", "sshd")

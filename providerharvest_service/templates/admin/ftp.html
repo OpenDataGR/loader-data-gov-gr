@@ -3,7 +3,7 @@
 {% block title %}Data boxes -- loader.data.gov.gr{% endblock %}
 
 {# One box's figures (meters), its actions menu and its recent actions. Used for the HTTP box and every FTP box. #}
-{% macro box_detail(name, rows, commands, actions, url_base, asof="", missing="") %}
+{% macro box_detail(name, rows, commands, actions, url_base, asof="", missing="", log_url="", log_services=[]) %}
   <div class="box-detail">
     <div class="box-detail-head">
       <h2>{{ name }}</h2>
@@ -13,6 +13,14 @@
         {% endfor %}
       {% endcall %}
     </div>
+    {% if log_url %}
+      <form class="log-form" method="post" action="{{ log_url }}">
+        <span class="muted">Logs</span>
+        <select name="service" aria-label="Service">{% for svc in log_services %}<option value="{{ svc }}">{{ svc }}</option>{% endfor %}</select>
+        <select name="lines" aria-label="Lines">{% for n in log_lines %}<option value="{{ n }}"{% if n == 100 %} selected{% endif %}>last {{ n }} lines</option>{% endfor %}</select>
+        <button type="submit" class="btn-secondary btn-sm">Show</button>
+      </form>
+    {% endif %}
     {% if rows %}
       {% for row in rows %}
         <div class="meter-row">
@@ -29,7 +37,7 @@
       <ul class="cmd-list">
         {% for c in commands %}
           <li>
-            <strong>{{ actions|selectattr("key", "equalto", c.action)|map(attribute="label")|first|default(c.action) }}</strong>
+            <strong>{{ c.action|action_label }}</strong>
             <span class="muted">-- {{ c.requested_by or "an admin" }}, {{ c.requested_at|short_utc }} UTC</span>
             {% if c.state == "pending" %}<span class="badge badge-pending"><span>waiting for the box</span></span>
             {% elif c.state == "sent" %}<span class="badge badge-pending"><span>running</span></span>
@@ -52,6 +60,8 @@
     .box-detail:first-of-type { margin-top: 0.6rem; }
     .box-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
     .box-detail-head h2 { margin: 0; font-size: 1.05rem; }
+    .log-form { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0 0.2rem; font-size: 0.88rem; }
+    .log-form select { width: auto; margin: 0; padding: 0.3rem 0.5rem; }
     .meter-row { display: grid; grid-template-columns: 9rem minmax(8rem, 16rem) 1fr; gap: 0.7rem; align-items: center; padding: 0.25rem 0; font-size: 0.9rem; }
     .meter { height: 8px; border-radius: 4px; background: var(--color-border); overflow: hidden; }
     .meter > span { display: block; height: 100%; background: var(--status-active); }
@@ -71,7 +81,7 @@
       machine, which is shared with other projects, so load, memory and disk are the whole machine's.
     </p>
     {{ box_detail(http_box.name, http_box.rows, http_box.commands, http_box.actions, "/admin/ftp/http-box/actions/",
-                  "Read just now.", "Figures are not available here.") }}
+                  "Read just now.", "Figures are not available here.", "/admin/ftp/http-box/logs", http_box.log_services) }}
     <p class="subtitle" style="margin:0.8rem 0 0;">
       <strong>Reload workers</strong> is safe at any time: loader's worker processes are replaced one by one and nothing is dropped.
       <strong>Restart the whole service</strong> restarts all of loader -- the pages, the API, pushes and the FTP boxes' check-ins are
@@ -127,7 +137,8 @@
       {% for box in boxes %}
         {{ box_detail(box.hostname, box.resource_rows, box.commands, box_actions, "/admin/ftp/boxes/" ~ box.hostname ~ "/actions/",
                       "As of the box's last report, " ~ (box.reported_at|short_utc) ~ " UTC.",
-                      "This box does not report its resources yet (it needs the latest box code).") }}
+                      "This box does not report its resources yet (it needs the latest box code).",
+                      "/admin/ftp/boxes/" ~ box.hostname ~ "/logs", box_log_services) }}
       {% endfor %}
       <p class="subtitle" style="margin:0.8rem 0 0;">
         Actions run within about a minute -- loader cannot reach a box, so the box collects them at its next check-in

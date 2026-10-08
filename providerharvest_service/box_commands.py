@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime
+import re
 from typing import Iterable
 
 from sqlalchemy import delete, select
@@ -56,6 +57,44 @@ class CommandError(ValueError):
     """Carries a message fit to show the admin."""
 
 
+# Log viewing: not free text. An action is named "logs-<service>-<lines>", from short fixed lists; the
+# box maps the word to its own journal unit (it never sees a unit name or a command from here).
+FTP_LOG_SERVICES = ("proftpd", "sync", "relay", "fail2ban", "sshd")
+LOG_LINES = (50, 100, 200, 500)
+LOG_OUTPUT = 40000  # a log view is meant to be read, so it gets more room than the other actions
+_LOG_ACTION = re.compile(r"^logs-([a-z0-9]{2,12})-(\d{2,3})$")
+
+
+def log_action(service: str, lines: object) -> str:
+    """The action name for viewing ``service``'s last ``lines`` lines, or ``CommandError`` for a number
+    that is not one of the offered ones. (Which services a given box offers is checked by its caller.)"""
+    try:
+        count = int(str(lines))
+    except ValueError:
+        raise CommandError("Choose how many lines.") from None
+    if count not in LOG_LINES:
+        raise CommandError("Choose one of the offered numbers of lines.")
+    if not re.fullmatch(r"[a-z0-9]{2,12}", service or ""):
+        raise CommandError("Choose a service.")
+    return "logs-%s-%d" % (service, count)
+
+
+def parse_log_action(action: str) -> tuple[str, int] | None:
+    """(service, lines) for a well-formed log action name, else None."""
+    match = _LOG_ACTION.match(action or "")
+    if not match or int(match.group(2)) not in LOG_LINES:
+        return None
+    return match.group(1), int(match.group(2))
+
+
+def label(action: str) -> str:
+    """What the history calls an action."""
+    if action in ACTIONS:
+        return ACTIONS[action].label
+    parsed = parse_log_action(action)
+    return "Show logs: %s, %d lines" % parsed if parsed else action
+
+
 def _now() -> datetime.datetime:
     return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
 
@@ -76,7 +115,8 @@ def _expire(session: Session, hostname: str, now: datetime.datetime) -> None:
 def request(session: Session, hostname: str, action: str, who: str) -> FtpBoxCommand:
     """Queue ``action`` for ``hostname``. Raises ``CommandError`` for an unknown box or
     action, or when the same action is already waiting."""
-    if action not in ACTIONS:
+    parsed = parse_log_action(action)
+    if action not in ACTIONS and not (parsed and parsed[0] in FTP_LOG_SERVICES):
         raise CommandError("Unknown action.")
     if session.get(FtpBoxStatus, hostname) is None:
         raise CommandError("No such box.")
@@ -87,7 +127,7 @@ def request(session: Session, hostname: str, action: str, who: str) -> FtpBoxCom
     ))
     if waiting is not None:
         session.commit()  # (keep any expiry just recorded)
-        raise CommandError("%s is already waiting for this box." % ACTIONS[action].label)
+        raise CommandError("%s is already waiting for this box." % label(action))
     row = FtpBoxCommand(hostname=hostname, action=action, requested_by=(who or "")[:100], requested_at=now)
     session.add(row)
     session.execute(delete(FtpBoxCommand).where(FtpBoxCommand.requested_at < now - KEEP_FOR))
@@ -119,7 +159,7 @@ def record_results(session: Session, hostname: str, results: Iterable[object]) -
             continue
         row.state = "ok" if getattr(item, "ok", False) else "failed"
         row.finished_at = now
-        text = str(getattr(item, "output", ""))[:MAX_OUTPUT]
+        text = str(getattr(item, "output", ""))[:LOG_OUTPUT if row.action.startswith("logs-") else MAX_OUTPUT]
         row.output = "".join(ch for ch in text if ch in "\n\t" or ch.isprintable())
 
 

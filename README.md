@@ -192,7 +192,11 @@ On the **HTTP box** (`http_box.py`) the actions run here, now: *Run diagnostics*
 time); and *Restart the whole service* (`SIGTERM` to the master, as a deploy does -- systemd starts
 it again, and ALL of loader is unavailable for ~15 s, including the FTP boxes' check-ins and any
 harvest in progress; it asks first and is refused twice within two minutes). The signal goes out
-only after the response is sent, and only to a gunicorn master that is this process's own parent. There is no shell in the browser:
+only after the response is sent, and only to a gunicorn master that is this process's own parent. A **log viewer** sits on each box: pick a service (FTP box: proftpd, sync, relay, fail2ban, sshd;
+HTTP box: loader, nginx) and 50/100/200/500 lines. It is not free text -- the request is a name
+like `logs-proftpd-100` from those fixed lists, the box maps the word to its own journal unit and
+runs `journalctl` itself (output up to 40 kB, newest lines kept); the HTTP box reads its own journal
+now, an FTP box answers at its next check-in. There is no shell in the browser:
 that stays on SSH (`box_commands.py`, `ftp-forwarder/ftp_forwarder/box_commands.py`).
 
 **Automatic web bans (`auto_ban.py`).** Loader bans an address that keeps failing to

@@ -24,6 +24,9 @@ from typing import Callable
 Runner = Callable[[list[str]], subprocess.CompletedProcess]
 
 MAX_OUTPUT = 12000
+LOG_OUTPUT = 40000  # a log view is meant to be read, so it gets more room than the other actions
+LOG_LINES = (50, 100, 200, 500)
+_LOG_ACTION = re.compile(r"^logs-([a-z0-9]{2,12})-(\d{2,3})$")
 SECTION_OUTPUT = 2000  # per section of a diagnostics snapshot, so no one log can push the others out
 _ID = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 
@@ -57,11 +60,15 @@ class Executor:
         relay_unit: str = "loader-ftp-forwarder",
         sync_unit: str = "loader-ftp-forwarder-sync",
         fail2ban_unit: str = "fail2ban",
+        ssh_unit: str = "ssh",
         run: Runner = _default_run,
     ):
         self._run = run
         self._units = (proftpd_unit, relay_unit, sync_unit, fail2ban_unit)
         self._proftpd, self._relay, self._sync, self._fail2ban = self._units
+        # What a log request may name: a short word -> the journal unit it reads. Fixed here.
+        self._log_units = {"proftpd": self._proftpd, "sync": self._sync, "relay": self._relay,
+                           "fail2ban": self._fail2ban, "sshd": ssh_unit}
         self._actions: dict[str, Callable[[], tuple[bool, str]]] = {
             "restart-proftpd": lambda: self._restart(self._proftpd),
             "restart-relay": lambda: self._restart(self._relay),
@@ -72,6 +79,20 @@ class Executor:
     @property
     def actions(self) -> tuple[str, ...]:
         return tuple(self._actions)
+
+    @property
+    def log_services(self) -> tuple[str, ...]:
+        return tuple(self._log_units)
+
+    def _logs(self, service: str, lines: int) -> tuple[bool, str]:
+        """The last ``lines`` lines of one service's journal. Read-only; the unit and the count come
+        from this box's own tables, never from the request text."""
+        unit = self._log_units[service]
+        done = self._do(["journalctl", "-u", unit, "-n", str(lines), "--no-pager", "-o", "short"])
+        text = (done.stdout or done.stderr or "").strip()
+        if done.returncode != 0:
+            return False, "journalctl for %s failed: %s" % (unit, text or "no output")
+        return True, "== last %d lines of %s\n%s" % (lines, unit, text or "(nothing logged)")
 
     # -- the actions ---------------------------------------------------------------
 
@@ -118,10 +139,17 @@ class Executor:
         if not isinstance(command_id, str) or not _ID.match(command_id):
             return None
         handler = self._actions.get(action) if isinstance(action, str) else None
+        match = _LOG_ACTION.match(action) if isinstance(action, str) else None
+        if match and match.group(1) in self._log_units and int(match.group(2)) in LOG_LINES:
+            service, lines = match.group(1), int(match.group(2))
+            handler = lambda: self._logs(service, lines)  # noqa: E731
+            limit = LOG_OUTPUT
+        else:
+            limit = MAX_OUTPUT
         if handler is None:
             return Result(command_id, False, "this box does not run %r" % (action if isinstance(action, str) else "?"))
         try:
             ok, output = handler()
         except Exception as exc:  # never let one action take the sync loop down
             return Result(command_id, False, "failed: %s" % exc)
-        return Result(command_id, ok, _clip(output))
+        return Result(command_id, ok, _clip(output, limit))

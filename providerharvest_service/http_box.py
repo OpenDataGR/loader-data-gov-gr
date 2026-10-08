@@ -31,7 +31,8 @@ from typing import Callable
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from providerharvest_service.box_commands import MAX_OUTPUT, Action, CommandError
+from providerharvest_service import box_commands
+from providerharvest_service.box_commands import LOG_OUTPUT, MAX_OUTPUT, Action, CommandError
 from providerharvest_service.models import FtpBoxCommand
 
 NAME = "loader"
@@ -228,6 +229,23 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else "...(cut)...\n" + text[-limit:]
 
 
+def log_units() -> dict[str, str]:
+    """What the log viewer may read: a short word -> the journal unit. Fixed here."""
+    return {"loader": _service_unit(), "nginx": "nginx"}
+
+
+def read_logs(service: str, lines: int, *, run: Runner = _default_run) -> tuple[bool, str]:
+    unit = log_units()[service]
+    try:
+        done = run(["journalctl", "-u", unit, "-n", str(lines), "--no-pager", "-o", "short"])
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, "could not read the journal: %s" % exc
+    text = (done.stdout or done.stderr or "").strip()
+    if done.returncode != 0:
+        return False, "journalctl for %s failed: %s" % (unit, text or "no output")
+    return True, "== last %d lines of %s" % (lines, unit) + chr(10) + (text or "(nothing logged)")
+
+
 def diagnostics(*, run: Runner = _default_run) -> str:
     unit = _service_unit()
     sections = [("uptime", ["uptime"]), ("memory", ["free", "-m"]), ("disk", ["df", "-h", "/"]),
@@ -244,19 +262,24 @@ def diagnostics(*, run: Runner = _default_run) -> str:
     return "\n\n".join(out)
 
 
-def perform(session: Session, action: str, who: str, *, run: Runner = _default_run,
+def perform(session: Session, action: str, who: str, *, run: Runner | None = None,
             master: int | None = None, now: datetime.datetime | None = None) -> tuple[FtpBoxCommand, Callable[[], None] | None]:
     """Do ``action`` for the HTTP box. Returns the recorded history row and, for the two that
     signal gunicorn, the function that sends the signal -- to be called once the response has
     gone out. Raises ``CommandError`` for an unknown action, when there is no gunicorn master to
     signal, or when a restart was already asked for in the last two minutes."""
-    if action not in ACTIONS:
+    run = run or _default_run  # looked up now, so a test can replace it
+    parsed = box_commands.parse_log_action(action)
+    if action not in ACTIONS and not (parsed and parsed[0] in log_units()):
         raise CommandError("Unknown action.")
     now = now or datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     row = FtpBoxCommand(hostname=NAME, action=action, requested_by=(who or "")[:100], requested_at=now,
                         sent_at=now, finished_at=now, state="ok")
     send = None
-    if action == "diagnostics":
+    if parsed:
+        ok, text = read_logs(parsed[0], parsed[1], run=run)
+        row.state, row.output = ("ok" if ok else "failed"), _clip(text, LOG_OUTPUT)
+    elif action == "diagnostics":
         row.output = _clip(diagnostics(run=run), MAX_OUTPUT)
     else:
         pid = gunicorn_master() if master is None else master

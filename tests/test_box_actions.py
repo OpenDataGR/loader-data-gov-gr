@@ -271,7 +271,6 @@ def sent(monkeypatch):
     monkeypatch.setattr(http_box, "gunicorn_master", lambda **kw: 4242)
     monkeypatch.setattr(http_box.os, "kill", lambda pid, sig: signals.append((pid, sig)))
     monkeypatch.setattr(http_box, "_default_run", _fake_run)
-    monkeypatch.setattr(http_box.diagnostics, "__defaults__", (_fake_run,))
     return signals
 
 
@@ -346,3 +345,87 @@ def test_a_pid_is_only_ever_taken_from_a_gunicorn_master_of_this_app_owned_by_us
     assert http_box.gunicorn_master(pid=12, proc=str(tmp_path)) is None  # not gunicorn
     assert http_box.gunicorn_master(pid=99, proc=str(tmp_path)) is None  # no such process
     assert http_box.gunicorn_master(pid=10, proc=str(tmp_path), uid=os.getuid() + 1 if hasattr(os, "getuid") else 12345) in (None, 10)
+
+
+# -- log viewer -------------------------------------------------------------------------------
+
+def _logs(client, service, lines, host=None):
+    url = "/admin/ftp/boxes/%s/logs" % host if host else "/admin/ftp/http-box/logs"
+    return client.post(url, data={"service": service, "lines": lines}, follow_redirects=False)
+
+
+def test_the_page_offers_a_log_form_per_box_with_that_boxs_services(client):
+    _beat(client)
+    page = client.get("/admin/ftp").text
+    assert page.count('class="log-form"') == 2  # the HTTP box and the one FTP box
+    assert 'action="/admin/ftp/http-box/logs"' in page and 'action="/admin/ftp/boxes/%s/logs"' % HOST in page
+    for service in ("proftpd", "sync", "relay", "fail2ban", "sshd", "loader", "nginx"):
+        assert '<option value="%s">' % service in page
+    for n in (50, 100, 200, 500):
+        assert "last %d lines" % n in page
+
+
+def test_an_ftp_box_log_request_is_queued_collected_once_and_answered_with_room_for_a_real_log(client, _isolated_db):
+    _beat(client)
+    resp = _logs(client, "proftpd", 100, host=HOST)
+    assert resp.status_code == 303 and "flash_kind=error" not in resp.headers["location"]
+    command = _beat(client)["commands"]
+    assert [c["action"] for c in command] == ["logs-proftpd-100"]
+    text = "== last 100 lines of proftpd\n" + "Oct 08 12:00:00 box proftpd[1]: a log line\n" * 900  # ~38 kB
+    _beat(client, command_results=[{"id": command[0]["id"], "ok": True, "output": text}])
+    (row,) = _rows(_isolated_db)
+    assert row.state == "ok" and len(row.output) > box_commands.MAX_OUTPUT and len(row.output) <= box_commands.LOG_OUTPUT
+    page = client.get("/admin/ftp").text
+    assert "Show logs: proftpd, 100 lines" in page and "a log line" in page
+
+
+@pytest.mark.parametrize("service, lines", [
+    ("nginx", 100), ("proftpd", 75), ("proftpd", "100; reboot"), ("proftpd", ""), ("", 100), ("../etc", 100), ("PROFTPD", 100), ("proftpd", 5000),
+])
+def test_a_log_request_outside_the_offered_services_and_counts_is_refused(client, _isolated_db, service, lines):
+    _beat(client)
+    resp = _logs(client, service, lines, host=HOST)
+    assert "flash_kind=error" in resp.headers["location"] and _rows(_isolated_db) == []
+
+
+def test_http_box_logs_are_read_now_and_recorded(client, _isolated_db, sent, monkeypatch):
+    seen = []
+
+    def fake(cmd):
+        import subprocess
+        seen.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "line one\nline two\n", "")
+
+    monkeypatch.setattr(http_box, "_default_run", fake)
+    resp = _logs(client, "nginx", 200)
+    assert "flash_kind=error" not in resp.headers["location"]
+    assert seen == [["journalctl", "-u", "nginx", "-n", "200", "--no-pager", "-o", "short"]]
+    (row,) = [r for r in _rows(_isolated_db) if r.hostname == "loader"]
+    assert (row.action, row.state) == ("logs-nginx-200", "ok") and "line two" in row.output and sent == []
+
+
+def test_a_failing_http_box_log_read_is_recorded_as_failed(client, _isolated_db, monkeypatch):
+    def fake(cmd):
+        import subprocess
+        return subprocess.CompletedProcess(cmd, 1, "", "no journal access")
+
+    monkeypatch.setattr(http_box, "_default_run", fake)
+    _logs(client, "loader", 50)
+    (row,) = [r for r in _rows(_isolated_db) if r.hostname == "loader"]
+    assert row.state == "failed" and "no journal access" in row.output
+
+
+@pytest.mark.parametrize("service", ["proftpd", "sshd", "../etc", ""])
+def test_the_http_box_only_reads_its_own_two_logs(client, _isolated_db, service):
+    resp = _logs(client, service, 100)
+    assert "flash_kind=error" in resp.headers["location"]
+    assert [r for r in _rows(_isolated_db) if r.hostname == "loader"] == []
+
+
+def test_log_requests_need_the_admin_login(_isolated_db, client):
+    _beat(client)
+    anonymous = TestClient(app, base_url="https://testserver")
+    for url in ("/admin/ftp/http-box/logs", "/admin/ftp/boxes/%s/logs" % HOST):
+        resp = anonymous.post(url, data={"service": "proftpd", "lines": 100}, follow_redirects=False)
+        assert resp.headers.get("location", "/admin/login").startswith("/admin/login")
+    assert _rows(_isolated_db) == []

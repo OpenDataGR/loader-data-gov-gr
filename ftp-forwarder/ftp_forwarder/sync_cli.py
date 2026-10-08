@@ -134,6 +134,7 @@ def main(argv: list[str] | None = None) -> int:
     enforcer = access_rules.Enforcer(jails=jails)
     executor = box_commands.Executor(
         proftpd_unit=args.proftpd_unit, relay_unit=args.relay_unit, fail2ban_unit=args.fail2ban_unit,
+        ssh_unit=args.ssh_unit,
     )
     # Results of actions run but not yet accepted by loader -- re-sent until they are, never re-run.
     pending_results: dict[str, dict] = {}

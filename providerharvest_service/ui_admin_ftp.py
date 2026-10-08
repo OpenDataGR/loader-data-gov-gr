@@ -55,6 +55,7 @@ templates.env.globals["build_info"] = build_info.get_build_info()
 templates.env.globals["changelog"] = build_info.get_changelog()
 templates.env.globals["now"] = datetime.datetime.now
 templates.env.globals["pending_approvals"] = nav.pending_approvals
+templates.env.filters["action_label"] = box_commands.label
 templates.env.filters["utc"] = lambda value: value.strftime("%Y-%m-%d %H:%M:%S") if value else ""
 templates.env.filters["short_utc"] = lambda value: value.strftime("%m-%d %H:%M") if value else ""
 
@@ -193,6 +194,7 @@ def ftp_overview(request: Request, session: Session = Depends(get_session)) -> H
         "rows": resource_rows(http_box.collect_resources(disks=("/",))),
         "commands": box_commands.recent(session, http_box.NAME),
         "actions": list(http_box.ACTIONS.values()),
+        "log_services": list(http_box.log_units()),
     }
     return templates.TemplateResponse(
         request,
@@ -202,9 +204,40 @@ def ftp_overview(request: Request, session: Session = Depends(get_session)) -> H
             "boxes": boxes,
             "http_box": local,
             "box_actions": list(box_commands.ACTIONS.values()),
+            "box_log_services": list(box_commands.FTP_LOG_SERVICES),
+            "log_lines": list(box_commands.LOG_LINES),
             "flash": request.query_params.get("flash"),
             "flash_kind": request.query_params.get("flash_kind", "success"),
         },
+    )
+
+
+@router.post("/http-box/logs")
+async def show_http_box_logs(request: Request, session: Session = Depends(get_session)):
+    """Read the last lines of one of loader's own logs, now (see http_box.read_logs)."""
+    who = admin_session.verify_session_cookie(request.cookies.get(admin_session.COOKIE_NAME, "")) or ""
+    form = await request.form()
+    try:
+        action = box_commands.log_action(str(form.get("service") or ""), form.get("lines"))
+        http_box.perform(session, action, who)
+    except box_commands.CommandError as exc:
+        return RedirectResponse("/admin/ftp?%s" % urlencode({"flash": str(exc), "flash_kind": "error"}), status_code=303)
+    return RedirectResponse("/admin/ftp?%s" % urlencode({"flash": "%s: see the output below." % box_commands.label(action)}), status_code=303)
+
+
+@router.post("/boxes/{hostname}/logs")
+async def ask_box_for_logs(request: Request, hostname: str, session: Session = Depends(get_session)):
+    """Queue a log view for an FTP box; its text comes back with the box's next check-in."""
+    who = admin_session.verify_session_cookie(request.cookies.get(admin_session.COOKIE_NAME, "")) or ""
+    form = await request.form()
+    try:
+        action = box_commands.log_action(str(form.get("service") or ""), form.get("lines"))
+        box_commands.request(session, hostname, action, who)
+    except box_commands.CommandError as exc:
+        return RedirectResponse("/admin/ftp?%s" % urlencode({"flash": str(exc), "flash_kind": "error"}), status_code=303)
+    return RedirectResponse(
+        "/admin/ftp?%s" % urlencode({"flash": "%s requested for %s. It arrives within about a minute." % (box_commands.label(action), hostname)}),
+        status_code=303,
     )
 
 
