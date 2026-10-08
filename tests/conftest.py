@@ -1,11 +1,29 @@
+import sqlite3
+
 import bcrypt
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
 
 from providerharvest_service.app import app
 
 ADMIN_USERNAME = "test-admin"
 ADMIN_PASSWORD = "test-password"
+
+
+@event.listens_for(Engine, "connect")
+def _throwaway_databases_do_not_wait_for_the_disk(dbapi_connection, _record):
+    """Every test builds its own SQLite database (~130 statements to create the schema), and by
+    default each one waits for the disk to confirm the write -- most of a test's setup time. These
+    databases live for a fraction of a second in a temp directory and are never read back after a
+    crash, so they skip that. Only this test process is affected: the service itself sets no such
+    pragma (test_sqlite_durability.py guards that)."""
+    if isinstance(dbapi_connection, sqlite3.Connection):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA synchronous=OFF")
+        cursor.execute("PRAGMA journal_mode=MEMORY")
+        cursor.close()
 
 # bcrypt is deliberately slow: at its production strength (cost 12, ~0.25 s a
 # hash) the suite spent most of its 7 minutes hashing the same admin password

@@ -57,7 +57,8 @@ jobs:
           # installed copy of the package could shadow it and give a false green).
           where=$(python -c "import os, providerharvest_service as p; print(os.path.dirname(os.path.dirname(os.path.abspath(p.__file__))))")
           test "$where" = "$CI" || { echo "::error::tests would import $where, not $CI"; exit 1; }
-          python -m pytest tests -q
+          # -n 2: two workers per run -- two runs can be going at once on this 4-CPU VM
+          python -m pytest tests -q -n 2
 
       - name: Remove this run's scratch checkout
         if: always()
