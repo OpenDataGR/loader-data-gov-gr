@@ -1,0 +1,27 @@
+name: Box history live check (one-off)
+
+# One-off, read-only: waits a few minutes, then shows what the loader database holds in box_sample
+# (one row per box per five minutes) and that the sampler thread is running in the service.
+# Deleted afterwards.
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: [self-hosted, loader]
+    steps:
+      - run: |
+          for i in $(seq 1 14); do
+            n=$(sqlite3 /opt/data-projects/loader-data-gov-gr/data/loader.db "SELECT count(DISTINCT hostname) FROM box_sample" 2>/dev/null || echo 0)
+            [ "$n" -ge 2 ] && break
+            sleep 30
+          done
+          echo "--- samples per box"
+          sqlite3 -header -column /opt/data-projects/loader-data-gov-gr/data/loader.db "SELECT hostname, count(*) AS samples, min(at) AS first, max(at) AS last FROM box_sample GROUP BY hostname"
+          echo "--- latest rows"
+          sqlite3 -header -column /opt/data-projects/loader-data-gov-gr/data/loader.db "SELECT hostname, at, load_pct, mem_pct, disk_pct, rx_bps, tx_bps, sessions FROM box_sample ORDER BY at DESC LIMIT 6"
+          echo "--- sampler threads in the service (box-history)"
+          pid=$(systemctl show -p MainPID --value loader-data-gov-gr)
+          ls /proc/$pid/task | wc -l | xargs echo "threads in the master:"
+          journalctl -u loader-data-gov-gr --since "-20min" --no-pager | grep -i "box history" || echo "(no sampler errors logged)"
+          [ "$n" -ge 2 ]
