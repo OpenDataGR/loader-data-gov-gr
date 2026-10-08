@@ -37,13 +37,13 @@ import datetime
 import re
 from urllib.parse import urlencode, urlparse
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from providerharvest_service import admin_session, box_commands, build_info, nav
+from providerharvest_service import admin_session, box_commands, build_info, http_box, nav
 from providerharvest_service.admin_ftp import generate_password, hash_password, normalize_allowed_cidr
 from providerharvest_service.ftp_credentials import password_problem
 from providerharvest_service.db import get_session
@@ -113,10 +113,27 @@ def _level(percent: float, warn: float = 80, bad: float = 92) -> str:
 
 
 def resource_view(box: FtpBoxStatus) -> list[dict]:
-    """The box's reported figures as rows for the page: a label, a text, and -- for what has a
-    limit -- a percentage and how worrying it is ("ok" | "warn" | "bad"). Empty for a box that
-    does not report them (older code), so the page just omits the section."""
-    r = box.resource_figures
+    return resource_rows(box.resource_figures, public=box.address)
+
+
+def _size(count: int | None) -> str:
+    if count is None:
+        return "?"
+    value = float(count)
+    for unit in ("B", "kB", "MB", "GB", "TB"):
+        if value < 1000 or unit == "TB":
+            return ("%d %s" % (value, unit)) if unit == "B" else ("%.1f %s" % (value, unit))
+        value /= 1000
+
+
+def _speed(bps: int | None) -> str:
+    return "--" if bps is None else _size(bps) + "/s"
+
+
+def resource_rows(r: dict, public: str | None = None) -> list[dict]:
+    """A box's figures as rows for the page: a label, a text, and -- for what has a limit -- a
+    percentage and how worrying it is ("ok" | "warn" | "bad"). Empty for a box that does not
+    report them (older code), so the page just omits the section."""
     if not r:
         return []
     rows: list[dict] = []
@@ -136,10 +153,25 @@ def resource_view(box: FtpBoxStatus) -> list[dict]:
             percent = 100 * (disk.get("used_mb") or 0) / disk["total_mb"]
             rows.append({"label": "Disk " + str(disk.get("path")), "text": "%s of %s used" % (_gb(disk.get("used_mb")), _gb(disk["total_mb"])),
                          "percent": percent, "level": _level(percent)})
+    own = [a for a in r.get("addresses") or [] if a != public]
+    if public or own:
+        text = ", ".join(([public + " (as loader sees it)"] if public else []) + own)
+        rows.append({"label": "Address", "text": text, "percent": None, "level": "ok"})
+    net = r.get("net")
+    if isinstance(net, dict):
+        rows.append({"label": "Network (%s)" % net.get("iface", "?"), "percent": None, "level": "ok",
+                     "text": "in %s, out %s  --  since boot: %s in, %s out" % (
+                         _speed(net.get("rx_bps")), _speed(net.get("tx_bps")), _size(net.get("rx_bytes")), _size(net.get("tx_bytes")))})
     if r.get("ftp_sessions") is not None or r.get("sftp_sessions") is not None:
         rows.append({"label": "Open sessions", "text": "%s FTP, %s SFTP" % (r.get("ftp_sessions", "?"), r.get("sftp_sessions", "?")), "percent": None, "level": "ok"})
+    if r.get("https_connections") is not None:
+        rows.append({"label": "HTTPS connections", "text": "%d open" % r["https_connections"], "percent": None, "level": "ok"})
+    if r.get("workers") is not None:
+        rows.append({"label": "Loader workers", "text": "%d running" % r["workers"], "percent": None, "level": "ok"})
+    if r.get("service_up_s") is not None:
+        rows.append({"label": "Loader up for", "text": _span(r.get("service_up_s")), "percent": None, "level": "ok"})
     if r.get("uptime_s") is not None:
-        rows.append({"label": "Up for", "text": _span(r.get("uptime_s")), "percent": None, "level": "ok"})
+        rows.append({"label": "Machine up for", "text": _span(r.get("uptime_s")), "percent": None, "level": "ok"})
     return rows
 
 
@@ -156,17 +188,43 @@ def ftp_overview(request: Request, session: Session = Depends(get_session)) -> H
         box.resource_rows = resource_view(box)  # type: ignore[attr-defined]
         box.commands = box_commands.recent(session, box.hostname)  # type: ignore[attr-defined]
     session.commit()  # (recent() records requests that went unanswered as expired)
+    local = {
+        "name": http_box.NAME,
+        "rows": resource_rows(http_box.collect_resources(disks=("/",))),
+        "commands": box_commands.recent(session, http_box.NAME),
+        "actions": list(http_box.ACTIONS.values()),
+    }
     return templates.TemplateResponse(
         request,
         "admin/ftp.html",
         {
             "accounts": accounts,
             "boxes": boxes,
+            "http_box": local,
             "box_actions": list(box_commands.ACTIONS.values()),
             "flash": request.query_params.get("flash"),
             "flash_kind": request.query_params.get("flash_kind", "success"),
         },
     )
+
+
+@router.post("/http-box/actions/{action}")
+def run_on_http_box(request: Request, action: str, background: BackgroundTasks, session: Session = Depends(get_session)):
+    """An action on loader itself (see http_box.py). A diagnostics snapshot is taken now; the two
+    that signal gunicorn do so after this response has gone out."""
+    who = admin_session.verify_session_cookie(request.cookies.get(admin_session.COOKIE_NAME, "")) or ""
+    try:
+        _, send = http_box.perform(session, action, who)
+    except box_commands.CommandError as exc:
+        return RedirectResponse("/admin/ftp?%s" % urlencode({"flash": str(exc), "flash_kind": "error"}), status_code=303)
+    label = http_box.ACTIONS[action].label
+    note = {"diagnostics": "Done -- see the output below.",
+            "reload-workers": "Reloading the workers; nothing is interrupted.",
+            "restart-service": "Restarting loader. The pages are back in about 15 seconds."}[action]
+    if send is not None:
+        background.add_task(send)
+    return RedirectResponse("/admin/ftp?%s" % urlencode({"flash": "%s: %s" % (label, note)}), status_code=303,
+                            background=background)
 
 
 @router.post("/boxes/{hostname}/actions/{action}")

@@ -357,6 +357,16 @@ class DiskIn(BaseModel):
     used_mb: int | None = None
 
 
+class NetIn(BaseModel):
+    """Traffic on the box's main interface: totals since boot, and bytes per second between its last two reports."""
+
+    iface: str = Field(max_length=40)
+    rx_bytes: int | None = None
+    tx_bytes: int | None = None
+    rx_bps: int | None = None
+    tx_bps: int | None = None
+
+
 class ResourcesIn(BaseModel):
     """The box's own figures (see ftp-forwarder's box_resources.py); each may be missing."""
 
@@ -369,6 +379,14 @@ class ResourcesIn(BaseModel):
     disks: list[DiskIn] = Field(default=[], max_length=8)
     ftp_sessions: int | None = None
     sftp_sessions: int | None = None
+    # The box's own global addresses; anything that is not an IP address is dropped, not stored.
+    addresses: list[str] = Field(default=[], max_length=8)
+    net: NetIn | None = None
+
+    @field_validator("addresses")
+    @classmethod
+    def _only_addresses(cls, value: list[str]) -> list[str]:
+        return [a for a in (_valid_address(v) for v in value) if a]
 
 
 class FtpBoxStatusIn(_BoxStatusFields):

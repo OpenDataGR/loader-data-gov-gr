@@ -1,8 +1,85 @@
 {% extends "base.html" %}
 {% import "_macros.html" as macros %}
-{% block title %}FTP box -- loader.data.gov.gr{% endblock %}
+{% block title %}Data boxes -- loader.data.gov.gr{% endblock %}
+
+{# One box's figures (meters), its actions menu and its recent actions. Used for the HTTP box and every FTP box. #}
+{% macro box_detail(name, rows, commands, actions, url_base, asof="", missing="") %}
+  <div class="box-detail">
+    <div class="box-detail-head">
+      <h2>{{ name }}</h2>
+      {% call macros.dots_menu() %}
+        {% for a in actions %}
+          {{ macros.dots_item(url_base ~ a.key, a.label, {}, a.confirm) }}
+        {% endfor %}
+      {% endcall %}
+    </div>
+    {% if rows %}
+      {% for row in rows %}
+        <div class="meter-row">
+          <span>{{ row.label }}</span>
+          {% if row.percent is not none %}<div class="meter {{ row.level if row.level != 'ok' else '' }}" title="{{ '%.0f' % row.percent }}%"><span style="width:{{ '%.0f' % row.percent }}%"></span></div>{% else %}<span></span>{% endif %}
+          <span class="{{ 'muted' if row.level == 'ok' else '' }}">{{ row.text }}</span>
+        </div>
+      {% endfor %}
+      {% if asof %}<p class="muted" style="margin:0.4rem 0 0;">{{ asof }}</p>{% endif %}
+    {% else %}
+      <p class="muted" style="margin:0.6rem 0 0;">{{ missing }}</p>
+    {% endif %}
+    {% if commands %}
+      <ul class="cmd-list">
+        {% for c in commands %}
+          <li>
+            <strong>{{ actions|selectattr("key", "equalto", c.action)|map(attribute="label")|first|default(c.action) }}</strong>
+            <span class="muted">-- {{ c.requested_by or "an admin" }}, {{ c.requested_at|short_utc }} UTC</span>
+            {% if c.state == "pending" %}<span class="badge badge-pending"><span>waiting for the box</span></span>
+            {% elif c.state == "sent" %}<span class="badge badge-pending"><span>running</span></span>
+            {% elif c.state == "ok" %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>done</span></span>
+            {% elif c.state == "failed" %}<span class="badge badge-error">{{ macros.icon("rejected", 13) }}<span>failed</span></span>
+            {% else %}<span class="badge badge-error"><span>no answer</span></span>{% endif %}
+            {% if c.output %}
+              <details><summary class="muted">Output</summary><pre>{{ c.output }}</pre></details>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  </div>
+{% endmacro %}
+
 {% block content %}
+  <style>
+    .box-detail { margin-top: 1.4rem; padding-top: 1rem; border-top: 1px solid var(--color-border); }
+    .box-detail:first-of-type { margin-top: 0.6rem; }
+    .box-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+    .box-detail-head h2 { margin: 0; font-size: 1.05rem; }
+    .meter-row { display: grid; grid-template-columns: 9rem minmax(8rem, 16rem) 1fr; gap: 0.7rem; align-items: center; padding: 0.25rem 0; font-size: 0.9rem; }
+    .meter { height: 8px; border-radius: 4px; background: var(--color-border); overflow: hidden; }
+    .meter > span { display: block; height: 100%; background: var(--status-active); }
+    .meter.warn > span { background: var(--status-pending); }
+    .meter.bad > span { background: var(--status-rejected); }
+    .cmd-list { margin: 0.6rem 0 0; padding: 0; list-style: none; font-size: 0.88rem; }
+    .cmd-list li { padding: 0.3rem 0; border-top: 1px solid var(--color-border); }
+    .cmd-list pre { margin: 0.4rem 0 0.2rem; padding: 0.6rem; max-height: 22rem; overflow: auto; white-space: pre-wrap; word-break: break-word; background: var(--color-bg); border: 1px solid var(--color-border); border-radius: var(--radius); font-size: 0.8rem; }
+    @media (max-width: 640px) { .meter-row { grid-template-columns: 1fr; } }
+  </style>
+
+  <div id="live-boxes">
   <div class="panel">
+    <h1>HTTP box</h1>
+    <p class="subtitle">
+      This is loader itself -- the web pages, the API and the provider pushes. The figures are read live from the
+      machine, which is shared with other projects, so load, memory and disk are the whole machine's.
+    </p>
+    {{ box_detail(http_box.name, http_box.rows, http_box.commands, http_box.actions, "/admin/ftp/http-box/actions/",
+                  "Read just now.", "Figures are not available here.") }}
+    <p class="subtitle" style="margin:0.8rem 0 0;">
+      <strong>Reload workers</strong> is safe at any time: loader's worker processes are replaced one by one and nothing is dropped.
+      <strong>Restart the whole service</strong> restarts all of loader -- the pages, the API, pushes and the FTP boxes' check-ins are
+      unavailable for about 15 seconds and a harvest in progress is cut -- so it asks first and is refused twice within two minutes.
+    </p>
+  </div>
+
+  <div class="panel" style="margin-top:1.5rem;">
     <h1>FTP/SFTP receiving boxes</h1>
     <p class="subtitle">
       Reported by each box's own account-sync job -- loader can never reach these boxes
@@ -47,61 +124,10 @@
         </tbody>
       </table>
 
-      <style>
-        .box-detail { margin-top: 1.4rem; padding-top: 1rem; border-top: 1px solid var(--color-border); }
-        .box-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-        .box-detail-head h2 { margin: 0; font-size: 1.05rem; }
-        .meter-row { display: grid; grid-template-columns: 9rem minmax(8rem, 16rem) 1fr; gap: 0.7rem; align-items: center; padding: 0.25rem 0; font-size: 0.9rem; }
-        .meter { height: 8px; border-radius: 4px; background: var(--color-border); overflow: hidden; }
-        .meter > span { display: block; height: 100%; background: var(--status-active); }
-        .meter.warn > span { background: var(--status-pending); }
-        .meter.bad > span { background: var(--status-rejected); }
-        .cmd-list { margin: 0.6rem 0 0; padding: 0; list-style: none; font-size: 0.88rem; }
-        .cmd-list li { padding: 0.3rem 0; border-top: 1px solid var(--color-border); }
-        .cmd-list pre { margin: 0.4rem 0 0.2rem; padding: 0.6rem; max-height: 22rem; overflow: auto; white-space: pre-wrap; word-break: break-word; background: var(--color-bg); border: 1px solid var(--color-border); border-radius: var(--radius); font-size: 0.8rem; }
-        @media (max-width: 640px) { .meter-row { grid-template-columns: 1fr; } }
-      </style>
       {% for box in boxes %}
-      <div class="box-detail">
-        <div class="box-detail-head">
-          <h2>{{ box.hostname }}</h2>
-          {% call macros.dots_menu() %}
-            {% for a in box_actions %}
-              {{ macros.dots_item("/admin/ftp/boxes/" ~ box.hostname ~ "/actions/" ~ a.key, a.label, {}, a.confirm) }}
-            {% endfor %}
-          {% endcall %}
-        </div>
-        {% if box.resource_rows %}
-          {% for row in box.resource_rows %}
-            <div class="meter-row">
-              <span>{{ row.label }}</span>
-              {% if row.percent is not none %}<div class="meter {{ row.level if row.level != 'ok' else '' }}" title="{{ '%.0f' % row.percent }}%"><span style="width:{{ '%.0f' % row.percent }}%"></span></div>{% else %}<span></span>{% endif %}
-              <span class="{{ 'muted' if row.level == 'ok' else '' }}">{{ row.text }}</span>
-            </div>
-          {% endfor %}
-          <p class="muted" style="margin:0.4rem 0 0;">As of the box's last report, {{ box.reported_at|short_utc }} UTC.</p>
-        {% else %}
-          <p class="muted" style="margin:0.6rem 0 0;">This box does not report its resources yet (it needs the latest box code).</p>
-        {% endif %}
-        {% if box.commands %}
-          <ul class="cmd-list">
-            {% for c in box.commands %}
-              <li>
-                <strong>{{ box_actions|selectattr("key", "equalto", c.action)|map(attribute="label")|first|default(c.action) }}</strong>
-                <span class="muted">-- {{ c.requested_by or "an admin" }}, {{ c.requested_at|short_utc }} UTC</span>
-                {% if c.state == "pending" %}<span class="badge badge-pending"><span>waiting for the box</span></span>
-                {% elif c.state == "sent" %}<span class="badge badge-pending"><span>running</span></span>
-                {% elif c.state == "ok" %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>done</span></span>
-                {% elif c.state == "failed" %}<span class="badge badge-error">{{ macros.icon("rejected", 13) }}<span>failed</span></span>
-                {% else %}<span class="badge badge-error"><span>no answer</span></span>{% endif %}
-                {% if c.output %}
-                  <details><summary class="muted">Output</summary><pre>{{ c.output }}</pre></details>
-                {% endif %}
-              </li>
-            {% endfor %}
-          </ul>
-        {% endif %}
-      </div>
+        {{ box_detail(box.hostname, box.resource_rows, box.commands, box_actions, "/admin/ftp/boxes/" ~ box.hostname ~ "/actions/",
+                      "As of the box's last report, " ~ (box.reported_at|short_utc) ~ " UTC.",
+                      "This box does not report its resources yet (it needs the latest box code).") }}
       {% endfor %}
       <p class="subtitle" style="margin:0.8rem 0 0;">
         Actions run within about a minute -- loader cannot reach a box, so the box collects them at its next check-in
@@ -113,6 +139,8 @@
         <a href="/admin/security/failed-logins">Security box</a> page.
       </p>
     {% endif %}
+  </div>
+
   </div>
 
   <div class="panel" style="margin-top:1.5rem;">
@@ -202,4 +230,24 @@
       </table>
     {% endif %}
   </div>
+
+  <script>
+    // The two box panels refresh themselves, so the figures stay current without a reload. Not while
+    // someone is reading: an opened output, an open actions menu or a hidden tab all skip a round.
+    (function () {
+      var box = document.getElementById('live-boxes');
+      if (!box) return;
+      setInterval(function () {
+        if (document.hidden || box.querySelector('details[open]') || box.querySelector('.actions-menu-list.open, .actions-menu.open')) return;
+        fetch(window.location.pathname, { credentials: 'same-origin', headers: { 'X-Requested-With': 'live' } })
+          .then(function (r) { return r.ok ? r.text() : null; })
+          .then(function (html) {
+            if (!html) return;
+            var fresh = new DOMParser().parseFromString(html, 'text/html').getElementById('live-boxes');
+            if (fresh && !box.querySelector('details[open]')) box.innerHTML = fresh.innerHTML;
+          })
+          .catch(function () { /* a missed round is fine */ });
+      }, 30000);
+    })();
+  </script>
 {% endblock %}

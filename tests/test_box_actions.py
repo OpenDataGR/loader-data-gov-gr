@@ -225,3 +225,124 @@ def test_old_history_is_dropped(client, _isolated_db):
     _age(_isolated_db, state="ok", requested_at=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(days=31))
     _ask(client, "reload-fail2ban")  # a new request prunes
     assert [r.action for r in _rows(_isolated_db)] == ["reload-fail2ban"]
+
+
+# -- addresses and traffic ---------------------------------------------------------------
+
+NET = {"iface": "eth0", "rx_bytes": 12_345_678_901, "tx_bytes": 4_500_000, "rx_bps": 250_000, "tx_bps": 1_200_000}
+
+
+def test_a_boxs_address_and_traffic_are_shown(client):
+    _beat(client, resources={**RESOURCES, "addresses": ["83.212.98.210", "2001:648:2ffc:1225::5"], "net": NET})
+    page = client.get("/admin/ftp").text
+    assert "83.212.98.210" in page and "2001:648:2ffc:1225::5" in page
+    assert "Network (eth0)" in page and "in 250.0 kB/s, out 1.2 MB/s" in page
+    assert "since boot: 12.3 GB in, 4.5 MB out" in page
+
+
+def test_the_address_loader_sees_is_labelled_and_not_repeated(client):
+    _beat(client, resources={**RESOURCES, "addresses": ["127.0.0.1x", "not-an-ip", "203.0.113.7"]})
+    page = client.get("/admin/ftp").text
+    assert "not-an-ip" not in page and "127.0.0.1x" not in page  # junk is dropped, not stored
+    assert page.count("203.0.113.7") >= 1
+
+
+def test_a_first_report_has_no_rate_and_says_so(client):
+    _beat(client, resources={**RESOURCES, "net": {**NET, "rx_bps": None, "tx_bps": None}})
+    assert "in --, out --" in client.get("/admin/ftp").text
+
+
+# -- the HTTP box (loader itself) ---------------------------------------------------------
+
+import os
+
+from providerharvest_service import http_box
+
+
+def _fake_run(cmd):
+    import subprocess
+    return subprocess.CompletedProcess(cmd, 0, "out of " + cmd[0] + "\n", "")
+
+
+@pytest.fixture
+def sent(monkeypatch):
+    """Pretend loader runs under gunicorn with master pid 4242, and record signals instead of sending them."""
+    signals = []
+    monkeypatch.setattr(http_box, "gunicorn_master", lambda **kw: 4242)
+    monkeypatch.setattr(http_box.os, "kill", lambda pid, sig: signals.append((pid, sig)))
+    monkeypatch.setattr(http_box, "_default_run", _fake_run)
+    monkeypatch.setattr(http_box.diagnostics, "__defaults__", (_fake_run,))
+    return signals
+
+
+def _http(client, action):
+    return client.post("/admin/ftp/http-box/actions/" + action, follow_redirects=False)
+
+
+def test_the_page_has_an_http_box_section_with_its_own_figures_and_menu(client):
+    page = client.get("/admin/ftp").text
+    assert "<h1>HTTP box</h1>" in page and "<h1>FTP/SFTP receiving boxes</h1>" in page
+    assert "Reload workers" in page and "Restart the whole service" in page and "Run diagnostics" in page
+    assert "Restart ALL of loader?" in page  # the confirmation
+
+
+def test_diagnostics_on_the_http_box_runs_now_and_is_recorded(client, _isolated_db, sent):
+    resp = _http(client, "diagnostics")
+    assert resp.status_code == 303 and "flash_kind=error" not in resp.headers["location"]
+    (row,) = [r for r in _rows(_isolated_db) if r.hostname == "loader"]
+    assert (row.state, row.requested_by) == ("ok", "test-admin") and "== uptime" in row.output
+    assert sent == []  # a snapshot signals nothing
+    assert "== uptime" in client.get("/admin/ftp").text
+
+
+def test_reload_workers_sends_sighup_to_the_gunicorn_master_once(client, _isolated_db, sent):
+    _http(client, "reload-workers")
+    assert sent == [(4242, http_box.SIGHUP)]
+    (row,) = [r for r in _rows(_isolated_db) if r.hostname == "loader"]
+    assert row.action == "reload-workers" and row.state == "ok"
+
+
+def test_restart_sends_sigterm_and_a_second_one_within_two_minutes_is_refused(client, _isolated_db, sent):
+    _http(client, "restart-service")
+    assert sent == [(4242, http_box.SIGTERM)]
+    again = _http(client, "restart-service")
+    assert "flash_kind=error" in again.headers["location"] and sent == [(4242, http_box.SIGTERM)]
+    assert len([r for r in _rows(_isolated_db) if r.hostname == "loader"]) == 1
+
+
+def test_without_a_gunicorn_master_nothing_is_signalled_and_nothing_recorded(client, _isolated_db, monkeypatch):
+    killed = []
+    monkeypatch.setattr(http_box, "gunicorn_master", lambda **kw: None)
+    monkeypatch.setattr(http_box.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+    resp = _http(client, "restart-service")
+    assert "flash_kind=error" in resp.headers["location"] and killed == []
+    assert [r for r in _rows(_isolated_db) if r.hostname == "loader"] == []
+
+
+@pytest.mark.parametrize("action", ["reboot", "shell", "restart-proftpd", ""])
+def test_unknown_http_box_actions_are_refused(client, _isolated_db, sent, action):
+    resp = _http(client, action or "x")
+    assert resp.status_code in (303, 404) and sent == []
+    assert [r for r in _rows(_isolated_db) if r.hostname == "loader"] == []
+
+
+def test_the_http_box_actions_need_the_admin_login(_isolated_db, client, sent):
+    anonymous = TestClient(app, base_url="https://testserver")
+    resp = anonymous.post("/admin/ftp/http-box/actions/restart-service", follow_redirects=False)
+    assert resp.headers.get("location", "/admin/login").startswith("/admin/login") and sent == []
+
+
+def test_a_pid_is_only_ever_taken_from_a_gunicorn_master_of_this_app_owned_by_us(tmp_path):
+    def proc_with(pid, cmdline):
+        d = tmp_path / str(pid)
+        d.mkdir(exist_ok=True)
+        (d / "cmdline").write_text(cmdline.replace(" ", "\0"))
+
+    proc_with(10, "/venv/bin/gunicorn -w 4 providerharvest_service.app:app")
+    proc_with(11, "/venv/bin/gunicorn -w 4 some.other.app:app")
+    proc_with(12, "/usr/bin/python3 -m uvicorn providerharvest_service.app:app")
+    assert http_box.gunicorn_master(pid=10, proc=str(tmp_path)) == 10
+    assert http_box.gunicorn_master(pid=11, proc=str(tmp_path)) is None  # someone else's app
+    assert http_box.gunicorn_master(pid=12, proc=str(tmp_path)) is None  # not gunicorn
+    assert http_box.gunicorn_master(pid=99, proc=str(tmp_path)) is None  # no such process
+    assert http_box.gunicorn_master(pid=10, proc=str(tmp_path), uid=os.getuid() + 1 if hasattr(os, "getuid") else 12345) in (None, 10)

@@ -11,9 +11,11 @@ no real box.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import shutil
 import subprocess
+import time
 from typing import Callable, Iterable
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess]
@@ -67,6 +69,16 @@ def _disk(path: str) -> dict | None:
     return {"path": path, "total_mb": usage.total // _MB, "used_mb": usage.used // _MB}
 
 
+def _net(proc: str, rate: NetRate | None) -> dict | None:
+    iface = default_interface(proc)
+    counters = net_counters(iface, proc) if iface else None
+    if counters is None:
+        return None
+    speed = rate.update(*counters) if rate is not None else None
+    return {"iface": iface, "rx_bytes": counters[0], "tx_bytes": counters[1],
+            "rx_bps": speed[0] if speed else None, "tx_bps": speed[1] if speed else None}
+
+
 def count_sessions(ports: Iterable[int], *, run: Runner = _default_run) -> dict[int, int] | None:
     """Established TCP connections to each of ``ports`` (a session is one connection)."""
     try:
@@ -90,6 +102,63 @@ def count_sessions(ports: Iterable[int], *, run: Runner = _default_run) -> dict[
     return counts
 
 
+def default_interface(proc: str = "/proc") -> str | None:
+    """The interface the default route leaves by: the one whose traffic is the box's."""
+    for line in (_read(os.path.join(proc, "net", "route")) or "").splitlines()[1:]:
+        fields = line.split()
+        if len(fields) > 2 and fields[1] == "00000000":
+            return fields[0]
+    return None
+
+
+def net_counters(iface: str, proc: str = "/proc") -> tuple[int, int] | None:
+    """(bytes received, bytes sent) by ``iface`` since boot."""
+    for line in (_read(os.path.join(proc, "net", "dev")) or "").splitlines():
+        name, _, rest = line.partition(":")
+        if name.strip() == iface:
+            fields = rest.split()
+            try:
+                return int(fields[0]), int(fields[8])
+            except (ValueError, IndexError):
+                return None
+    return None
+
+
+def addresses(*, run: Runner = _default_run) -> list[str]:
+    """This machine's own global (non-link-local, non-loopback) addresses, IPv4 and IPv6."""
+    try:
+        result = run(["ip", "-o", "addr", "show", "scope", "global"])
+    except (OSError, subprocess.SubprocessError):
+        return []
+    found: list[str] = []
+    for line in result.stdout.splitlines() if result.returncode == 0 else []:
+        fields = line.split()
+        if len(fields) > 3 and fields[2] in ("inet", "inet6"):
+            try:
+                address = str(ipaddress.ip_interface(fields[3]).ip)
+            except ValueError:
+                continue
+            if address not in found:
+                found.append(address)
+    return found[:8]
+
+
+class NetRate:
+    """Bytes per second between two readings. Counters only ever grow, so the first reading has no
+    rate (None), and one that went backwards (a reboot, a counter reset) restarts the series."""
+
+    def __init__(self):
+        self._last: tuple[float, int, int] | None = None
+
+    def update(self, rx: int, tx: int, now: float | None = None) -> tuple[int, int] | None:
+        now = time.monotonic() if now is None else now
+        last, self._last = self._last, (now, rx, tx)
+        if last is None or now <= last[0] or rx < last[1] or tx < last[2]:
+            return None
+        seconds = now - last[0]
+        return int((rx - last[1]) / seconds), int((tx - last[2]) / seconds)
+
+
 def collect(
     *,
     disks: Iterable[str] = ("/",),
@@ -97,6 +166,7 @@ def collect(
     sftp_port: int = 2222,
     proc: str = "/proc",
     run: Runner = _default_run,
+    rate: NetRate | None = None,
 ) -> dict:
     mem = _meminfo(proc)
     swap_total, swap_free = mem.get("SwapTotal"), mem.get("SwapFree")
@@ -116,4 +186,6 @@ def collect(
         "disks": seen,
         "ftp_sessions": sessions.get(ftp_port) if sessions else None,
         "sftp_sessions": sessions.get(sftp_port) if sessions else None,
+        "addresses": addresses(run=run),
+        "net": _net(proc, rate),
     }

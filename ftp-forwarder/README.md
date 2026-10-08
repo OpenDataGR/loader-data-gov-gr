@@ -244,7 +244,8 @@ Plain FTP (port 21, unencrypted) stays open for now: a provider depends on it.
 ### Resources and actions from loader's FTP box page
 
 Every heartbeat also carries the box's own figures (`box_resources.py`: load, memory,
-swap, disk for `/` and the upload root, uptime, open FTP/SFTP sessions -- read from
+swap, disk for `/` and the upload root, its own addresses, traffic on the default-route interface (totals
+since boot, and bytes/s between two heartbeats), uptime, open FTP/SFTP sessions -- read from
 `/proc` and `shutil.disk_usage`, only the session count asks `ss`; a figure that cannot
 be read is left out, never a reason for the heartbeat to fail), shown as meters on loader's
 FTP box page.

@@ -174,16 +174,25 @@ provider's uploads until they switch), and for an HTTPS push source **Rotate API
 key** (`/provider/sources/{id}/rotate-key`: the old key stops working immediately;
 before this a lost key meant deleting and re-registering the source).
 
-**FTP box resources and actions.** The FTP box page shows each box's own figures
-(load, memory, disk, uptime, open FTP/SFTP sessions -- reported in the heartbeat and
-stored as `FtpBoxStatus.resources`) and a "..." menu of **actions**: restart ProFTPD,
+**Data boxes: resources and actions.** The *Data boxes* tab (`/admin/ftp`; it was "FTP box")
+shows the **HTTP box** -- loader itself -- and each FTP box, with each box's own figures
+(load, memory, disk, its addresses, network traffic in and out -- a rate between two reports
+plus totals since boot -- uptime, open sessions; an FTP box reports them in the heartbeat,
+stored as `FtpBoxStatus.resources`, and the HTTP box is read live from `/proc`). The two panels
+refresh themselves every 30 seconds unless someone has output open and a "..." menu of **actions**: restart ProFTPD,
 restart the file relay, reload fail2ban, run diagnostics (a read-only snapshot with
 recent log lines). Loader cannot reach a box, so a request (`FtpBoxCommand`, with who
 asked and what the box answered, kept 30 days) waits until the box's next heartbeat
 collects it -- about a minute -- and the answer returns in the one after. The box runs
 only what is on **its own** fixed list (loader sends an action name, never a command
 line); each request is handed over at most once, and one nobody collects in 15 minutes
-expires. A disruptive action asks for confirmation. There is no shell in the browser:
+expires. A disruptive action asks for confirmation.
+On the **HTTP box** (`http_box.py`) the actions run here, now: *Run diagnostics*; *Reload workers*
+(`SIGHUP` to the gunicorn master: workers are replaced one by one, nothing is dropped, safe any
+time); and *Restart the whole service* (`SIGTERM` to the master, as a deploy does -- systemd starts
+it again, and ALL of loader is unavailable for ~15 s, including the FTP boxes' check-ins and any
+harvest in progress; it asks first and is refused twice within two minutes). The signal goes out
+only after the response is sent, and only to a gunicorn master that is this process's own parent. There is no shell in the browser:
 that stays on SSH (`box_commands.py`, `ftp-forwarder/ftp_forwarder/box_commands.py`).
 
 **Automatic web bans (`auto_ban.py`).** Loader bans an address that keeps failing to

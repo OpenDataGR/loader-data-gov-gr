@@ -21,12 +21,15 @@ from ftp_forwarder.auth_log import AuthLogTail
 from ftp_forwarder.ssh_log import JournalSshTail
 
 
+_NET_RATE = box_resources.NetRate()
+
+
 def _resources(args) -> dict | None:
     """Load, memory, disk and sessions for loader's box page. Never raises: a monitoring
     figure must not be the reason the heartbeat does not go out."""
     try:
         return box_resources.collect(
-            disks=("/", args.upload_root or ""), ftp_port=args.ftp_port, sftp_port=args.sftp_port,
+            disks=("/", args.upload_root or ""), ftp_port=args.ftp_port, sftp_port=args.sftp_port, rate=_NET_RATE,
         )
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).exception("could not collect resource figures")
