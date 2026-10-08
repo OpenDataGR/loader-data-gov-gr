@@ -143,6 +143,23 @@
     }
     .flash.flash-error { background: #fdecea; border-color: #f3c2c2; color: #7a1f1f; }
 
+    /* The message after an action (?flash=...): a toast, top right, that goes by itself. */
+    .toast-stack { position: fixed; top: 1rem; right: 1rem; z-index: 1000; display: flex; flex-direction: column; gap: 0.5rem; width: min(26rem, calc(100vw - 2rem)); pointer-events: none; }
+    .toast {
+      pointer-events: auto; display: flex; align-items: flex-start; gap: 0.6rem;
+      background: #eaf6ec; border: 1px solid #bfe3c4; color: #1e5c2b;
+      padding: 0.75rem 0.9rem; border-radius: var(--radius); font-size: 0.9rem;
+      box-shadow: 0 6px 20px rgba(0, 51, 117, 0.18);
+      animation: toast-in 0.2s ease-out;
+    }
+    .toast.toast-error { background: #fdecea; border-color: #f3c2c2; color: #7a1f1f; }
+    .toast.toast-out { opacity: 0; transform: translateX(1.5rem); transition: opacity 0.25s, transform 0.25s; }
+    .toast-text { flex: 1; overflow-wrap: anywhere; }
+    .toast-close { background: none; border: 0; color: inherit; cursor: pointer; padding: 0 0.1rem; font-size: 1.1rem; line-height: 1; opacity: 0.7; }
+    .toast-close:hover { opacity: 1; background: none; }
+    @keyframes toast-in { from { opacity: 0; transform: translateX(1.5rem); } to { opacity: 1; transform: none; } }
+    @media (prefers-reduced-motion: reduce) { .toast { animation: none; } .toast.toast-out { transition: none; } }
+
     .stats {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -372,11 +389,6 @@
   </div>
 
   <main>
-    {% if flash %}
-      <div class="flash {{ 'flash-error' if flash_kind == 'error' else '' }}">
-        {{ macros.icon("x" if flash_kind == "error" else "check", 16) }}{{ flash }}
-      </div>
-    {% endif %}
     {% block content %}{% endblock %}
   </main>
 
@@ -388,6 +400,36 @@
       &middot; <button type="button" class="link-button" onclick="openChangelogModal()">Changelog</button>
     </div>
   </div>
+
+  {% if flash %}
+    <div class="toast-stack" aria-live="polite">
+      <div class="toast {{ 'toast-error' if flash_kind == 'error' else '' }}" role="{{ 'alert' if flash_kind == 'error' else 'status' }}" data-ms="{{ 10000 if flash_kind == 'error' else 5000 }}">
+        {{ macros.icon("x" if flash_kind == "error" else "check", 16) }}
+        <span class="toast-text">{{ flash }}</span>
+        <button type="button" class="toast-close" aria-label="Dismiss" onclick="dismissToast(this.parentNode)">&times;</button>
+      </div>
+    </div>
+    <script>
+      function dismissToast(el) {
+        el.classList.add('toast-out');
+        setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 300);
+      }
+      (function () {
+        var el = document.querySelector('.toast');
+        if (!el) return;
+        var timer = setTimeout(function () { dismissToast(el); }, parseInt(el.getAttribute('data-ms'), 10) || 5000);
+        el.addEventListener('mouseenter', function () { clearTimeout(timer); });  // reading it: leave it be
+        // So a reload does not show the same message again.
+        try {
+          var url = new URL(window.location.href);
+          if (url.searchParams.has('flash')) {
+            url.searchParams.delete('flash'); url.searchParams.delete('flash_kind');
+            history.replaceState(null, '', url.pathname + (url.search || '') + url.hash);
+          }
+        } catch (e) { /* an old browser keeps the parameter; harmless */ }
+      })();
+    </script>
+  {% endif %}
 
   <div class="modal-overlay" id="changelog-modal" onclick="if (event.target === this) closeChangelogModal()">
     <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="changelog-modal-title">

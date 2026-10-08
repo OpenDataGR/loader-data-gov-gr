@@ -23,7 +23,8 @@ from typing import Callable
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess]
 
-MAX_OUTPUT = 6000
+MAX_OUTPUT = 12000
+SECTION_OUTPUT = 2000  # per section of a diagnostics snapshot, so no one log can push the others out
 _ID = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 
 
@@ -41,11 +42,11 @@ class Result:
         return {"id": self.id, "ok": self.ok, "output": self.output}
 
 
-def _clip(text: str) -> str:
+def _clip(text: str, limit: int = MAX_OUTPUT) -> str:
     text = text.replace("\x00", "")
-    if len(text) <= MAX_OUTPUT:
+    if len(text) <= limit:
         return text
-    return "...(cut)...\n" + text[-MAX_OUTPUT:]
+    return "...(cut)...\n" + text[-limit:]
 
 
 class Executor:
@@ -99,11 +100,11 @@ class Executor:
         sections = [("uptime", ["uptime"]), ("memory", ["free", "-m"]), ("disk", ["df", "-h", "/", "/srv/ftp"])]
         sections += [("unit " + u, ["systemctl", "is-active", u]) for u in self._units]
         sections += [("fail2ban", ["fail2ban-client", "status"])]
-        sections += [("log " + u, ["journalctl", "-u", u, "-n", "25", "--no-pager", "-o", "short"]) for u in (self._proftpd, self._sync, self._relay)]
+        sections += [("log " + u, ["journalctl", "-u", u, "-n", "15", "--no-pager", "-o", "short"]) for u in (self._proftpd, self._sync, self._relay)]
         out = []
         for title, cmd in sections:
             done = self._do(cmd)
-            out.append("== %s\n%s" % (title, (done.stdout or done.stderr or "").strip()))
+            out.append("== %s\n%s" % (title, _clip((done.stdout or done.stderr or "").strip(), SECTION_OUTPUT)))
         return True, "\n\n".join(out)
 
     # -- entry point -----------------------------------------------------------------

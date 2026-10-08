@@ -256,7 +256,7 @@ next heartbeat (`command_results`). What may run is decided **on this box**, fro
 list -- restart ProFTPD, restart the file relay, reload fail2ban, and a read-only
 diagnostics snapshot (uptime, memory, disk, unit states, recent log lines). Loader never
 sends a command line, every command is an argument list (no shell), unknown names are
-refused, and output is cut to 6000 characters. Each request is run at most once (a lost
+refused, and output is cut to 12000 characters. Each request is run at most once (a lost
 reply does not repeat a restart); one nobody collected within 15 minutes expires. There is
 deliberately no shell or arbitrary command here: that stays on SSH.
 

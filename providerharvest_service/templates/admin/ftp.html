@@ -95,7 +95,7 @@
                 {% elif c.state == "failed" %}<span class="badge badge-error">{{ macros.icon("rejected", 13) }}<span>failed</span></span>
                 {% else %}<span class="badge badge-error"><span>no answer</span></span>{% endif %}
                 {% if c.output %}
-                  <details{% if c.state == "failed" or c.action == "diagnostics" and loop.first %} open{% endif %}><summary class="muted">Output</summary><pre>{{ c.output }}</pre></details>
+                  <details><summary class="muted">Output</summary><pre>{{ c.output }}</pre></details>
                 {% endif %}
               </li>
             {% endfor %}

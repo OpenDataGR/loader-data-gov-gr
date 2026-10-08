@@ -99,3 +99,15 @@ def test_an_unexpected_exception_in_an_action_is_a_failed_result():
 
     result = Executor(run=run).execute({"id": "c1", "action": "diagnostics"})
     assert result is not None and result.id == "c1"  # reported, never raised into the sync loop
+
+
+def test_a_huge_log_cannot_push_the_start_of_the_diagnostics_out():
+    class Loud(Fake):
+        def __call__(self, cmd):
+            if cmd[0] == "journalctl":
+                return subprocess.CompletedProcess(cmd, 0, "L" * 30000, "")
+            return super().__call__(cmd)
+
+    out = Executor(run=Loud()).execute({"id": "c1", "action": "diagnostics"}).output
+    assert out.startswith("== uptime") and "== memory" in out and "== fail2ban" in out  # the head survives
+    assert "== log loader-ftp-forwarder" in out and len(out) < box_commands.MAX_OUTPUT

@@ -101,7 +101,8 @@ def test_a_failed_answer_is_shown_as_failed_with_its_output_open(client, _isolat
     command_id = _beat(client)["commands"][0]["id"]
     _beat(client, command_results=[{"id": command_id, "ok": False, "output": "fail2ban-client reload: no jail"}])
     page = client.get("/admin/ftp").text
-    assert "failed" in page and "no jail" in page and "<details open>" in page
+    assert "failed" in page and "no jail" in page
+    assert "<details open>" not in page  # output is one click away, never reopened by itself on a reload
 
 
 def test_output_is_escaped_and_cleaned(client, _isolated_db):

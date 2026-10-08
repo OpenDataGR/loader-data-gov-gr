@@ -28,8 +28,8 @@ from providerharvest_service.models import FtpBoxCommand, FtpBoxStatus
 PENDING_TTL = datetime.timedelta(minutes=15)
 SENT_TTL = datetime.timedelta(minutes=10)
 KEEP_FOR = datetime.timedelta(days=30)
-MAX_OUTPUT = 8000
-SHOWN = 10
+MAX_OUTPUT = 12000
+SHOWN = 5
 
 
 @dataclasses.dataclass(frozen=True)
