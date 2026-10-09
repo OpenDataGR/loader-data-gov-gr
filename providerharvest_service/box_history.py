@@ -38,7 +38,7 @@ KEEP_FOR = datetime.timedelta(days=7)
 GAP_S = 3 * BUCKET_S  # more than this between two samples: the box was not reporting
 WINDOWS = {"6h": 6, "24h": 24, "7d": 168}
 DEFAULT_WINDOW = "24h"
-_last_prune = 0.0
+_last_prune = float("-inf")  # (not 0: the monotonic clock of a freshly started machine can be under an hour)
 
 
 def _now() -> datetime.datetime:

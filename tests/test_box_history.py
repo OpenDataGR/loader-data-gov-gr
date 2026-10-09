@@ -79,12 +79,12 @@ def test_recording_never_raises_into_the_heartbeat(session, monkeypatch):
 
 
 def test_old_samples_are_dropped_after_seven_days(session):
-    box_history._last_prune = 0.0
+    box_history._last_prune = float("-inf")
     now = datetime.datetime(2026, 10, 8, 12, 0, 0)
     box_history.record(session, "b", FIGURES, at=now - datetime.timedelta(days=8))
-    box_history._last_prune = 0.0
+    box_history._last_prune = float("-inf")
     box_history.record(session, "b", FIGURES, at=now - datetime.timedelta(days=6))
-    box_history._last_prune = 0.0
+    box_history._last_prune = float("-inf")
     box_history.record(session, "b", FIGURES, at=now)
     assert [r.at for r in _rows(session)] == [now - datetime.timedelta(days=6), now]
 
@@ -160,7 +160,7 @@ def test_the_table_lists_the_latest_readings_newest_first_as_text():
 def test_the_page_draws_the_charts_with_a_table_alternative_and_window_links(client, _isolated_db):
     _beat(client, resources=RESOURCES)
     with _isolated_db() as s:
-        box_history._last_prune = 0.0
+        box_history._last_prune = float("-inf")
         for minutes in (30, 25, 20, 15):
             box_history.record(s, HOST, RESOURCES, at=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(minutes=minutes))
     page = client.get("/admin/ftp").text
