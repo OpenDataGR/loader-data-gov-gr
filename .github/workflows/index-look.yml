@@ -1,0 +1,30 @@
+name: Index table look (one-off)
+
+# One-off, read-only: the index tables uploaded in the Transform Box (name, columns, row count, a few example
+# values of the first column) and whether any source has a transform yet. Changes nothing. Deleted afterwards.
+on:
+  workflow_dispatch:
+
+jobs:
+  look:
+    runs-on: [self-hosted, loader]
+    steps:
+      - run: |
+          python3 - <<'PY'
+          import json, sqlite3
+          conn = sqlite3.connect("file:/opt/data-projects/loader-data-gov-gr/data/loader.db?mode=ro", uri=True)
+          print("--- index tables")
+          for name, columns, rows, count, at, by in conn.execute("SELECT name, columns, rows, row_count, uploaded_at, uploaded_by FROM lookup_table"):
+              cols, data = json.loads(columns), json.loads(rows)
+              print(name, "| rows:", count, "| uploaded", at, "by", by or "?")
+              print("  columns:", cols)
+              for r in data[:3]:
+                  print("  e.g.", {k: r[k] for k in cols[:6]})
+              ids = {str(r.get(cols[0]))[:12] for r in data}
+              print("  first column distinct values:", len(ids), "of", len(data), "rows")
+          print("--- transforms")
+          for sid, steps, enabled, fmt in conn.execute("SELECT t.source_id, t.steps, t.enabled, t.output_format FROM transform t"):
+              name = conn.execute("SELECT name FROM provider_source WHERE id = ?", (sid,)).fetchone()
+              print(name[0] if name else sid, "| enabled:", bool(enabled), "| steps:", len(json.loads(steps)), "| output:", fmt)
+          print("(end)")
+          PY
