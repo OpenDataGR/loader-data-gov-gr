@@ -194,8 +194,10 @@ jobs:
 
       - name: Confirm the local account database was actually created by the sync
         run: |
-          sudo sqlite3 /etc/proftpd/ftp-accounts.db ".tables"
-          sudo sqlite3 /etc/proftpd/ftp-accounts.db "SELECT count(*) AS account_count FROM ftp_account;"
+          # (-cmd ".timeout": the freshly restarted sync service may be writing to this small database at this
+          # very moment; wait for it instead of failing with "database is locked")
+          sudo sqlite3 -cmd ".timeout 15000" /etc/proftpd/ftp-accounts.db ".tables"
+          sudo sqlite3 -cmd ".timeout 15000" /etc/proftpd/ftp-accounts.db "SELECT count(*) AS account_count FROM ftp_account;"
           # Group-readable by virtualftp too -- contains only bcrypt
           # hashes (see admin_ftp.py's own reasoning for why that's
           # safe to expose to whatever's meant to consume this file),
