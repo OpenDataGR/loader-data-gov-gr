@@ -30,12 +30,13 @@
       </form>
     {% else %}
       <p class="subtitle" style="margin-top:0;">
-        How long this source's received files are kept. Past the period the cleanup removes a file's <em>contents</em>; the run,
-        the file's name, size and time stay in the history. A source with nothing chosen uses the defaults shown.
+        How long this source's received files are kept <strong>on the loader</strong> -- and the results the Transform Box made from them, which follow the same period.
+        Past it the cleanup removes a file's (or output's) <em>contents</em>; the run, the name, size and time stay in the history.
+        A source with nothing chosen uses the defaults shown.
       </p>
 
       <form method="post" action="/admin/sources/{{ source.id }}/retention">
-        <label for="loader">Keep files on the loader for</label>
+        <label for="loader">Keep files and transformed outputs on the loader for</label>
         <select id="loader" name="loader">
           {% for days, text in loader_options %}
             <option value="{{ days }}"{% if days == current_loader %} selected{% endif %}>{{ text }}{% if days == default_loader %} (default){% endif %}</option>

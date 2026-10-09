@@ -25,7 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from providerharvest_service import (
-    admin_session, build_info, harvest_db, nav, provider_sources, transform_engine as te, transform_forms as tf, transform_runner,
+    admin_session, build_info, harvest_db, nav, provider_sources, retention, transform_engine as te, transform_forms as tf, transform_runner,
 )
 from providerharvest_service.db import get_session
 from providerharvest_service.harvest_models import TransformedFile
@@ -196,6 +196,7 @@ def _editor_context(session: Session, hsession: Session, source: ProviderSource,
     steps = transform_runner.steps_of(transform) if transform else []
     return {
         "source": source, "transform": transform, "steps": list(enumerate(steps, 1)), "problems": transform_runner.check(session, transform) if transform else [],
+        "keep_label": retention.label(retention.loader_days(source)),
         "outputs": transform_runner.recent_outputs(hsession, source.id) if transform else [], "counts": transform_runner.output_counts(hsession, source.id) if transform else None,
         "formats": te.OUTPUTS, "delimiters": te.CSV_DELIMITERS, "choices": transform_runner.REPROCESS_CHOICES, "has_sample": transform_runner.sample_file(hsession, source.id) is not None,
         "add_types": [(k, v) for k, v in _SECTIONS.items() if k != "read"], "preview": None,

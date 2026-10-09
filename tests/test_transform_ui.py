@@ -742,3 +742,11 @@ def test_the_utm_step_is_added_from_its_form_described_and_checked(client, sourc
     assert clash.status_code == 200 and "already exists" in clash.text
     # a bad zone is refused
     assert "zone" in _go(client, source, "steps/new", data={**ok, "zone": "99"}).text
+
+
+def test_the_outputs_say_how_long_they_are_kept_and_where_that_is_set(client, source, _isolated_db):
+    _outputs_ready(client, source, n=1)
+    page = client.get("/transform/sources/%s" % source["id"]).text
+    assert "kept as long as this source" in page and "<strong>90 days</strong>" in page and "/retention" in page
+    retention_page = client.get("/admin/sources/%s/retention" % source["id"]).text
+    assert "transformed outputs" in retention_page

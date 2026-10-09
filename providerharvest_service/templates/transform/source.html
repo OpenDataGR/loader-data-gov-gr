@@ -188,6 +188,7 @@
       </form>
 
       <h2 style="font-size:1.05rem; margin:1.6rem 0 0.2rem;">Recent outputs</h2>
+      <p class="muted" style="margin:0 0 0.3rem;">Outputs are kept as long as this source's received files: <strong>{{ keep_label }}</strong> from when each was made, then the contents are removed (the same <a href="/admin/sources/{{ source.id }}/retention">data retention</a> setting). A published address serves the newest output that is still kept.</p>
       {% if not outputs %}
         <p class="muted" style="margin:0;">None yet. {% if not transform.enabled %}Switch the transform on, or run it on earlier files above.{% else %}The next file that arrives will produce one.{% endif %}</p>
       {% else %}
