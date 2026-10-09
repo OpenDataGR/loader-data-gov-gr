@@ -506,3 +506,28 @@ def test_a_csv_download_says_it_is_utf_8_and_opens_as_greek(client, source, _iso
     resp = client.get("/transform/sources/%s/outputs/%s/download" % (source["id"], out_id))
     assert resp.headers["content-type"] == "text/csv; charset=utf-8" and resp.content[:3] == b"\xef\xbb\xbf"
     assert resp.content.decode("utf-8-sig").split("\n")[0].startswith("id;time;state;count;")
+
+
+# -- select all / none ----------------------------------------------------------------------------------------------------------
+
+def test_every_checkbox_list_in_the_step_forms_has_select_all_and_none(client, source):
+    _upload_data(client, source)
+    _upload_table(client)
+    _build(client, source, READER_FORM)
+    pages = {
+        "the field chooser": client.get("/transform/sources/%s/steps/1/edit" % source["id"]).text,
+        "the index columns": client.get("/transform/sources/%s/steps/new?type=lookup" % source["id"]).text,
+        "keep fields": client.get("/transform/sources/%s/steps/new?type=select" % source["id"]).text,
+        "remove fields": client.get("/transform/sources/%s/steps/new?type=drop" % source["id"]).text,
+    }
+    for where, page in pages.items():
+        assert 'data-check="all"' in page and 'data-check="none"' in page and "data-checkgroup" in page, where
+        assert page.count("data-checkgroup") >= 1 and "closest('[data-checkgroup]')" in page, where
+
+
+def test_each_group_holds_its_own_checkboxes_so_the_buttons_cannot_reach_other_options(client, source):
+    _upload_data(client, source)
+    _go(client, source, "create")
+    page = client.get("/transform/sources/%s/steps/new?type=read&format=xml_records&record=ds" % source["id"]).text
+    group = page.split("data-checkgroup>")[1].split("</table>")[0]
+    assert 'name="path"' in group and 'name="keep_empty"' not in group  # "keep records with no repeat" is outside the group

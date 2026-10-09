@@ -14,7 +14,20 @@
     .checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: 0.2rem 1rem; margin: 0.3rem 0 0.8rem; }
     .checks label { display: flex; gap: 0.4rem; align-items: center; font-weight: 400; margin: 0; }
     .checks input { width: auto; margin: 0; }
+    .check-tools { display: flex; gap: 0.4rem; margin: 0.2rem 0 0.4rem; }
   </style>
+  <script>
+    // "Select all / none" for any group of checkboxes: the buttons act on the checkboxes inside the same [data-checkgroup]
+    // (disabled ones, such as an unchosen table's, are left alone).
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest ? e.target.closest('[data-check]') : null;
+      if (!btn) return;
+      var group = btn.closest('[data-checkgroup]');
+      if (!group) return;
+      var on = btn.getAttribute('data-check') === 'all';
+      group.querySelectorAll('input[type=checkbox]:not(:disabled)').forEach(function (box) { box.checked = on; });
+    });
+  </script>
 
   <div class="panel">
     <h1>{{ "Edit" if number else "Add" }}: {{ title }}</h1>
@@ -81,7 +94,9 @@
                 <label style="display:inline-flex; gap:0.3rem; font-weight:400;"><input type="checkbox" name="keep_empty" value="1" style="width:auto; margin:0;"{% if r.keep_empty %} checked{% endif %}> keep records that have no repeat</label></p>
             {% endif %}
 
+            <div data-checkgroup>
             <label>Fields to keep</label>
+            <div class="check-tools"><button type="button" class="btn-secondary btn-sm" data-check="all">Select all</button> <button type="button" class="btn-secondary btn-sm" data-check="none">Select none</button></div>
             <div class="scroll" style="overflow-x:auto;">
               <table class="field-table">
                 <thead><tr><th></th><th>In the file</th><th>Call it</th><th>Example</th></tr></thead>
@@ -96,6 +111,7 @@
                   {% endfor %}
                 </tbody>
               </table>
+            </div>
             </div>
             <p class="muted" style="margin:0.4rem 0 0;">&#8635; marks a field that occurs more than once in one record. Leave "Call it" empty for an automatic name.</p>
             <div style="display:flex; gap:0.6rem; margin-top:1rem;"><button type="submit">Save step</button><a class="btn btn-secondary" href="/transform/sources/{{ source.id }}">Cancel</a></div>
@@ -121,10 +137,11 @@
             <select id="key" name="key" style="max-width:20rem;">{% for f in available %}<option value="{{ f }}"{% if f == e.get('key') %} selected{% endif %}>{{ f }}</option>{% endfor %}</select>
             {% set first = (e.get('table') if e.get('table') in tables else tables.keys()|first) %}
             {% for name, columns in tables.items() %}
-              <div class="tbl" data-table="{{ name }}"{% if name != first %} hidden{% endif %}>
+              <div class="tbl" data-checkgroup data-table="{{ name }}"{% if name != first %} hidden{% endif %}>
                 <label>...against this column of {{ name }}</label>
                 <select name="table_key" {% if name != first %}disabled{% endif %} style="max-width:20rem;">{% for c in columns %}<option value="{{ c }}"{% if c == e.get('table_key') %} selected{% endif %}>{{ c }}</option>{% endfor %}</select>
                 <label>and add these columns</label>
+                <div class="check-tools"><button type="button" class="btn-secondary btn-sm" data-check="all">Select all</button> <button type="button" class="btn-secondary btn-sm" data-check="none">Select none</button></div>
                 <table class="field-table"><tbody>
                   {% for c in columns %}
                     {% set added = (e.get('add') or []) | selectattr('column', 'equalto', c) | list %}
@@ -183,8 +200,11 @@
 
         {% elif kind == "select" or kind == "drop" %}
           <label>{{ "Keep only these fields (in this order of appearance)" if kind == "select" else "Remove these fields" }}</label>
+          <div data-checkgroup>
+          <div class="check-tools"><button type="button" class="btn-secondary btn-sm" data-check="all">Select all</button> <button type="button" class="btn-secondary btn-sm" data-check="none">Select none</button></div>
           <div class="checks">
             {% for f in available %}<label><input type="checkbox" name="fields" value="{{ f }}"{% if f in (e.get('fields') or []) %} checked{% endif %}> {{ f }}</label>{% endfor %}
+          </div>
           </div>
 
         {% elif kind == "add_field" %}
