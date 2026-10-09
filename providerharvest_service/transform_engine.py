@@ -518,7 +518,7 @@ def describe_record(content: bytes, reader: str, record: str, sample: int = 50, 
 class Context:
     lookups: dict[str, dict]
     stats: dict[str, Any] = dataclasses.field(default_factory=lambda: {
-        "lookup_missing": 0, "missing_keys": [], "dropped_by_lookup": 0, "dropped_by_filter": 0, "conversion_errors": {},
+        "lookup_missing": 0, "missing_keys": [], "dropped_by_lookup": 0, "dropped_by_filter": 0, "conversion_errors": {}, "conversion_examples": {},
     })
 
 
@@ -792,6 +792,7 @@ def step_utm(records: list[Record], options: dict, ctx: Context) -> list[Record]
             added[lat_name] = added[lon_name] = None
             if record.get(x) is not None or record.get(y) is not None:
                 ctx.stats["conversion_errors"][lat_name] = ctx.stats["conversion_errors"].get(lat_name, 0) + 1
+                ctx.stats["conversion_examples"].setdefault(lat_name, "%s=%r, %s=%r" % (x, record.get(x), y, record.get(y)))
         out.append(added)
     return out
 

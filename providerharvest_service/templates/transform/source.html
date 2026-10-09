@@ -106,7 +106,7 @@
                   {% endif %}
                   {% if preview.result.stats.conversion_errors %}
                     <div class="problems">Values that could not be converted (left empty):
-                      {% for field, n in preview.result.stats.conversion_errors.items() %}{{ field }}: {{ n }}{% if not loop.last %}, {% endif %}{% endfor %}</div>
+                      {% for field, n in preview.result.stats.conversion_errors.items() %}{{ field }}: {{ n }}{% if preview.result.stats.conversion_examples.get(field) %} (for example {{ preview.result.stats.conversion_examples[field] }}){% endif %}{% if not loop.last %}; {% endif %}{% endfor %}</div>
                   {% endif %}
                   <p class="muted" style="margin:0.6rem 0 0.3rem;">The first {{ preview.rows|length }} records:</p>
                   <div class="scroll"><table>

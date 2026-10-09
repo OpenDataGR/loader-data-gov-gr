@@ -496,3 +496,9 @@ def test_a_wrong_utm_step_is_refused_with_a_reason(change, message):
     step = {"type": "utm", "x": "x", "y": "y", "zone": 34, "hemisphere": "N", "lat_name": "latitude", "lon_name": "longitude", "decimals": 6, **change}
     with pytest.raises(TransformError, match=message):
         te.step_utm([], step, te.Context(lookups={}))
+
+
+def test_a_failed_utm_conversion_shows_an_example_of_what_it_could_not_read():
+    step = {"type": "utm", "x": "x", "y": "y", "zone": 34, "hemisphere": "N", "lat_name": "latitude", "lon_name": "longitude", "decimals": 6}
+    result = run(_utm_records([{"name": "a", "x": "23.7", "y": "n/a"}]), [UTM_READ, step], output="json")
+    assert result.stats["conversion_examples"] == {"latitude": "x='23.7', y='n/a'"}
