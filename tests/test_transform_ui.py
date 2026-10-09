@@ -442,7 +442,7 @@ def test_field_names_may_use_greek_letters_but_not_spaces_or_symbols():
             te._check_name(bad, "n")
 
 
-GREEK_INDEX = "MS,ΟΝΟΜΑ,ΔΗΜΟΣ,ΚΑΤ/ΣΗ,Χ(WGS84,ZONE 34)\nMS812,Κηφισίας,ΜΑΡΟΥΣΙ,ΝΔ,\"1,234\"\nMS810,Μεσογείων,ΠΑΠΑΓΟΥ,ΒΑ,\"5,678\"\n".encode("utf-8")
+GREEK_INDEX = "MS,ΟΝΟΜΑ,ΔΗΜΟΣ,ΚΑΤ/ΣΗ,\"Χ(WGS84,ZONE 34)\"\nMS812,Κηφισίας,ΜΑΡΟΥΣΙ,ΝΔ,\"1,234\"\nMS810,Μεσογείων,ΠΑΠΑΓΟΥ,ΒΑ,\"5,678\"\n".encode("utf-8")
 
 
 def test_an_index_with_greek_and_symbol_headers_gets_a_usable_form_with_suggested_names_and_works(client, source, _isolated_db):
