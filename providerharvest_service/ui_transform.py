@@ -256,19 +256,24 @@ async def set_output(source_id: str, request: Request, session: Session = Depend
         return _go("/transform", "No such transform.", "error")
     form = await request.form()
     fmt = str(form.get("format") or "")
-    root, record = str(form.get("root") or "records").strip(), str(form.get("record") or "record").strip()
-    delimiter = str(form.get("delimiter") or ",")
     try:
         if fmt not in te.OUTPUTS:
             raise te.TransformError("Choose one of the offered output formats.")
-        if delimiter not in te.CSV_DELIMITERS:
-            raise te.TransformError("Choose one of the offered CSV separators.")
-        te._check_name(root, "The XML root name")
-        te._check_name(record, "The XML record name")
+        # Each format's settings are sent only when that format is chosen; the others keep what they had.
+        if "root" in form or "record" in form:
+            root, record = str(form.get("root") or "records").strip(), str(form.get("record") or "record").strip()
+            te._check_name(root, "The XML root element")
+            te._check_name(record, "The XML record element")
+            transform.root_name, transform.record_name = root, record
+        if "delimiter" in form:
+            delimiter = str(form.get("delimiter") or ",")
+            if delimiter not in te.CSV_DELIMITERS:
+                raise te.TransformError("Choose one of the offered CSV separators.")
+            transform.csv_delimiter, transform.csv_bom = delimiter, bool(form.get("bom"))
     except te.TransformError as exc:
+        session.rollback()
         return _go(back, str(exc), "error")
-    transform.output_format, transform.root_name, transform.record_name = fmt, root, record
-    transform.csv_delimiter, transform.csv_bom = delimiter, bool(form.get("bom"))
+    transform.output_format = fmt
     session.commit()
     return _go(back, "Output set to %s." % te.OUTPUTS[fmt][2])
 

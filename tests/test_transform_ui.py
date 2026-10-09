@@ -474,7 +474,7 @@ def test_leaving_a_name_as_the_suggestion_or_using_greek_ones_both_work(client, 
 def test_the_csv_settings_are_offered_with_excel_friendly_defaults_and_saved(client, source, _isolated_db):
     _go(client, source, "create")
     page = client.get("/transform/sources/%s" % source["id"]).text
-    assert "CSV separator" in page and "semicolon" in page and "Mark the file as UTF-8" in page
+    assert "Separator" in page and "semicolon" in page and "Mark the file as UTF-8" in page
     assert re.search(r'name="bom" value="1"[^>]*checked', page)  # on by default
     resp = _go(client, source, "output", data={"format": "csv", "root": "records", "record": "record", "delimiter": ";", "bom": "1"})
     assert "Output set to CSV" in _flash(resp)
@@ -531,3 +531,79 @@ def test_each_group_holds_its_own_checkboxes_so_the_buttons_cannot_reach_other_o
     page = client.get("/transform/sources/%s/steps/new?type=read&format=xml_records&record=ds" % source["id"]).text
     group = page.split("data-checkgroup>")[1].split("</table>")[0]
     assert 'name="path"' in group and 'name="keep_empty"' not in group  # "keep records with no repeat" is outside the group
+
+
+# -- the Output section shows only what the chosen format needs -------------------------------------------------------------------
+
+def _block_is_hidden(page, fmt):
+    tag = re.search(r'<div class="inline-form fmt-opts" data-for="%s"[^>]*>' % fmt, page)
+    assert tag, fmt
+    return " hidden" in tag.group(0)
+
+
+def _field_is_disabled(page, name):
+    tag = re.search(r'<(?:input|select)\b[^>]*\bname="%s"[^>]*>' % name, page)
+    assert tag, name
+    return " disabled" in tag.group(0)
+
+
+@pytest.mark.parametrize("fmt, shown", [("json", None), ("jsonl", None), ("xml", "xml"), ("csv", "csv")])
+def test_only_the_settings_of_the_chosen_format_are_shown_and_sent(client, source, fmt, shown):
+    _go(client, source, "create")
+    resp = _go(client, source, "output", data={"format": fmt, **({"root": "records", "record": "record"} if fmt == "xml" else {}), **({"delimiter": ","} if fmt == "csv" else {})})
+    assert "flash_kind=error" not in resp.headers["location"], _flash(resp)
+    page = client.get("/transform/sources/%s" % source["id"]).text
+    fields = {"xml": ("root", "record"), "csv": ("delimiter", "bom")}
+    for block, names in fields.items():
+        assert _block_is_hidden(page, block) == (block != shown), (fmt, block)  # shown only for its own format
+        for name in names:
+            assert _field_is_disabled(page, name) == (block != shown), (fmt, name)  # and only then sent
+
+
+def test_there_is_one_output_form_with_one_save_button_and_a_script_that_follows_the_format_choice(client, source):
+    _go(client, source, "create")
+    page = client.get("/transform/sources/%s" % source["id"]).text
+    assert page.count('action="/transform/sources/%s/output"' % source["id"]) == 1 and page.count("Save output settings") == 1
+    assert "Save CSV settings" not in page and "getAttribute('data-for') === select.value" in page
+    assert "[hidden] { display: none !important; }" in page  # (the rows are display:flex, which would otherwise show a hidden block)
+
+
+def test_saving_one_format_leaves_the_settings_of_the_others_alone(client, source, _isolated_db):
+    _go(client, source, "create")
+    _go(client, source, "output", data={"format": "xml", "root": "rows", "record": "row"})
+    _go(client, source, "output", data={"format": "csv", "delimiter": ";"})  # no root/record sent: the XML names stay
+    with _isolated_db() as s:
+        t = transform_runner.get_transform(s, source["id"])
+        assert (t.output_format, t.root_name, t.record_name, t.csv_delimiter, t.csv_bom) == ("csv", "rows", "row", ";", False)
+    _go(client, source, "output", data={"format": "xml", "root": "feed", "record": "item"})  # no delimiter sent: the CSV settings stay
+    _go(client, source, "output", data={"format": "json"})  # nothing but the format sent: everything stays
+    with _isolated_db() as s:
+        t = transform_runner.get_transform(s, source["id"])
+        assert (t.output_format, t.root_name, t.record_name, t.csv_delimiter, t.csv_bom) == ("json", "feed", "item", ";", False)
+
+
+def test_a_bad_value_for_the_chosen_format_changes_nothing(client, source, _isolated_db):
+    _go(client, source, "create")
+    _go(client, source, "output", data={"format": "xml", "root": "rows", "record": "row"})
+    assert "root element" in _flash(_go(client, source, "output", data={"format": "xml", "root": "bad name", "record": "row"}))
+    assert "separators" in _flash(_go(client, source, "output", data={"format": "csv", "delimiter": "x"}))
+    with _isolated_db() as s:
+        t = transform_runner.get_transform(s, source["id"])
+        assert (t.output_format, t.root_name, t.csv_delimiter) == ("xml", "rows", None)  # neither half-applied
+
+
+# -- the file type of each output -------------------------------------------------------------------------------------------------
+
+def test_each_output_row_shows_its_file_type_and_name(client, source, _isolated_db, _isolated_harvest_db):
+    _upload_data(client, source)
+    _upload_table(client)
+    _build(client, source, READER_FORM, LOOKUP_FORM)
+    _go(client, source, "enabled", data={"enabled": "1"})
+    _go(client, source, "output", data={"format": "csv", "delimiter": ";", "bom": "1"})
+    _upload_data(client, source)
+    _go(client, source, "output", data={"format": "xml", "root": "records", "record": "record"})
+    _upload_data(client, source)  # the format can change between files: each row says what it is
+    page = client.get("/transform/sources/%s" % source["id"]).text
+    assert "<th>File</th>" in page and ">CSV<" in page and ">XML<" in page
+    assert "Detector.csv" in page and "Detector.xml" in page
+    assert 'title="text/csv; charset=utf-8"' in page and 'title="application/xml"' in page

@@ -196,6 +196,7 @@ def recent_outputs(hsession: Session, source_id: str, limit: int = 10):
     return hsession.execute(
         select(
             TransformedFile.id, TransformedFile.created_at, TransformedFile.status, TransformedFile.error_message,
+            TransformedFile.filename, TransformedFile.content_type,
             TransformedFile.records_in, TransformedFile.records_out, TransformedFile.size,
             (func.length(TransformedFile.content) > 0).label("has_content"),
         ).where(TransformedFile.source_id == source_id).order_by(TransformedFile.created_at.desc()).limit(limit)

@@ -13,6 +13,7 @@
     .inline-form { display: flex; gap: 0.6rem; align-items: flex-end; flex-wrap: wrap; margin: 0.4rem 0; }
     .inline-form select, .inline-form input { width: auto; margin: 0; }
     .scroll { overflow-x: auto; }
+    [hidden] { display: none !important; }  /* a row styled display:flex would otherwise ignore the hidden attribute */
     .stat-row { display: flex; gap: 1.4rem; flex-wrap: wrap; margin: 0.6rem 0; font-size: 0.9rem; }
   </style>
 
@@ -72,25 +73,41 @@
       </div>
 
       <h2 style="font-size:1.05rem; margin:1.6rem 0 0.2rem;">Output</h2>
-      <form class="inline-form" method="post" action="/transform/sources/{{ source.id }}/output">
-        <div><label for="fmt">Format</label>
-          <select id="fmt" name="format">{% for key, meta in formats.items() %}<option value="{{ key }}"{% if key == transform.output_format %} selected{% endif %}>{{ meta[2] }}</option>{% endfor %}</select></div>
-        <div><label for="root">XML root</label><input id="root" name="root" value="{{ transform.root_name }}" size="10"></div>
-        <div><label for="rec">XML record</label><input id="rec" name="record" value="{{ transform.record_name }}" size="10"></div>
-        <button type="submit" class="btn-secondary">Save</button>
+      <form method="post" action="/transform/sources/{{ source.id }}/output" id="output-form">
+        <div class="inline-form">
+          <div><label for="fmt">Format</label>
+            <select id="fmt" name="format">{% for key, meta in formats.items() %}<option value="{{ key }}"{% if key == transform.output_format %} selected{% endif %}>{{ meta[2] }}</option>{% endfor %}</select></div>
+        </div>
+        {# Only the settings of the chosen format are shown (and sent): the rest are hidden and disabled. #}
+        <div class="inline-form fmt-opts" data-for="xml"{% if transform.output_format != "xml" %} hidden{% endif %}>
+          <div><label for="root">Root element</label><input id="root" name="root" value="{{ transform.root_name }}" size="12"{% if transform.output_format != "xml" %} disabled{% endif %}></div>
+          <div><label for="rec">Record element</label><input id="rec" name="record" value="{{ transform.record_name }}" size="12"{% if transform.output_format != "xml" %} disabled{% endif %}></div>
+        </div>
+        <div class="inline-form fmt-opts" data-for="csv"{% if transform.output_format != "csv" %} hidden{% endif %}>
+          <div><label for="delim">Separator</label>
+            <select id="delim" name="delimiter"{% if transform.output_format != "csv" %} disabled{% endif %}>{% for key, text in delimiters.items() %}<option value="{{ key }}"{% if key == (transform.csv_delimiter or ",") %} selected{% endif %}>{{ text }}</option>{% endfor %}</select></div>
+          <div><label style="display:flex; gap:0.4rem; align-items:center; font-weight:400; margin:0;"><input type="checkbox" name="bom" value="1" style="width:auto; margin:0;"{% if transform.output_format != "csv" %} disabled{% endif %}{% if transform.csv_bom is none or transform.csv_bom %} checked{% endif %}>
+            Mark the file as UTF-8 so Excel shows Greek correctly</label></div>
+        </div>
+        <div class="inline-form"><button type="submit" class="btn-secondary">Save output settings</button></div>
       </form>
-      <p class="muted" style="margin:0;">The XML names are used only when the format is XML.</p>
-      <form class="inline-form" method="post" action="/transform/sources/{{ source.id }}/output" style="margin-top:0.6rem;">
-        <input type="hidden" name="format" value="{{ transform.output_format }}">
-        <input type="hidden" name="root" value="{{ transform.root_name }}">
-        <input type="hidden" name="record" value="{{ transform.record_name }}">
-        <div><label for="delim">CSV separator</label>
-          <select id="delim" name="delimiter">{% for key, text in delimiters.items() %}<option value="{{ key }}"{% if key == (transform.csv_delimiter or ",") %} selected{% endif %}>{{ text }}</option>{% endfor %}</select></div>
-        <div><label style="display:flex; gap:0.4rem; align-items:center; font-weight:400; margin:0;"><input type="checkbox" name="bom" value="1" style="width:auto; margin:0;"{% if transform.csv_bom is none or transform.csv_bom %} checked{% endif %}>
-          Mark the file as UTF-8 so Excel shows Greek correctly</label></div>
-        <button type="submit" class="btn-secondary">Save CSV settings</button>
-      </form>
-      <p class="muted" style="margin:0;">Only used when the format is CSV. Re-run earlier files (below) to apply a change to outputs already made.</p>
+      <p class="muted" style="margin:0;">A change applies to files that arrive from now on; re-run earlier files (below) to apply it to outputs already made.</p>
+      <script>
+        (function () {
+          var form = document.getElementById('output-form');
+          if (!form) return;
+          var select = form.querySelector('#fmt');
+          function show() {
+            form.querySelectorAll('.fmt-opts').forEach(function (box) {
+              var on = box.getAttribute('data-for') === select.value;
+              box.hidden = !on;
+              box.querySelectorAll('input,select').forEach(function (field) { field.disabled = !on; });
+            });
+          }
+          select.addEventListener('change', show);
+          show();
+        })();
+      </script>
 
       <h2 style="font-size:1.05rem; margin:1.6rem 0 0.2rem;">Try it</h2>
       <p class="muted" style="margin:0 0 0.4rem;">Runs the steps on this source's newest stored file and shows the result. Nothing is stored.</p>
@@ -140,7 +157,7 @@
       {% else %}
         <p class="muted" style="margin:0 0 0.4rem;">{{ counts.ok }} ok{% if counts.failed %}, {{ counts.failed }} failed{% endif %} in all. Newest {{ outputs|length }}:</p>
         <div class="scroll"><table>
-          <thead><tr><th>When</th><th>Result</th><th>Records</th><th>Size</th><th></th></tr></thead>
+          <thead><tr><th>When</th><th>Result</th><th>File</th><th>Records</th><th>Size</th><th></th></tr></thead>
           <tbody>
             {% for o in outputs %}
             <tr>
@@ -148,6 +165,8 @@
               <td>{% if o.status == "ok" %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>ok</span></span>
                   {% else %}<span class="badge badge-error" title="{{ o.error_message }}">{{ macros.icon("rejected", 13) }}<span>failed</span></span><div class="muted">{{ o.error_message }}</div>{% endif %}
                   {% if o.status == "ok" and o.size and not o.has_content %}<span class="badge badge-pending" title="Removed when it passed its retention period"><span>removed</span></span>{% endif %}</td>
+              <td>{% if o.status == "ok" and o.filename %}<span class="badge badge-pending" style="background:var(--color-border); color:var(--color-text);" title="{{ o.content_type }}"><span>{{ o.filename.rsplit(".", 1)[-1]|upper if "." in o.filename else "FILE" }}</span></span>
+                  <span class="muted">{{ o.filename }}</span>{% endif %}</td>
               <td>{% if o.status == "ok" %}{{ "{:,}".format(o.records_in) }} &rarr; {{ "{:,}".format(o.records_out) }}{% endif %}</td>
               <td class="muted">{% if o.status == "ok" %}{{ size(o.size) }}{% endif %}</td>
               <td>{% if o.status == "ok" and o.has_content %}<a class="btn btn-secondary btn-sm" href="/transform/sources/{{ source.id }}/outputs/{{ o.id }}/download">{{ macros.icon("download", 14) }} Download</a>{% endif %}</td>
