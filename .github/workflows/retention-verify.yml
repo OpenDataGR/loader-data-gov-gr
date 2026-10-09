@@ -1,0 +1,30 @@
+name: Retention verify (one-off)
+
+# One-off, read-only: the retention stored for each source and the periods the FTP box now holds.
+# Changes nothing. Deleted afterwards.
+on:
+  workflow_dispatch:
+
+jobs:
+  loader:
+    runs-on: [self-hosted, loader]
+    steps:
+      - run: |
+          python3 - <<'PY'
+          import json, sqlite3
+          conn = sqlite3.connect("file:/opt/data-projects/loader-data-gov-gr/data/loader.db?mode=ro", uri=True)
+          for name, config in conn.execute("SELECT name, config FROM provider_source ORDER BY name"):
+              c = json.loads(config or "{}")
+              print("%-28s stored: %s" % (name, {k: v for k, v in c.items() if k.startswith("retention")} or "none"))
+          PY
+  box:
+    runs-on: [self-hosted, loader-ftp]
+    steps:
+      - run: |
+          DB=$(systemctl cat loader-ftp-forwarder-sync | grep -o -- '--db-path [^ ]*' | head -1 | cut -d' ' -f2)
+          sudo -n python3 -c "
+          import sqlite3
+          c = sqlite3.connect('$DB')
+          for r in c.execute('SELECT username, days FROM archive_policy ORDER BY username'): print('box policy:', r)
+          "
+          sudo -n journalctl -u loader-ftp-forwarder-sync --since "-30min" --no-pager | grep -ci "archive cleanup" | xargs echo "cleanup lines in the last 30 min:"
