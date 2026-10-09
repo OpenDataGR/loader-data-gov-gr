@@ -115,7 +115,7 @@ def test_junk_in_the_address_falls_back_to_the_defaults_and_is_never_echoed(clie
     _runs(harvest, source_id, 30)
     resp = _page(client, source_id, query)
     assert resp.status_code == 200 and "Showing 1&ndash;25 of <strong>30</strong>" in resp.text
-    assert "garbage" not in resp.text and "13-45" not in resp.text
+    assert "garbage" not in resp.text and "2026-13-45" not in resp.text  # (whole values: a random run id may contain a short piece)
 
 
 def test_a_page_past_the_end_shows_the_last_page(client, harvest, source_id):
