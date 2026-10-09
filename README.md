@@ -174,6 +174,12 @@ provider's uploads until they switch), and for an HTTPS push source **Rotate API
 key** (`/provider/sources/{id}/rotate-key`: the old key stops working immediately;
 before this a lost key meant deleting and re-registering the source).
 
+**Runs page.** A source's Runs page (`/provider/sources/{id}/runs`) pages through its whole history
+(it used to show only the newest 20): 25, 50 or 100 per page, newest first, with the total ("Showing 26-50 of
+1,691 runs"), a status filter, a UTC date range (inclusive; a reversed range is swapped) and Newer/Older links that keep the
+filters. A File column shows each run's file name and size, and marks one whose contents retention removed. Anything in the
+address that is not an offered value falls back to the default and is never echoed back.
+
 **Data retention per source** (`retention.py`; Admin dashboard -> a source's "..." menu -> *Data retention*). Two
 fixed-choice dropdowns on each source: how long the **loader** keeps a received file's contents (7, 30, 90, 180, 365
 days or forever; default 90) and, for an FTP push source, how long the **FTP box** keeps its archive of forwarded

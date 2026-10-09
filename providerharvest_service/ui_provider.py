@@ -262,6 +262,59 @@ def harvest_now(
     return RedirectResponse(_redirect_with_flash(flash, kind=kind), status_code=303)
 
 
+def _date(raw: str | None) -> datetime.date | None:
+    try:
+        return datetime.date.fromisoformat(raw) if raw else None
+    except ValueError:
+        return None  # a date that is not one is ignored, not an error page
+
+
+def _runs_query(request: Request) -> dict:
+    """The Runs page's filters from the query string. Anything not on the offered lists falls back to
+    the default, and is never echoed back raw."""
+    params = request.query_params
+    try:
+        page = max(1, int(params.get("page", "1")))
+    except ValueError:
+        page = 1
+    try:
+        per = int(params.get("per", ""))
+    except ValueError:
+        per = harvest_runner.DEFAULT_PAGE_SIZE
+    since, until = _date(params.get("from")), _date(params.get("to"))
+    if since and until and since > until:
+        since, until = until, since
+    status_filter = params.get("status")
+    return {
+        "page": min(page, 1_000_000), "per": per if per in harvest_runner.PAGE_SIZES else harvest_runner.DEFAULT_PAGE_SIZE,
+        "status": status_filter if status_filter in harvest_runner.RUN_STATUSES else None, "since": since, "until": until,
+    }
+
+
+def _link(query: dict, page: int) -> str:
+    """The Runs page's own address for ``page`` with the current filters."""
+    pairs = [("page", page)] if page != 1 else []
+    if query["per"] != harvest_runner.DEFAULT_PAGE_SIZE:
+        pairs.append(("per", query["per"]))
+    for key, value in (("status", query["status"]), ("from", query["since"]), ("to", query["until"])):
+        if value:
+            pairs.append((key, value.isoformat() if hasattr(value, "isoformat") else value))
+    return "?" + urlencode(pairs) if pairs else "?"
+
+
+def _page_links(query: dict, pages: int) -> list[tuple[str, str, bool]]:
+    """[(label, href, current)] -- the first, last, and a few pages around the current one, with "..." gaps."""
+    current = query["page"]
+    shown = sorted({1, pages, *range(max(1, current - 2), min(pages, current + 2) + 1)})
+    links, previous = [], 0
+    for number in shown:
+        if number - previous > 1:
+            links.append(("...", "", False))
+        links.append((str(number), _link(query, number), number == current))
+        previous = number
+    return links
+
+
 @router.get("/sources/{source_id}/runs", response_class=HTMLResponse)
 def source_runs(
     source_id: str,
@@ -273,11 +326,29 @@ def source_runs(
         source = provider_sources.get_or_404(session, source_id)
     except provider_sources.NotFound:
         return RedirectResponse(_redirect_with_flash("No such source.", kind="error"), status_code=303)
-    runs = harvest_runner.list_runs(hsession, source_id)
+    query = _runs_query(request)
+    runs, total = harvest_runner.query_runs(
+        hsession, source_id, status=query["status"], since=query["since"], until=query["until"],
+        limit=query["per"], offset=(query["page"] - 1) * query["per"],
+    )
+    pages = max(1, -(-total // query["per"]))
+    if query["page"] > pages:  # a page past the end (the list shrank, or a stale link): the last one
+        query["page"] = pages
+        runs, total = harvest_runner.query_runs(
+            hsession, source_id, status=query["status"], since=query["since"], until=query["until"],
+            limit=query["per"], offset=(pages - 1) * query["per"],
+        )
     return templates.TemplateResponse(
         request,
         "provider/source_runs.html",
-        {"source": source, "runs": runs},
+        {
+            "source": source, "runs": runs, "files": harvest_runner.files_by_run(hsession, [r.id for r in runs]),
+            "total": total, "pages": pages, "q": query, "page_sizes": harvest_runner.PAGE_SIZES,
+            "statuses": harvest_runner.RUN_STATUSES, "page_links": _page_links(query, pages),
+            "prev_href": _link(query, query["page"] - 1) if query["page"] > 1 else None,
+            "next_href": _link(query, query["page"] + 1) if query["page"] < pages else None,
+            "filtered": bool(query["status"] or query["since"] or query["until"]),
+        },
     )
 
 

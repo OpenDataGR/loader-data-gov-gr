@@ -25,10 +25,11 @@ both.
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from providerharvest_service import connection_check, provider_sources
@@ -228,6 +229,52 @@ def list_runs(harvest_session: Session, source_id: str, limit: int = 20) -> list
             .limit(limit)
         ).all()
     )
+
+
+RUN_STATUSES = ("success", "error", "running")
+PAGE_SIZES = (25, 50, 100)
+DEFAULT_PAGE_SIZE = 25
+
+
+def query_runs(
+    harvest_session: Session,
+    source_id: str,
+    *,
+    status: str | None = None,
+    since: datetime.date | None = None,
+    until: datetime.date | None = None,
+    limit: int = DEFAULT_PAGE_SIZE,
+    offset: int = 0,
+) -> tuple[list[HarvestRun], int]:
+    """One page of a source's runs, newest first, and how many runs match in all. ``since``/``until``
+    are dates in UTC, both inclusive (a run any time on ``until`` is in)."""
+    where = [HarvestRun.source_id == source_id]
+    if status in RUN_STATUSES:
+        where.append(HarvestRun.status == status)
+    if since is not None:
+        where.append(HarvestRun.started_at >= datetime.datetime.combine(since, datetime.time.min, tzinfo=datetime.timezone.utc))
+    if until is not None:
+        where.append(HarvestRun.started_at < datetime.datetime.combine(until + datetime.timedelta(days=1), datetime.time.min, tzinfo=datetime.timezone.utc))
+    total = harvest_session.scalar(select(func.count()).select_from(HarvestRun).where(*where)) or 0
+    runs = list(harvest_session.scalars(
+        select(HarvestRun).where(*where).order_by(HarvestRun.started_at.desc(), HarvestRun.id).limit(limit).offset(offset)
+    ).all())
+    return runs, total
+
+
+def files_by_run(harvest_session: Session, run_ids: list[str]) -> dict[str, HarvestedFile]:
+    """The (first) stored file of each of these runs -- for the Runs page's File column. Reads only
+    each file's name, size and whether it still has contents, never the contents themselves."""
+    if not run_ids:
+        return {}
+    out: dict[str, HarvestedFile] = {}
+    rows = harvest_session.execute(
+        select(HarvestedFile.run_id, HarvestedFile.filename, HarvestedFile.size, (func.length(HarvestedFile.content) > 0).label("has_content"))
+        .where(HarvestedFile.run_id.in_(run_ids)).order_by(HarvestedFile.fetched_at)
+    ).all()
+    for run_id, filename, size, has_content in rows:
+        out.setdefault(run_id, {"filename": filename, "size": size, "removed": bool(size) and not has_content})
+    return out
 
 
 def list_records(harvest_session: Session, run_id: str, limit: int = 50) -> list[HarvestedRecord]:

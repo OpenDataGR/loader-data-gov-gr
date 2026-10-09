@@ -16,15 +16,48 @@
       <span class="name-slug">{{ source.name }}</span>
     </p>
 
-    {% if not runs %}
+    {% if total == 0 and not filtered %}
       <div class="empty-state">
         {{ macros.icon("history", 40) }}
         <p>No harvest runs yet.</p>
       </div>
     {% else %}
+      <style>
+        .runs-filter { display: flex; flex-wrap: wrap; gap: 0.6rem 1rem; align-items: flex-end; margin: 0 0 1rem; }
+        .runs-filter label { font-size: 0.8rem; margin: 0 0 0.2rem; display: block; }
+        .runs-filter select, .runs-filter input { width: auto; margin: 0; padding: 0.35rem 0.5rem; }
+        .pager { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; margin: 1rem 0 0; font-size: 0.9rem; }
+        .pager a, .pager span.cur { padding: 0.2rem 0.6rem; border: 1px solid var(--color-border); border-radius: 6px; text-decoration: none; }
+        .pager span.cur { background: var(--color-primary-mid); color: #fff; border-color: var(--color-primary-mid); }
+        .pager span.gap { padding: 0 0.2rem; color: var(--color-gray-700); }
+      </style>
+      <form class="runs-filter" method="get" action="/provider/sources/{{ source.id }}/runs">
+        <div><label for="status">Status</label>
+          <select id="status" name="status">
+            <option value="">all</option>
+            {% for s in statuses %}<option value="{{ s }}"{% if q.status == s %} selected{% endif %}>{{ s }}</option>{% endfor %}
+          </select></div>
+        <div><label for="from">From (UTC date)</label><input type="date" id="from" name="from" value="{{ q.since.isoformat() if q.since else '' }}"></div>
+        <div><label for="to">To (UTC date)</label><input type="date" id="to" name="to" value="{{ q.until.isoformat() if q.until else '' }}"></div>
+        <div><label for="per">Per page</label>
+          <select id="per" name="per">
+            {% for n in page_sizes %}<option value="{{ n }}"{% if q.per == n %} selected{% endif %}>{{ n }}</option>{% endfor %}
+          </select></div>
+        <div style="display:flex; gap:0.5rem;">
+          <button type="submit" class="btn-sm">Apply</button>
+          {% if filtered %}<a class="btn btn-secondary btn-sm" href="/provider/sources/{{ source.id }}/runs">Clear filters</a>{% endif %}
+        </div>
+      </form>
+
+      <p class="muted" style="margin:0 0 0.6rem;">
+        {% if total == 0 %}No runs match these filters.
+        {% else %}Showing {{ (q.page - 1) * q.per + 1 }}&ndash;{{ (q.page - 1) * q.per + runs|length }} of <strong>{{ "{:,}".format(total) }}</strong>{% if filtered %} matching{% endif %} run{{ "s" if total != 1 else "" }}, newest first.{% endif %}
+      </p>
+
+      {% if runs %}
       <table>
         <thead>
-          <tr><th>Started</th><th>Status</th><th>Items</th><th></th></tr>
+          <tr><th>Started</th><th>Status</th><th>Items</th><th>File</th><th></th></tr>
         </thead>
         <tbody>
           {% for run in runs %}
@@ -43,11 +76,28 @@
               {% endif %}
             </td>
             <td>{{ run.records_count }}</td>
+            <td class="muted">
+              {% set f = files.get(run.id) %}
+              {% if f %}{{ f.filename }} &middot; {{ "%.0f kB" % (f.size / 1000) if f.size >= 1000 else (f.size ~ " B") }}{% if f.removed %} <span class="badge badge-pending" title="Removed when it passed its retention period"><span>removed</span></span>{% endif %}{% endif %}
+            </td>
             <td><a class="btn btn-secondary btn-sm" href="/provider/sources/{{ source.id }}/runs/{{ run.id }}">View details</a></td>
           </tr>
           {% endfor %}
         </tbody>
       </table>
+      {% endif %}
+
+      {% if pages > 1 %}
+        <nav class="pager" aria-label="Pages">
+          {% if prev_href %}<a href="{{ prev_href }}" rel="prev">&larr; Newer</a>{% endif %}
+          {% for label, href, current in page_links %}
+            {% if label == "..." %}<span class="gap">&hellip;</span>
+            {% elif current %}<span class="cur" aria-current="page">{{ label }}</span>
+            {% else %}<a href="{{ href }}">{{ label }}</a>{% endif %}
+          {% endfor %}
+          {% if next_href %}<a href="{{ next_href }}" rel="next">Older &rarr;</a>{% endif %}
+        </nav>
+      {% endif %}
     {% endif %}
   </div>
 {% endblock %}
