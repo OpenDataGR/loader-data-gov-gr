@@ -40,6 +40,7 @@ templates.env.filters["utc"] = lambda value: value.strftime("%Y-%m-%d %H:%M:%S")
 templates.env.filters["short_utc"] = lambda value: value.strftime("%m-%d %H:%M") if value else ""
 templates.env.filters["step_label"] = tf.label_of
 templates.env.filters["step_summary"] = tf.summarize
+templates.env.globals["suggest_name"] = tf.suggest_name
 
 _TABLE_NAME = re.compile(r"^[a-z][a-z0-9_]{1,40}$")
 _SECTIONS = {"read": "Read the file", "lookup": "Add columns from an index table", "filter": "Keep only matching records",

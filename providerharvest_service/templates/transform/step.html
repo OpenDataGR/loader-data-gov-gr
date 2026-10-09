@@ -89,7 +89,7 @@
                   <tr>
                     <td><input type="checkbox" name="path" value="{{ f.path }}" aria-label="Keep {{ f.path }}"{% if f.path in r.selected or (not r.selected and not number) %} checked{% endif %}></td>
                     <td><code>{{ f.path }}</code>{% if f.repeats %} <span class="muted" title="Occurs more than once in a record">&#8635;</span>{% endif %}</td>
-                    <td><input type="text" name="name::{{ f.path }}" value="{{ r.selected.get(f.path, '') }}" placeholder="(automatic)" maxlength="60"></td>
+                    <td><input type="text" name="name::{{ f.path }}" value="{{ r.selected.get(f.path, '') }}" placeholder="{{ suggest_name(f.path, None, r.kind in ('csv_records', 'xlsx_records')) }}" maxlength="60"></td>
                     <td class="muted">{{ f.example or "" }}</td>
                   </tr>
                   {% endfor %}
@@ -128,7 +128,7 @@
                   {% for c in columns %}
                     {% set added = (e.get('add') or []) | selectattr('column', 'equalto', c) | list %}
                     <tr><td><input type="checkbox" name="add" value="{{ c }}"{% if added %} checked{% endif %}></td><td><code>{{ c }}</code></td>
-                        <td><input type="text" name="as::{{ c }}" value="{{ added[0]['as'] if added else '' }}" placeholder="call it {{ c }}" maxlength="60"></td></tr>
+                        <td><input type="text" name="as::{{ c }}" value="{{ added[0]['as'] if added else suggest_name(c, None, true) }}" maxlength="60" aria-label="Name for {{ c }}"></td></tr>
                   {% endfor %}
                 </tbody></table>
               </div>

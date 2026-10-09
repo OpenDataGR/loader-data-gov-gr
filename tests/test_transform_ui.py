@@ -414,3 +414,56 @@ def test_a_csv_source_is_built_with_the_same_pages(client, source, _isolated_db)
     assert _steps(_isolated_db, source["id"])[0]["fields"][0] == {"name": "station", "path": "Station ID"}
     page = client.post("/transform/sources/%s/preview" % source["id"]).text
     assert ">A<" in page and ">7<" in page
+
+
+# -- names: Greek letters are fine, and Latin names are suggested --------------------------------------------------------------
+
+@pytest.mark.parametrize("column, expected", [
+    ("MS", "MS"), ("ΟΝΟΜΑ", "onoma"), ("ΔΗΜΟΣ", "dimos"), ("ΚΑΤ/ΣΗ", "kat_si"), ("ΠΕΡΙΓΡΑΦΗ ΘΕΣΗΣ", "perigrafi_thesis"),
+    ("Χ(WGS84,ZONE 34)", "ch_WGS84_ZONE_34"), ("Station ID", "Station_ID"), ("1st", "f_1st"), ("", "field"),
+])
+def test_a_legal_name_is_suggested_for_any_column_header(column, expected):
+    from providerharvest_service import transform_forms as tf
+    assert tf.suggest_name(column, None, True) == expected
+
+
+def test_a_path_is_named_by_its_last_part_and_duplicates_get_a_number():
+    from providerharvest_service import transform_forms as tf
+    assert tf.suggest_name("data/value@count") == "count" and tf.suggest_name("identifier/ident") == "ident"
+    assert tf.suggest_name("a/id", {"id"}) == "id_2"
+
+
+def test_field_names_may_use_greek_letters_but_not_spaces_or_symbols():
+    from providerharvest_service import transform_engine as te
+    for ok in ("όνομα", "δήμος_2", "name", "_x", "ΟΔΟΣ"):
+        assert te._check_name(ok, "n") == ok
+    for bad in ("ΚΑΤ/ΣΗ", "two words", "1abc", "a-b", "x(y)", "", "a" * 70):
+        with pytest.raises(te.TransformError):
+            te._check_name(bad, "n")
+
+
+GREEK_INDEX = "MS,ΟΝΟΜΑ,ΔΗΜΟΣ,ΚΑΤ/ΣΗ,Χ(WGS84,ZONE 34)\nMS812,Κηφισίας,ΜΑΡΟΥΣΙ,ΝΔ,\"1,234\"\nMS810,Μεσογείων,ΠΑΠΑΓΟΥ,ΒΑ,\"5,678\"\n".encode("utf-8")
+
+
+def test_an_index_with_greek_and_symbol_headers_gets_a_usable_form_with_suggested_names_and_works(client, source, _isolated_db):
+    client.post("/transform/tables", data={"name": "stations"}, files={"file": ("s.csv", GREEK_INDEX, "text/csv")})
+    _upload_data(client, source)
+    _build(client, source, READER_FORM)
+    page = client.get("/transform/sources/%s/steps/new?type=lookup" % source["id"]).text
+    for suggested in ('value="onoma"', 'value="dimos"', 'value="kat_si"', 'value="ch_WGS84_ZONE_34"'):
+        assert suggested in page, suggested
+    form = {"kind": "lookup", "table": "stations", "key": "id", "table_key": "MS", "add": ["ΟΝΟΜΑ", "ΔΗΜΟΣ", "ΚΑΤ/ΣΗ"],
+            "as::ΟΝΟΜΑ": "onoma", "as::ΔΗΜΟΣ": "dimos", "as::ΚΑΤ/ΣΗ": "kat_si", "on_missing": "keep"}
+    assert "added" in _flash(_go(client, source, "steps/new", data=form))
+    preview = client.post("/transform/sources/%s/preview" % source["id"]).text
+    assert "Κηφισίας" in preview and "ΜΑΡΟΥΣΙ" in preview and "kat_si" in preview.lower()
+
+
+def test_leaving_a_name_as_the_suggestion_or_using_greek_ones_both_work(client, source, _isolated_db):
+    client.post("/transform/tables", data={"name": "stations"}, files={"file": ("s.csv", GREEK_INDEX, "text/csv")})
+    _upload_data(client, source)
+    _build(client, source, READER_FORM)
+    form = {"kind": "lookup", "table": "stations", "key": "id", "table_key": "MS", "add": ["ΟΝΟΜΑ"], "as::ΟΝΟΜΑ": "όνομα"}
+    assert "added" in _flash(_go(client, source, "steps/new", data=form))
+    bad = {"kind": "lookup", "table": "stations", "key": "id", "table_key": "MS", "add": ["ΚΑΤ/ΣΗ"], "as::ΚΑΤ/ΣΗ": "ΚΑΤ/ΣΗ"}
+    assert "no spaces or symbols" in _go(client, source, "steps/new", data=bad).text

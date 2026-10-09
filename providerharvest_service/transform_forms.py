@@ -8,6 +8,7 @@ plain ``dict`` of lists works too, which is what the tests use.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping
 
 from providerharvest_service import transform_engine as te
@@ -84,10 +85,27 @@ def summarize(step: dict) -> str:
 
 # -- building steps from forms ---------------------------------------------------------------------------------------------
 
-def suggest_name(path: str, taken: set[str]) -> str:
-    """A field name for a path: its last part, made a legal name, made unique."""
-    base = path.rsplit("@", 1)[-1] if "@" in path else path.rsplit("/", 1)[-1]
-    base = "".join(ch if (ch.isalnum() or ch == "_") else "_" for ch in base).strip("_") or "field"
+_GREEK = {
+    "α": "a", "β": "v", "γ": "g", "δ": "d", "ε": "e", "ζ": "z", "η": "i", "θ": "th", "ι": "i", "κ": "k", "λ": "l", "μ": "m",
+    "ν": "n", "ξ": "x", "ο": "o", "π": "p", "ρ": "r", "σ": "s", "ς": "s", "τ": "t", "υ": "y", "φ": "f", "χ": "ch", "ψ": "ps", "ω": "o",
+}
+
+
+def latinize(text: str) -> str:
+    """Greek letters as Latin ones (accents dropped, lower case), anything else as it was -- for suggesting field names."""
+    import unicodedata
+
+    plain = "".join(ch for ch in unicodedata.normalize("NFD", text) if not unicodedata.combining(ch))
+    return "".join(_GREEK.get(ch.lower(), ch) if ch.lower() in _GREEK else ch for ch in plain)
+
+
+def suggest_name(path: str, taken: set[str] | None = None, plain: bool = False) -> str:
+    """A legal field name for a path or column: its last part, Greek turned into Latin letters, symbols into
+    underscores, made unique among ``taken``."""
+    taken = taken or set()
+    # ``plain``: a table column, whose whole text is the name (a "/" in it is just a character, not a path)
+    base = path if plain else (path.rsplit("@", 1)[-1] if "@" in path else path.rsplit("/", 1)[-1])
+    base = re.sub(r"\W+", "_", latinize(base)).strip("_") or "field"
     if not (base[0].isalpha() or base[0] == "_"):
         base = "f_" + base
     base, name, n = base[:60], base[:60], 2
@@ -105,7 +123,7 @@ def build_reader(kind: str, form: Mapping) -> dict:
     explode_path = _one(form, "explode")
     taken: set[str] = set()
     for path in chosen:
-        name = _one(form, "name::" + path) or suggest_name(path, taken)
+        name = _one(form, "name::" + path) or suggest_name(path, taken, plain=kind in TABULAR)
         taken.add(name)
         if kind in TABULAR:
             fields.append({"name": name, "path": path})

@@ -41,7 +41,7 @@ MAX_STEPS = 20
 MAX_FIELDS = 200
 MAX_LOOKUP_KEYS_SHOWN = 20
 PREVIEW_RECORDS = 50
-_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+_NAME = re.compile(r"^[^\W\d]\w{0,63}$")  # letters (any script, Greek included), digits and underscores; not starting with a digit
 _PATH = re.compile(r"^(?:[^/@\s]+(?:/[^/@\s]+)*)?(?:@[A-Za-z_][\w.-]*)?$")
 
 Record = dict[str, Any]
@@ -66,7 +66,7 @@ def _text(value: object) -> str | None:
 
 def _check_name(name: object, what: str) -> str:
     if not isinstance(name, str) or not _NAME.match(name):
-        raise TransformError("%s must be letters, digits and underscores, starting with a letter (got %r)." % (what, name))
+        raise TransformError("%s must be letters, digits and underscores, starting with a letter -- no spaces or symbols (got %r)." % (what, name))
     return name
 
 
