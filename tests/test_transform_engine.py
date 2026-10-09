@@ -385,3 +385,13 @@ def test_add_field_needs_a_value():
     for value in (None, ""):
         with pytest.raises(TransformError, match="Give a value"):
             te.step_add_field([{"a": 1}], {"name": "z", "kind": "constant", "value": value}, te.Context(lookups={}))
+
+
+def test_the_record_that_holds_the_most_is_offered_first_and_plain_text_leaves_never_are():
+    found = te.candidates(SOAP.encode("utf-8"), "xml_records")
+    paths = [c["path"] for c in found]
+    assert paths[0] == "ds"  # a whole detector, before the readings or the single-value elements inside it
+    assert "ident" not in paths and "tstore" not in paths and "detectorState" not in paths  # text leaves: never a record
+    assert "value" in paths  # a leaf with attributes can be a record (as in a flat list of items)
+    flat = "<l><i code='A'/><i code='B'/><i code='C'/></l>"
+    assert [c["path"] for c in te.candidates(flat.encode(), "xml_records")] == ["i"]

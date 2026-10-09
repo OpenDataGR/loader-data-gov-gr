@@ -393,8 +393,18 @@ def detect_format(content: bytes, filename: str = "") -> str | None:
 def candidates(content: bytes, reader: str) -> list[dict]:
     """The places in a sample that look like "one record, repeated": [{"path", "count"}], biggest first."""
     if reader == "xml_records":
-        counts = Counter(_local(e.tag) for e in _parse_xml(content).iter())
-        return [{"path": n, "count": c} for n, c in counts.most_common() if c > 1][:20]
+        counts: Counter = Counter()
+        size: Counter = Counter()  # elements inside, summed over every occurrence
+        structured: set[str] = set()  # has child elements or attributes: could be a record (a plain text leaf never is)
+        for element in _parse_xml(content).iter():
+            name = _local(element.tag)
+            counts[name] += 1
+            size[name] += sum(1 for _ in element.iter()) - 1
+            if len(element) or element.attrib:
+                structured.add(name)
+        found = [{"path": n, "count": c, "inside": size[n] / c} for n, c in counts.items() if c > 1 and n in structured]
+        # The best guess first: the repeating element that holds the most (a whole detector, not one reading of it).
+        return sorted(found, key=lambda c: (-c["inside"], -c["count"]))[:20]
     if reader == "json_records":
         found: list[dict] = []
 

@@ -50,7 +50,8 @@
                 {% else %}<a href="?format={{ r.kind }}&record={{ c.path|urlencode }}">{{ c.path }} &times;{{ c.count }}</a>{% endif %}
               {% endfor %}
             </div>
-            <p class="muted" style="margin:0 0 0.6rem;">The repeating parts of the file, with how many times each occurs. Usually the one with the most records you care about.</p>
+            <p class="muted" style="margin:0 0 0.6rem;">The repeating parts of the file, with how many times each occurs. Pick the part that holds <strong>one whole record</strong> -- everything you want to
+              keep about one item (its id <em>and</em> its details). The first one is our best guess. A part that holds only some details (for example one reading) has no id to choose.</p>
           {% else %}
             <p class="muted">Nothing repeating was found in this file.</p>
           {% endif %}
