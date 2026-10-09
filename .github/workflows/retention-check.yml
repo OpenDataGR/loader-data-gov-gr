@@ -1,7 +1,7 @@
 name: Retention check (one-off)
 
-# One-off, read-only: what retention is set on each source, what the loader and the FTP box hold now, and
-# whether either side has removed anything yet. Changes nothing. Deleted afterwards.
+# One-off, read-only: the web server's record of requests to the retention page (time, method, status),
+# and the source config as stored. Changes nothing. Deleted afterwards.
 on:
   workflow_dispatch:
 
@@ -10,57 +10,14 @@ jobs:
     runs-on: [self-hosted, loader]
     steps:
       - run: |
-          set -a; . /etc/loader-data-gov-gr.env; set +a
-          cd /opt/data-projects/loader-data-gov-gr
-          venv/bin/python - <<'PY'
+          echo "--- requests to the retention page (time, method+path, status, bytes)"
+          for f in /var/log/nginx/access.log /var/log/nginx/access.log.1; do
+            sudo -n grep -h "/retention" "$f" 2>/dev/null | awk '{print $4, $6, $7, $9, $10}' ; done | sort | tail -20
+          echo "(end of requests)"
+          python3 - <<'PY'
           import json, sqlite3
-          from sqlalchemy import text
-          from providerharvest_service import harvest_db
-
           conn = sqlite3.connect("file:/opt/data-projects/loader-data-gov-gr/data/loader.db?mode=ro", uri=True)
-          print("--- retention as set on each source (loader days / box days; blank = default 90 / 30)")
-          for sid, name, ttype, config in conn.execute("SELECT id, name, transport_type, config FROM provider_source ORDER BY name"):
+          for name, config in conn.execute("SELECT name, config FROM provider_source ORDER BY name"):
               c = json.loads(config or "{}")
-              print("%-30s %-5s loader=%s box=%s" % (name, ttype, c.get("retention_loader_days", ""), c.get("retention_box_days", "")))
-          print("--- what the account sync tells the box")
-          for row in conn.execute("SELECT a.username, a.enabled, s.name FROM ftp_account a LEFT JOIN provider_source s ON s.id = a.managed_source_id"):
-              print(row)
-          with harvest_db.get_session_factory()() as s:
-              print("--- files held per source (with contents / contents removed), oldest and newest still held")
-              for r in s.execute(text("""
-                  SELECT r.source_name,
-                         count(f.id) FILTER (WHERE length(f.content) > 0) AS held,
-                         count(f.id) FILTER (WHERE f.size > 0 AND length(f.content) = 0) AS removed,
-                         pg_size_pretty(coalesce(sum(f.size) FILTER (WHERE length(f.content) > 0), 0)) AS held_size,
-                         min(f.fetched_at) FILTER (WHERE length(f.content) > 0)::text AS oldest_held,
-                         max(f.fetched_at)::text AS newest
-                  FROM harvest_run r LEFT JOIN harvested_file f ON f.run_id = r.id GROUP BY r.source_name ORDER BY held DESC""")).all():
-                  print(tuple(r))
-              print("--- runs per source (all kept)")
-              for r in s.execute(text("SELECT source_name, count(*) FROM harvest_run GROUP BY 1 ORDER BY 2 DESC")).all():
-                  print(tuple(r))
-              print("--- database size:", s.execute(text("SELECT pg_size_pretty(pg_database_size(current_database()))")).scalar())
+              print("%-28s stored retention keys: %s" % (name, {k: v for k, v in c.items() if k.startswith("retention")} or "none"))
           PY
-          echo "--- retention lines in the service log (last 3 hours)"
-          journalctl -u loader-data-gov-gr --since "-3hours" --no-pager | grep -i "retention" | tail -12 || true
-          echo "(end of retention log lines)"
-
-  box:
-    runs-on: [self-hosted, loader-ftp]
-    steps:
-      - run: |
-          DB=$(systemctl cat loader-ftp-forwarder-sync | grep -o -- '--db-path [^ ]*' | head -1 | cut -d' ' -f2)
-          echo "--- archive policies the box holds"
-          sudo -n python3 -c "
-          import sqlite3
-          c = sqlite3.connect('$DB')
-          for r in c.execute('SELECT username, days FROM archive_policy ORDER BY username'): print(r)
-          "
-          A=/srv/ftp/attica-region-traffic-data/.forwarded
-          echo "--- attica archive: hour-folders, oldest, newest, size"
-          sudo -n find $A -mindepth 1 -maxdepth 1 -type d | wc -l
-          sudo -n find $A -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | sed -n '1p;$p'
-          sudo -n du -sh $A | cut -f1
-          echo "--- cleanup lines in the sync log"
-          sudo -n journalctl -u loader-ftp-forwarder-sync --since "-8hours" --no-pager | grep -i "archive cleanup" | tail -8 || true
-          echo "(end of cleanup log lines)"
