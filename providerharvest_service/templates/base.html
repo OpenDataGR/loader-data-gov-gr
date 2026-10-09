@@ -373,7 +373,7 @@
       </a>
     </div>
     <nav class="masthead-nav">
-      <a href="/provider/sources" class="{{ 'active' if request.url.path.startswith('/provider') else '' }}">{{ macros.icon("provider", 16) }} Provider portal</a>
+      <a href="/provider/sources" class="{{ 'active' if request.url.path.startswith('/provider') else '' }}">{{ macros.icon("provider", 16) }} Extract Box</a>
       {# Sources waiting for approval, as a number on the dashboard tab. Not on the login page: nothing about the
          queue is for someone who has not logged in. #}
       {% set pending_n = pending_approvals() if (pending_approvals is defined and request.url.path != '/admin/login') else 0 %}

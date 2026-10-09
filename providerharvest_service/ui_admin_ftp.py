@@ -69,7 +69,7 @@ _ALLOWED_REDIRECT_PATHS = ("/admin/ftp",)
 
 _MANAGED_NOTE = (
     "%r belongs to a push source -- its allowed addresses are set on the source "
-    "(Provider portal, edit the source), not here."
+    "(Extract Box, edit the source), not here."
 )
 
 

@@ -21,6 +21,21 @@ pipeline. Do not add a dependency from here back onto
 `ckanext.providerharvest` (or vice versa) -- the whole point is these
 are independently deployable.
 
+## The shape: Extract, Transform, Load
+
+The service follows an ETL flow, and its tabs follow it: sources come **in**, may be **transformed**, and go **out**
+(to data.gov.gr, or by other means).
+
+| Tab | Role | State |
+|---|---|---|
+| **Extract Box** | the sources: registering them, how they deliver (pull over HTTP/SFTP/FTP, or push by API key or FTP/SFTP login), their runs and files | built (this was "Provider portal") |
+| **Transform Box** | turning what was extracted into what is wanted (field mapping, cleaning) | planned |
+| **Load Box** | sending the result out to data.gov.gr or elsewhere | planned |
+| Admin dashboard, **Data boxes**, Security box | operating it: approvals and retention; the HTTP and FTP machines; access control | built |
+
+Only the tab is renamed for now; the addresses (`/provider/...`) are unchanged so existing links and the providers' own
+bookmarks keep working.
+
 ## Status: engine + CKAN adapter + working CI/CD + a live FTP/SFTP receiving server + token provisioning + full provider/admin source lifecycle (register/edit/delete) + connection health checks + a live API proxy + a real, manually-triggered harvest that stores data in PostgreSQL
 
 `providerharvest_service/engine/` -- the transport implementations
@@ -96,7 +111,7 @@ the admin API can't be pointed at an arbitrary path. Generated
 passwords are bcrypt-hashed and shown exactly once, at creation (or
 rotation) -- never returned again.
 
-The whole site -- the provider portal, the admin pages, the API docs --
+The whole site -- the Extract Box (the provider-facing pages), the admin pages, the API docs --
 sits behind a real login (`admin_session.py`: a signed session cookie,
 one shared username/password, enforced by a single ASGI middleware). It
 is **deny by default**: a path needs the session unless it is on a short
