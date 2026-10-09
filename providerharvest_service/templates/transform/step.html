@@ -211,7 +211,7 @@
           <label for="ux">Easting field (X, metres east)</label>
           <select id="ux" name="x" style="max-width:20rem;">{% for f in available %}<option value="{{ f }}"{% if f == e.get('x') %} selected{% endif %}>{{ f }}</option>{% endfor %}</select>
           <label for="uy">Northing field (Y, metres north)</label>
-          <select id="uy" name="y" style="max-width:20rem;">{% for f in available %}<option value="{{ f }}"{% if f == e.get('y') %} selected{% endif %}>{{ f }}</option>{% endfor %}</select>
+          <select id="uy" name="y" style="max-width:20rem;">{% for f in available %}<option value="{{ f }}"{% if f == e.get('y') or (not e.get('y') and loop.index == 2) %} selected{% endif %}>{{ f }}</option>{% endfor %}</select>
           <label for="uz">UTM zone</label>
           <div class="row-pair">
             <input id="uz" type="number" name="zone" min="1" max="60" value="{{ e.get('zone', 34) }}" style="max-width:7rem;" aria-label="Zone">

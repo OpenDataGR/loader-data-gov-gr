@@ -763,6 +763,8 @@ def _coordinate(value: Any) -> float:
 
 def step_utm(records: list[Record], options: dict, ctx: Context) -> list[Record]:
     x, y = _check_name(options.get("x"), "The easting field"), _check_name(options.get("y"), "The northing field")
+    if x == y:
+        raise TransformError("The easting and the northing need two different fields (both are %r)." % x)
     lat_name = _check_name(options.get("lat_name"), "The latitude field name")
     lon_name = _check_name(options.get("lon_name"), "The longitude field name")
     if len({lat_name, lon_name}) != 2:

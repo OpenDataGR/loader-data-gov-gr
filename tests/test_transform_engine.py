@@ -491,7 +491,7 @@ def test_the_utm_step_adds_latitude_and_longitude_and_counts_what_it_could_not_r
 
 
 @pytest.mark.parametrize("change,message", [({"zone": 0}, "zone"), ({"zone": "x"}, "zone"), ({"decimals": 11}, "Decimals"),
-                                            ({"lon_name": "latitude"}, "different names"), ({"x": "bad name"}, "easting")])
+                                            ({"lon_name": "latitude"}, "different names"), ({"x": "bad name"}, "easting"), ({"y": "x"}, "two different fields")])
 def test_a_wrong_utm_step_is_refused_with_a_reason(change, message):
     step = {"type": "utm", "x": "x", "y": "y", "zone": 34, "hemisphere": "N", "lat_name": "latitude", "lon_name": "longitude", "decimals": 6, **change}
     with pytest.raises(TransformError, match=message):
