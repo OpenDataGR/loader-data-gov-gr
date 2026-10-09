@@ -17,7 +17,7 @@
               ({{ confirm.loader_size }}) older than {{ confirm.loader_label }} will be removed within the hour. Their runs stay in the history, marked as removed.</li>
           {% endif %}
           {% if confirm.box_shorter %}
-            <li>On the FTP box: archived files older than {{ confirm.box_label }} are removed at the box's next cleanup (about an hour).</li>
+            <li>On the FTP box: archived files older than {{ confirm.box_label }} are removed at the box's next cleanup, which runs every six hours.</li>
           {% endif %}
         </ul>
       </div>
