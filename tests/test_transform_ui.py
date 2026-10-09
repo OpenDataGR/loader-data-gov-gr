@@ -292,6 +292,19 @@ def test_try_it_shows_the_result_counts_and_what_found_no_match(client, source, 
     assert "found no match in an index table" in page and "MS810" in page
 
 
+def test_try_it_comes_before_output_and_shows_its_result_in_a_modal(client, source, _isolated_db):
+    _upload_data(client, source)
+    _upload_table(client, content="id,name,lat,lon\nMS812,Kifisias,38.03,23.80\n")
+    _build(client, source, READER_FORM, LOOKUP_FORM)
+    url = "/transform/sources/%s" % source["id"]
+    plain = client.get(url).text
+    assert plain.index("Try it") < plain.index('id="output-form"')
+    assert 'id="try-form"' in plain and 'id="preview-modal"' in plain and "closePreview" in plain
+    assert 'id="preview-modal"' in plain and not re.search(r'class="modal-overlay open"', plain)
+    after = client.post(url + "/preview").text
+    assert re.search(r'class="modal-overlay open"', after) and "records read" in after
+
+
 def test_try_it_reports_a_failure_in_words_and_a_missing_file(client, source):
     _go(client, source, "create")
     assert "Not ready" in client.get("/transform/sources/%s" % source["id"]).text
@@ -607,3 +620,102 @@ def test_each_output_row_shows_its_file_type_and_name(client, source, _isolated_
     assert "<th>File</th>" in page and ">CSV<" in page and ">XML<" in page
     assert "Detector.csv" in page and "Detector.xml" in page
     assert 'title="text/csv; charset=utf-8"' in page and 'title="application/xml"' in page
+
+
+# -- deleting outputs --------------------------------------------------------------------------------------------------------------------------
+
+def _outputs_ready(client, source, n=3):
+    _upload_data(client, source)
+    _upload_table(client)
+    _build(client, source, READER_FORM, LOOKUP_FORM)
+    _go(client, source, "enabled", data={"enabled": "1"})
+    for _ in range(n):
+        _upload_data(client, source)
+
+
+def _all_outputs(hfactory):
+    with hfactory() as h:
+        return list(h.scalars(select(TransformedFile).order_by(TransformedFile.created_at)).all())
+
+
+def _foreign_output(hfactory):
+    """A transformed output belonging to some other source."""
+    from providerharvest_service.harvest_models import HarvestRun
+    with hfactory() as h:
+        run = HarvestRun(source_id="other-source", source_name="other", status="success")
+        h.add(run)
+        h.flush()
+        out = TransformedFile(run_id=run.id, source_id="other-source", transform_id="t", filename="x.json", size=3, content=b"[1]")
+        h.add(out)
+        h.commit()
+        return out.id
+
+
+def test_every_output_row_has_a_delete_button_and_there_is_a_delete_all_with_a_confirmation(client, source):
+    _outputs_ready(client, source, 3)
+    page = client.get("/transform/sources/%s" % source["id"]).text
+    assert page.count("/delete\"") >= 3 and "Delete all 3 outputs" in page  # one per file that arrived since it was switched on
+    assert "confirm('Delete this output? The original file is not affected.')" in page and "confirm('Delete all 3 stored outputs" in page
+
+
+def test_one_output_is_deleted_and_the_others_and_the_original_stay(client, source, _isolated_harvest_db):
+    _outputs_ready(client, source, 3)
+    before = _all_outputs(_isolated_harvest_db)
+    victim = before[1].id
+    resp = client.post("/transform/sources/%s/outputs/%s/delete" % (source["id"], victim), follow_redirects=False)
+    assert "Output deleted" in _flash(resp) and "original file is untouched" in _flash(resp)
+    after = _all_outputs(_isolated_harvest_db)
+    assert [o.id for o in after] == [o.id for o in before if o.id != victim]
+    with _isolated_harvest_db() as h:
+        assert len(list(h.scalars(select(HarvestedFile)).all())) == len(before) + 1  # every original is still there (one arrived before the transform was on)
+
+
+def test_a_deleted_output_can_be_made_again_by_running_the_transform_on_its_file(client, source, _isolated_harvest_db):
+    _outputs_ready(client, source, 1)
+    before = len(_all_outputs(_isolated_harvest_db))
+    client.post("/transform/sources/%s/outputs/delete-all" % source["id"], follow_redirects=False)
+    assert _all_outputs(_isolated_harvest_db) == []
+    assert "Processed 2 runs" in _flash(_go(client, source, "reprocess", data={"limit": "200"}))  # both stored files, including the one from before it was on
+    assert before == 1 and len(_all_outputs(_isolated_harvest_db)) == 2
+
+
+def test_delete_all_removes_this_sources_outputs_only(client, source, _isolated_harvest_db):
+    _outputs_ready(client, source, 2)
+    foreign = _foreign_output(_isolated_harvest_db)
+    resp = client.post("/transform/sources/%s/outputs/delete-all" % source["id"], follow_redirects=False)
+    assert "2 outputs deleted" in _flash(resp)
+    assert [o.id for o in _all_outputs(_isolated_harvest_db)] == [foreign]
+    assert "no outputs to delete" in _flash(client.post("/transform/sources/%s/outputs/delete-all" % source["id"], follow_redirects=False))
+
+
+def test_another_sources_output_cannot_be_deleted_through_this_source(client, source, _isolated_harvest_db):
+    _outputs_ready(client, source, 1)
+    foreign = _foreign_output(_isolated_harvest_db)
+    resp = client.post("/transform/sources/%s/outputs/%s/delete" % (source["id"], foreign), follow_redirects=False)
+    assert "No such output" in _flash(resp) and foreign in [o.id for o in _all_outputs(_isolated_harvest_db)]
+    assert "No such output" in _flash(client.post("/transform/sources/%s/outputs/nope/delete" % source["id"], follow_redirects=False))
+
+
+def test_a_failed_output_and_a_removed_one_can_be_deleted_too(client, source, _isolated_harvest_db):
+    _outputs_ready(client, source, 0)
+    _upload_data(client, source, content=b"not xml")  # a failed output
+    with _isolated_harvest_db() as h:
+        for out in h.scalars(select(TransformedFile)).all():
+            if out.status == "ok":
+                out.content = b""  # a removed one (retention)
+        h.commit()
+    for out in _all_outputs(_isolated_harvest_db):
+        assert "Output deleted" in _flash(client.post("/transform/sources/%s/outputs/%s/delete" % (source["id"], out.id), follow_redirects=False))
+    assert _all_outputs(_isolated_harvest_db) == []
+
+
+def test_deleting_needs_the_admin_login_and_a_real_source(client, source, _isolated_harvest_db):
+    _outputs_ready(client, source, 1)
+    out_id = _all_outputs(_isolated_harvest_db)[0].id
+    anonymous = TestClient(app, base_url="https://testserver")
+    for url in ("/transform/sources/%s/outputs/%s/delete" % (source["id"], out_id), "/transform/sources/%s/outputs/delete-all" % source["id"]):
+        assert anonymous.post(url, follow_redirects=False).headers.get("location", "/admin/login").startswith("/admin/login")
+    assert len(_all_outputs(_isolated_harvest_db)) == 1
+    for url in ("/transform/sources/nope/outputs/%s/delete" % out_id, "/transform/sources/nope/outputs/delete-all"):
+        assert "No such source" in _flash(client.post(url, follow_redirects=False))
+    assert len(_all_outputs(_isolated_harvest_db)) == 1

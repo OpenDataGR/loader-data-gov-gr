@@ -13,6 +13,7 @@
     .inline-form { display: flex; gap: 0.6rem; align-items: flex-end; flex-wrap: wrap; margin: 0.4rem 0; }
     .inline-form select, .inline-form input { width: auto; margin: 0; }
     .scroll { overflow-x: auto; }
+    .preview-panel { max-width: 1100px; max-height: 88vh; }
     [hidden] { display: none !important; }  /* a row styled display:flex would otherwise ignore the hidden attribute */
     .stat-row { display: flex; gap: 1.4rem; flex-wrap: wrap; margin: 0.6rem 0; font-size: 0.9rem; }
   </style>
@@ -72,6 +73,75 @@
         {% endif %}
       </div>
 
+      <h2 style="font-size:1.05rem; margin:1.6rem 0 0.2rem;">Try it</h2>
+      <p class="muted" style="margin:0 0 0.4rem;">Runs the steps on this source's newest stored file and shows the result in a window. Nothing is stored.</p>
+      <form method="post" action="/transform/sources/{{ source.id }}/preview" id="try-form"><button type="submit"{% if not has_sample %} disabled{% endif %}>Try on the latest file</button></form>
+
+      {# The result opens in a window. With scripts the window is filled by a background request (the page stays as it is);
+         without them the same page comes back from the server with the window already open. #}
+      <div class="modal-overlay{% if preview %} open{% endif %}" id="preview-modal" onclick="if (event.target === this) closePreview()">
+        <div class="modal-panel preview-panel" role="dialog" aria-modal="true" aria-labelledby="preview-title">
+          <div class="modal-header">
+            <h2 id="preview-title">Try it -- the result</h2>
+            <button type="button" class="modal-close" onclick="closePreview()" aria-label="Close">{{ macros.icon("x", 18) }}</button>
+          </div>
+          <div class="modal-body" id="preview-body">
+            {% if preview %}
+              <div id="preview">
+                {% if preview.error %}
+                  <div class="problems"><strong>It did not work:</strong> {{ preview.error }}</div>
+                {% endif %}
+                {% if preview.filename %}<p class="muted" style="margin:0 0 0.4rem;">On <strong>{{ preview.filename }}</strong>, received {{ preview.at|utc }} UTC.</p>{% endif %}
+                {% if preview.result %}
+                  <div class="stat-row">
+                    <span><strong>{{ "{:,}".format(preview.result.records_in) }}</strong> records read</span>
+                    <span><strong>{{ "{:,}".format(preview.result.records_out) }}</strong> written</span>
+                    <span>{{ size(preview.size) }} output</span>
+                    {% if preview.result.stats.dropped_by_filter %}<span>{{ preview.result.stats.dropped_by_filter }} dropped by a filter</span>{% endif %}
+                    {% if preview.result.stats.dropped_by_lookup %}<span>{{ preview.result.stats.dropped_by_lookup }} dropped: no match in an index table</span>{% endif %}
+                  </div>
+                  {% if preview.result.stats.lookup_missing %}
+                    <div class="problems">{{ preview.result.stats.lookup_missing }} record{{ "" if preview.result.stats.lookup_missing == 1 else "s" }} found no match in an index table.
+                      Not found: <code>{{ preview.result.stats.missing_keys|join(", ") }}</code>{% if preview.result.stats.lookup_missing > preview.result.stats.missing_keys|length %} ...{% endif %}</div>
+                  {% endif %}
+                  {% if preview.result.stats.conversion_errors %}
+                    <div class="problems">Values that could not be converted (left empty):
+                      {% for field, n in preview.result.stats.conversion_errors.items() %}{{ field }}: {{ n }}{% if not loop.last %}, {% endif %}{% endfor %}</div>
+                  {% endif %}
+                  <p class="muted" style="margin:0.6rem 0 0.3rem;">The first {{ preview.rows|length }} records:</p>
+                  <div class="scroll"><table>
+                    <thead><tr>{% for c in preview.columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+                    <tbody>{% for r in preview.rows %}<tr>{% for c in preview.columns %}<td class="muted">{{ r.get(c) if r.get(c) is not none else "" }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+                  </table></div>
+                {% endif %}
+              </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      <script>
+        function closePreview() { document.getElementById('preview-modal').classList.remove('open'); }
+        document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closePreview(); });
+        (function () {
+          var form = document.getElementById('try-form');
+          if (!form || !window.fetch) return;
+          form.addEventListener('submit', function (e) {
+            e.preventDefault();
+            var button = form.querySelector('button'), label = button.textContent;
+            button.disabled = true; button.textContent = 'Trying...';
+            fetch(form.action, { method: 'POST', credentials: 'same-origin' })
+              .then(function (r) { if (!r.ok) throw new Error('status ' + r.status); return r.text(); })
+              .then(function (html) {
+                var fresh = new DOMParser().parseFromString(html, 'text/html').getElementById('preview-body');
+                document.getElementById('preview-body').innerHTML = fresh ? fresh.innerHTML : '<p class="muted">The result could not be read.</p>';
+                document.getElementById('preview-modal').classList.add('open');
+              })
+              .catch(function () { form.submit(); })  // anything unexpected: the ordinary page round trip
+              .then(function () { button.disabled = false; button.textContent = label; });
+          });
+        })();
+      </script>
+
       <h2 style="font-size:1.05rem; margin:1.6rem 0 0.2rem;">Output</h2>
       <form method="post" action="/transform/sources/{{ source.id }}/output" id="output-form">
         <div class="inline-form">
@@ -109,40 +179,6 @@
         })();
       </script>
 
-      <h2 style="font-size:1.05rem; margin:1.6rem 0 0.2rem;">Try it</h2>
-      <p class="muted" style="margin:0 0 0.4rem;">Runs the steps on this source's newest stored file and shows the result. Nothing is stored.</p>
-      <form method="post" action="/transform/sources/{{ source.id }}/preview"><button type="submit"{% if not has_sample %} disabled{% endif %}>Try on the latest file</button></form>
-      {% if preview %}
-        <div style="margin-top:1rem;" id="preview">
-          {% if preview.error %}
-            <div class="problems"><strong>It did not work:</strong> {{ preview.error }}</div>
-          {% endif %}
-          {% if preview.filename %}<p class="muted" style="margin:0 0 0.4rem;">On <strong>{{ preview.filename }}</strong>, received {{ preview.at|utc }} UTC.</p>{% endif %}
-          {% if preview.result %}
-            <div class="stat-row">
-              <span><strong>{{ "{:,}".format(preview.result.records_in) }}</strong> records read</span>
-              <span><strong>{{ "{:,}".format(preview.result.records_out) }}</strong> written</span>
-              <span>{{ size(preview.size) }} output</span>
-              {% if preview.result.stats.dropped_by_filter %}<span>{{ preview.result.stats.dropped_by_filter }} dropped by a filter</span>{% endif %}
-              {% if preview.result.stats.dropped_by_lookup %}<span>{{ preview.result.stats.dropped_by_lookup }} dropped: no match in an index table</span>{% endif %}
-            </div>
-            {% if preview.result.stats.lookup_missing %}
-              <div class="problems">{{ preview.result.stats.lookup_missing }} record{{ "" if preview.result.stats.lookup_missing == 1 else "s" }} found no match in an index table.
-                Not found: <code>{{ preview.result.stats.missing_keys|join(", ") }}</code>{% if preview.result.stats.lookup_missing > preview.result.stats.missing_keys|length %} ...{% endif %}</div>
-            {% endif %}
-            {% if preview.result.stats.conversion_errors %}
-              <div class="problems">Values that could not be converted (left empty):
-                {% for field, n in preview.result.stats.conversion_errors.items() %}{{ field }}: {{ n }}{% if not loop.last %}, {% endif %}{% endfor %}</div>
-            {% endif %}
-            <p class="muted" style="margin:0.6rem 0 0.3rem;">The first {{ preview.rows|length }} records:</p>
-            <div class="scroll"><table>
-              <thead><tr>{% for c in preview.columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
-              <tbody>{% for r in preview.rows %}<tr>{% for c in preview.columns %}<td class="muted">{{ r.get(c) if r.get(c) is not none else "" }}</td>{% endfor %}</tr>{% endfor %}</tbody>
-            </table></div>
-          {% endif %}
-        </div>
-      {% endif %}
-
       <h2 style="font-size:1.05rem; margin:1.6rem 0 0.2rem;">Run it again on earlier files</h2>
       <p class="muted" style="margin:0 0 0.4rem;">After changing the steps, or for files that arrived before the transform was on. Replaces the stored output of each run.</p>
       <form class="inline-form" method="post" action="/transform/sources/{{ source.id }}/reprocess">
@@ -169,11 +205,21 @@
                   <span class="muted">{{ o.filename }}</span>{% endif %}</td>
               <td>{% if o.status == "ok" %}{{ "{:,}".format(o.records_in) }} &rarr; {{ "{:,}".format(o.records_out) }}{% endif %}</td>
               <td class="muted">{% if o.status == "ok" %}{{ size(o.size) }}{% endif %}</td>
-              <td>{% if o.status == "ok" and o.has_content %}<a class="btn btn-secondary btn-sm" href="/transform/sources/{{ source.id }}/outputs/{{ o.id }}/download">{{ macros.icon("download", 14) }} Download</a>{% endif %}</td>
+              <td style="white-space:nowrap;">
+                {% if o.status == "ok" and o.has_content %}<a class="btn btn-secondary btn-sm" href="/transform/sources/{{ source.id }}/outputs/{{ o.id }}/download">{{ macros.icon("download", 14) }} Download</a>{% endif %}
+                <form method="post" action="/transform/sources/{{ source.id }}/outputs/{{ o.id }}/delete" style="display:inline; margin:0;"
+                      onsubmit="return confirm('Delete this output? The original file is not affected.');">
+                  <button type="submit" class="btn-secondary btn-sm" title="Delete this output">{{ macros.icon("trash", 14) }} Delete</button>
+                </form>
+              </td>
             </tr>
             {% endfor %}
           </tbody>
         </table></div>
+        <form method="post" action="/transform/sources/{{ source.id }}/outputs/delete-all" style="margin-top:0.8rem;"
+              onsubmit="return confirm('Delete all {{ counts.ok + counts.failed }} stored outputs of this source? The original files are not affected, and you can run the transform again.');">
+          <button type="submit" class="btn-secondary btn-sm">{{ macros.icon("trash", 14) }} Delete all {{ counts.ok + counts.failed }} outputs</button>
+        </form>
       {% endif %}
     {% endif %}
   </div>

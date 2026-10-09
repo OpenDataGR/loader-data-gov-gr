@@ -213,6 +213,21 @@ def output_counts(hsession: Session, source_id: str) -> dict:
     return {"ok": int(ok or 0), "failed": int(failed or 0), "latest": latest}
 
 
+def delete_output(hsession: Session, source_id: str, output_id: str) -> bool:
+    """Delete one stored output of this source (the original file and the run are not touched). False when
+    there is no such output for this source -- another source's output is never deleted through this one."""
+    result = hsession.execute(delete(TransformedFile).where(TransformedFile.id == output_id, TransformedFile.source_id == source_id))
+    hsession.commit()
+    return bool(result.rowcount)
+
+
+def delete_all_outputs(hsession: Session, source_id: str) -> int:
+    """Delete every stored output of this source. Returns how many."""
+    result = hsession.execute(delete(TransformedFile).where(TransformedFile.source_id == source_id))
+    hsession.commit()
+    return int(result.rowcount or 0)
+
+
 # -- is this transform ready to run? ----------------------------------------------------------------------------------------------
 
 def check(config_session: Session, transform: Transform) -> list[str]:

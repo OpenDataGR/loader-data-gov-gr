@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
 import re
 from urllib.parse import urlencode
 
@@ -30,6 +31,7 @@ from providerharvest_service.db import get_session
 from providerharvest_service.harvest_models import TransformedFile
 from providerharvest_service.models import LookupTable, ProviderSource, Transform
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/transform", tags=["transform-ui"])
 templates = Jinja2Templates(directory="providerharvest_service/templates")
 templates.env.globals["build_info"] = build_info.get_build_info()
@@ -492,6 +494,29 @@ async def reprocess(source_id: str, request: Request, session: Session = Depends
     if summary["stopped_early"]:
         note += " Stopped early to stay within the time limit -- run it again for the rest."
     return _go(back, note, "error" if summary["failed"] and not summary["ok"] else "success")
+
+
+@router.post("/sources/{source_id}/outputs/{output_id}/delete")
+def delete_output(source_id: str, output_id: str, request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)):
+    """Delete one stored output. The original file and its run stay; the run can be transformed again."""
+    back = "/transform/sources/%s" % source_id
+    if _source_or_none(session, source_id) is None:
+        return _go("/transform", "No such source.", "error")
+    if not transform_runner.delete_output(hsession, source_id, output_id):
+        return _go(back, "No such output.", "error")
+    logger.info("transform output %s of source %s deleted by %s", output_id, source_id, _who(request) or "?")
+    return _go(back, "Output deleted. The original file is untouched.")
+
+
+@router.post("/sources/{source_id}/outputs/delete-all")
+def delete_all_outputs(source_id: str, request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)):
+    """Delete every stored output of this source (the originals stay)."""
+    back = "/transform/sources/%s" % source_id
+    if _source_or_none(session, source_id) is None:
+        return _go("/transform", "No such source.", "error")
+    count = transform_runner.delete_all_outputs(hsession, source_id)
+    logger.info("all %d transform outputs of source %s deleted by %s", count, source_id, _who(request) or "?")
+    return _go(back, "%d output%s deleted. The original files are untouched." % (count, "" if count == 1 else "s") if count else "There were no outputs to delete.")
 
 
 @router.get("/sources/{source_id}/outputs/{output_id}/download")
