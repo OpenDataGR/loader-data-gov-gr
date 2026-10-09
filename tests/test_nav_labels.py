@@ -9,7 +9,7 @@ def test_the_provider_pages_tab_is_the_extract_box_and_the_old_name_is_gone(clie
     for path in ("/provider/sources", "/admin/sources", "/admin/ftp"):
         page = client.get(path).text
         assert "Extract Box</a>" in page, path
-        assert "Provider portal" not in page, path
+        assert "Provider portal</a>" not in page, path  # (the Changelog may still *mention* the old name in a commit title)
 
 
 def test_the_tab_still_points_at_the_same_address_and_is_marked_active_there(client):
