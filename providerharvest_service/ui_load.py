@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import os
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Request
@@ -38,7 +39,8 @@ def _go(flash: str | None = None, kind: str = "success") -> RedirectResponse:
 def overview(request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)):
     targets = {t.source_id: t for t in session.scalars(select(LoadTarget)).all()}
     transforms = {t.source_id: t for t in session.scalars(select(Transform)).all()}
-    base = str(request.base_url).rstrip("/")
+    # the configured public address: behind the gateway the request itself says "http" (see ui_provider._push_upload_url)
+    base = (os.environ.get("LOADER_PUBLIC_BASE_URL") or str(request.base_url)).rstrip("/")
     rows = []
     for source in provider_sources.list_all(session):
         target = targets.get(source.id)

@@ -88,3 +88,11 @@ def test_the_data_address_is_rate_limited_per_caller(client, source, _isolated_d
     proxy._per_ip_limiters.clear()
     codes = [_anonymous().get("/data/acme-push").status_code for _ in range(4)]
     assert codes[:2] == [200, 200] and 429 in codes[2:]
+
+
+def test_the_published_address_uses_the_configured_public_base_url(client, source, monkeypatch):
+    monkeypatch.setenv("LOADER_PUBLIC_BASE_URL", "https://loader.example.gr/")
+    from tests.test_transform_ui import _outputs_ready
+    _outputs_ready(client, source, n=1)
+    _publish(client, source)
+    assert "https://loader.example.gr/data/acme-push" in client.get("/load").text
