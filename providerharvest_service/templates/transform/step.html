@@ -41,7 +41,7 @@
           {% endfor %}
         </div>
 
-        {% if r.kind != "csv_records" %}
+        {% if r.kind not in ("csv_records", "xlsx_records") %}
           <label>One record is each...</label>
           {% if r.candidates %}
             <div class="pick">
@@ -62,7 +62,13 @@
             <input type="hidden" name="format" value="{{ r.kind }}">
             <input type="hidden" name="record" value="{{ r.record }}">
 
-            {% if r.kind == "csv_records" %}
+            {% if r.kind == "xlsx_records" %}
+              <input type="hidden" name="sheet" value="{{ r.sheet }}">
+              {% if r.sheets|length > 1 %}
+                <label>Sheet</label>
+                <div class="pick">{% for name in r.sheets %}{% if name == (r.sheet or r.sheets[0]) %}<span class="cur">{{ name }}</span>{% else %}<a href="?format=xlsx_records&sheet={{ name|urlencode }}">{{ name }}</a>{% endif %}{% endfor %}</div>
+              {% endif %}
+            {% elif r.kind == "csv_records" %}
               <div class="row-pair"><div><label for="delim">Delimiter</label><input id="delim" name="delimiter" value="{{ r.delimiter or ',' }}" size="2" maxlength="1"></div></div>
             {% elif r.info.repeating %}
               <label for="explode">A repeated part inside each record gets one row per repeat</label>

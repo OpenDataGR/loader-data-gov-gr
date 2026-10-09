@@ -248,19 +248,138 @@ def read_csv(content: bytes, options: dict) -> list[Record]:
     return records
 
 
+# -- Excel (.xlsx) --------------------------------------------------------------------------------------------------------------
+
+MAX_XLSX_UNCOMPRESSED = 200 * 1000 * 1000  # an .xlsx is a zip: refuse one that expands to something absurd
+MAX_XLSX_ENTRIES = 500
+_OLE_MAGIC = b"\xd0\xcf\x11\xe0"
+
+
+def _is_xlsx(content: bytes, filename: str = "") -> bool:
+    name = (filename or "").lower()
+    return name.endswith((".xlsx", ".xlsm")) or content[:4] == b"PK\x03\x04"
+
+
+def _cell_text(value: Any) -> str | None:
+    """A spreadsheet cell as text: whole numbers without a ".0", dates as ISO, blanks as None."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float):
+        value = int(value) if value.is_integer() and abs(value) < 1e15 else float(format(value, ".15g"))
+    if isinstance(value, datetime.datetime):
+        # Excel has no date-only type: a date arrives as midnight, and reads better as just the date.
+        return value.date().isoformat() if value.time() == datetime.time(0, 0) and value.tzinfo is None else value.isoformat()
+    if isinstance(value, (datetime.date, datetime.time)):
+        return value.isoformat()
+    return _text(value)
+
+
+def _open_xlsx(content: bytes):
+    import zipfile
+
+    if content[:4] == _OLE_MAGIC:
+        raise TransformError("This looks like an old .xls file. Save it as .xlsx (or CSV) and upload that.")
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            infos = archive.infolist()
+            if len(infos) > MAX_XLSX_ENTRIES or sum(i.file_size for i in infos) > MAX_XLSX_UNCOMPRESSED:
+                raise TransformError("This Excel file is too large when unpacked.")
+    except zipfile.BadZipFile:
+        raise TransformError("This is not a valid .xlsx file (an old .xls, or a damaged file?). Save it as .xlsx or CSV.") from None
+    try:
+        import openpyxl
+
+        return openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    except TransformError:
+        raise
+    except Exception:  # noqa: BLE001 -- openpyxl raises many kinds for damaged files
+        raise TransformError("This Excel file could not be read. Is it damaged or password-protected? Try saving it as CSV.") from None
+
+
+def xlsx_sheets(content: bytes) -> list[str]:
+    workbook = _open_xlsx(content)
+    try:
+        return list(workbook.sheetnames)
+    finally:
+        workbook.close()
+
+
+def read_xlsx_table(content: bytes, sheet: str | None = None, *, max_rows: int = MAX_RECORDS + 1) -> tuple[str, list[list[str | None]]]:
+    """(sheet name used, rows of text) from one sheet: the named one, or the first that has anything in it."""
+    workbook = _open_xlsx(content)
+    try:
+        names = list(workbook.sheetnames)
+        if sheet:
+            if sheet not in names:
+                raise TransformError("There is no sheet %r in this file (it has: %s)." % (sheet, ", ".join(names)))
+            candidates_ = [sheet]
+        else:
+            candidates_ = names
+        fallback = None
+        for name in candidates_:
+            rows: list[list[str | None]] = []
+            for row in workbook[name].iter_rows(values_only=True):
+                cells = [_cell_text(c) for c in row]
+                if any(c is not None for c in cells):
+                    rows.append(cells)
+                if len(rows) > max_rows:
+                    break
+            if len(rows) >= 2 or (sheet and rows):
+                return name, rows  # a header and something under it (or the sheet the person named)
+            if rows and fallback is None:
+                fallback = (name, rows)  # a lone row: used only if nothing better turns up
+        if fallback:
+            return fallback
+        raise TransformError("The sheet is empty." if sheet else "This Excel file has no data in any sheet.")
+    finally:
+        workbook.close()
+
+
+def _header_and_rows(table: list[list[str | None]]) -> tuple[list[str], list[list[str | None]]]:
+    """The first row as column names (a column with no name and no data is dropped; data without a name is an error)."""
+    header, body = [(c or "").strip() for c in table[0]], table[1:]
+    keep = []
+    for index, name in enumerate(header):
+        has_data = any(index < len(r) and r[index] is not None for r in body)
+        if name:
+            keep.append(index)
+        elif has_data:
+            raise TransformError("Column %d has values but no name in the header row." % (index + 1))
+    return [header[i] for i in keep], [[(r[i] if i < len(r) else None) for i in keep] for r in body]
+
+
+def read_xlsx(content: bytes, options: dict) -> list[Record]:
+    _, table = read_xlsx_table(content, str(options.get("sheet") or "") or None)
+    columns, rows = _header_and_rows(table)
+    fields = _fields(options, required=False, plain=True)
+    picked = fields or [(re.sub(r"\W", "_", c).strip("_") or "col", c) for c in columns]
+    index = {c: i for i, c in enumerate(columns)}
+    records: list[Record] = []
+    for row in rows:
+        records.append({name: (row[index[column]] if column in index else None) for name, column in picked})
+        if len(records) > MAX_RECORDS:
+            raise TransformError("More than %d records: refusing to continue." % MAX_RECORDS)
+    return records
+
+
 READERS: dict[str, dict[str, Any]] = {
     "xml_records": {"label": "XML", "read": read_xml},
     "json_records": {"label": "JSON", "read": read_json},
     "csv_records": {"label": "CSV", "read": read_csv},
+    "xlsx_records": {"label": "Excel", "read": lambda content, options: read_xlsx(content, options)},
 }
 
 
 def detect_format(content: bytes, filename: str = "") -> str | None:
     """Which reader a file suggests: by its name, then by what it starts with."""
     name = (filename or "").lower()
-    for suffix, reader in ((".xml", "xml_records"), (".json", "json_records"), (".csv", "csv_records")):
+    for suffix, reader in ((".xml", "xml_records"), (".json", "json_records"), (".csv", "csv_records"), (".xlsx", "xlsx_records"), (".xlsm", "xlsx_records")):
         if name.endswith(suffix):
             return reader
+    if content[:4] in (b"PK\x03\x04", b"\xd0\xcf\x11\xe0"):
+        return "xlsx_records"
     head = content.lstrip(b"\xef\xbb\xbf \t\r\n")[:1]
     if head == b"<":
         return "xml_records"
@@ -301,7 +420,7 @@ def sniff_delimiter(content: bytes) -> str:
     return best if first.count(best) else ","
 
 
-def describe_record(content: bytes, reader: str, record: str, sample: int = 50, delimiter: str | None = None) -> dict:
+def describe_record(content: bytes, reader: str, record: str, sample: int = 50, delimiter: str | None = None, sheet: str | None = None) -> dict:
     """The fields available inside a record: {"fields": [{"path", "example", "repeats"}], "repeating": [path...]}.
     ``repeats`` marks a path that occurs more than once in a single record (a candidate to "explode")."""
     seen: dict[str, dict] = {}
@@ -373,6 +492,11 @@ def describe_record(content: bytes, reader: str, record: str, sample: int = 50, 
         for index, column in enumerate(header):
             if column:
                 seen[column] = {"path": column, "repeats": False, "example": next((r[index][:60] for r in first_rows if index < len(r) and r[index].strip()), None)}
+    elif reader == "xlsx_records":
+        _, table = read_xlsx_table(content, sheet, max_rows=sample + 1)
+        columns, rows = _header_and_rows(table)
+        for index, column in enumerate(columns):
+            seen[column] = {"path": column, "repeats": False, "example": next((str(r[index])[:60] for r in rows if r[index] is not None), None)}
     else:
         raise TransformError("Unknown format %r." % reader)
     return {"fields": list(seen.values())[:MAX_FIELDS], "repeating": [p for p, _ in repeating.most_common(10)]}
@@ -614,7 +738,7 @@ def validate(steps: object) -> list[str]:
             try:
                 if kind == "xml_records" and not str(step.get("record") or "").strip():
                     raise TransformError("Choose the repeating element that holds one record.")
-                _fields(step, required=kind == "xml_records", plain=kind == "csv_records")
+                _fields(step, required=kind == "xml_records", plain=kind in ("csv_records", "xlsx_records"))
                 if step.get("explode"):
                     _check_path(step["explode"].get("path"), "The path to the repeated element")
                     _fields(step["explode"], required=False)
@@ -709,12 +833,26 @@ MAX_LOOKUP_ROWS = 100_000
 MAX_LOOKUP_COLUMNS = 60
 
 
-def parse_lookup(content: bytes, filename: str = "") -> tuple[list[str], list[dict]]:
-    """An uploaded index table as (columns, rows): CSV with a header row, or a JSON list of objects."""
+def parse_lookup(content: bytes, filename: str = "", sheet: str | None = None) -> tuple[list[str], list[dict]]:
+    columns, rows, _ = parse_lookup_ex(content, filename, sheet)
+    return columns, rows
+
+
+def parse_lookup_ex(content: bytes, filename: str = "", sheet: str | None = None) -> tuple[list[str], list[dict], str]:
+    """An uploaded index table as (columns, rows, a note about how it was read): Excel (.xlsx, one sheet), CSV with
+    a header row, or a JSON list of objects."""
     if len(content) > MAX_LOOKUP_BYTES:
         raise TransformError("The index file is larger than %d MB." % (MAX_LOOKUP_BYTES // 1_000_000))
     kind = detect_format(content, filename)
-    if kind == "json_records":
+    note = ""
+    if kind == "xlsx_records":
+        names = xlsx_sheets(content)
+        used, table = read_xlsx_table(content, sheet or None, max_rows=MAX_LOOKUP_ROWS + 1)
+        header, body = _header_and_rows(table)
+        columns = header
+        rows = [{c: v for c, v in zip(columns, r)} for r in body]
+        note = "Read from sheet %r%s." % (used, "; the other %d sheet%s ignored" % (len(names) - 1, " was" if len(names) == 2 else "s were") if len(names) > 1 else "")
+    elif kind == "json_records":
         data = _json_load(content)
         if isinstance(data, dict):
             data = next((v for v in data.values() if isinstance(v, list)), None)
@@ -727,7 +865,7 @@ def parse_lookup(content: bytes, filename: str = "") -> tuple[list[str], list[di
                     columns.append(str(k))
         rows = [{c: _text(_json_scalar(r.get(c))) for c in columns} for r in data]
     elif kind == "xml_records":
-        raise TransformError("Upload the index as CSV or JSON.")
+        raise TransformError("Upload the index as Excel (.xlsx), CSV or JSON.")
     else:
         try:
             text = content.decode("utf-8-sig")
@@ -749,7 +887,7 @@ def parse_lookup(content: bytes, filename: str = "") -> tuple[list[str], list[di
         raise TransformError("At most %d columns and %d rows." % (MAX_LOOKUP_COLUMNS, MAX_LOOKUP_ROWS))
     if len(set(columns)) != len(columns) or any(not c for c in columns):
         raise TransformError("Every column needs its own non-empty name.")
-    return columns, rows
+    return columns, rows, note
 
 
 def lookup_table(columns: list[str], rows: list[dict]) -> dict:

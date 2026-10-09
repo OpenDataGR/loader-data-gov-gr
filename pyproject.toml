@@ -19,6 +19,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "psycopg[binary]>=3.1",
     "defusedxml>=0.7",
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]

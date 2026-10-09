@@ -113,13 +113,13 @@ async def upload_table(request: Request, session: Session = Depends(get_session)
         if session.scalar(select(LookupTable).where(LookupTable.name == name)) is not None:
             raise te.TransformError("There is already a table called %r -- open it to replace its contents." % name)
         content, filename = await _read_upload(form)
-        columns, rows = te.parse_lookup(content, filename)
+        columns, rows, note = te.parse_lookup_ex(content, filename, str(form.get("sheet") or "").strip() or None)
     except te.TransformError as exc:
         return _go("/transform", str(exc), "error")
     session.add(LookupTable(name=name, description=str(form.get("description") or "").strip()[:200], columns=json.dumps(columns),
                             rows=json.dumps(rows), row_count=len(rows), uploaded_by=_who(request)))
     session.commit()
-    return _go("/transform", "Index table %s uploaded: %d rows, %d columns." % (name, len(rows), len(columns)))
+    return _go("/transform", ("Index table %s uploaded: %d rows, %d columns. %s" % (name, len(rows), len(columns), note)).strip())
 
 
 def _table_or_none(session: Session, table_id: str) -> LookupTable | None:
@@ -147,7 +147,7 @@ async def replace_table(table_id: str, request: Request, session: Session = Depe
     form = await request.form()
     try:
         content, filename = await _read_upload(form)
-        columns, rows = te.parse_lookup(content, filename)
+        columns, rows, note = te.parse_lookup_ex(content, filename, str(form.get("sheet") or "").strip() or None)
         # Transforms that use this table keep working only if the columns they need are still there.
         for source_id in transform_runner.lookups_in_use(session, table.name):
             transform = transform_runner.get_transform(session, source_id)
@@ -162,7 +162,7 @@ async def replace_table(table_id: str, request: Request, session: Session = Depe
     table.columns, table.rows, table.row_count = json.dumps(columns), json.dumps(rows), len(rows)
     table.uploaded_at, table.uploaded_by = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None), _who(request)
     session.commit()
-    return _go(back, "Replaced: %d rows, %d columns. Files that arrive from now on use it." % (len(rows), len(columns)))
+    return _go(back, ("Replaced: %d rows, %d columns. %s Files that arrive from now on use it." % (len(rows), len(columns), note)).replace("  ", " "))
 
 
 @router.post("/tables/{table_id}/delete")
@@ -272,7 +272,8 @@ async def set_output(source_id: str, request: Request, session: Session = Depend
 
 def _reader_context(hsession: Session, source_id: str, request: Request, existing: dict | None) -> dict:
     sample = transform_runner.sample_file(hsession, source_id)
-    ctx: dict = {"sample": sample, "kind": None, "candidates": [], "record": "", "info": None, "selected": {}, "explode": "", "readers": te.READERS, "error": None}
+    ctx: dict = {"sample": sample, "kind": None, "candidates": [], "record": "", "info": None, "selected": {}, "explode": "", "readers": te.READERS, "error": None,
+                 "sheets": [], "sheet": ""}
     if sample is None:
         ctx["error"] = "There is no stored file from this source yet, so there is nothing to look at. Once one arrives you can choose its fields here."
         return ctx
@@ -290,8 +291,13 @@ def _reader_context(hsession: Session, source_id: str, request: Request, existin
         if record is None:
             record = ctx["candidates"][0]["path"] if ctx["candidates"] else ""
         ctx["record"] = record
-        if kind == "csv_records" or record or kind == "json_records":
-            ctx["info"] = te.describe_record(sample.content, kind, record, delimiter=params.get("delimiter") or (existing or {}).get("delimiter"))
+        if kind == "xlsx_records":
+            ctx["sheets"] = te.xlsx_sheets(sample.content)
+            ctx["sheet"] = params.get("sheet") or (existing or {}).get("sheet") or ""
+        if kind in tf.TABULAR or record or kind == "json_records":
+            ctx["info"] = te.describe_record(
+                sample.content, kind, record, delimiter=params.get("delimiter") or (existing or {}).get("delimiter"), sheet=ctx.get("sheet") or None,
+            )
     except te.TransformError as exc:
         ctx["error"] = str(exc)
         return ctx

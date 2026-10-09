@@ -192,10 +192,10 @@ before this a lost key meant deleting and re-registering the source).
 **Transform Box** (`/transform`; `transform_engine.py`, `transform_forms.py`, `transform_runner.py`, `ui_transform.py`). A source's
 transform is an ordered list of steps run on every file it receives (and re-runnable over earlier ones), producing JSON, JSON Lines,
 XML or CSV stored beside the original -- which is never changed. It is built to be generic: step 1 is a **reader** for the file's
-format (XML, JSON or CSV, picked from a real stored file: the page finds the repeating records and their fields, so choosing them is
+format (XML, JSON, CSV or Excel .xlsx, picked from a real stored file: the page finds the repeating records and their fields, so choosing them is
 clicking, not typing paths; XML is read by element name, ignoring namespaces and prefixes, and a repeated part inside a record can be
 turned into one row per repeat), and every later step works on the same flat records whatever the format: **lookup** (add columns from
-an uploaded **index table**, e.g. a station id -> its name and location, with a choice of what to do when there is no match),
+an uploaded **index table** (Excel .xlsx, CSV or JSON; for Excel the first row is the header, the first sheet with data is used unless one is named, dates and whole numbers are read cleanly, and a zip-bomb or damaged file is refused), e.g. a station id -> its name and location, with a choice of what to do when there is no match),
 **filter**, **rename**, **convert** (int, float, bool, string, datetime to ISO UTC), **keep/remove fields**, **add a field** (constant
 or built from other fields). A new format or step is one more entry in `READERS` / `STEPS`. The page offers **Try on the latest file**
 (runs the steps and shows counts, the first rows and which ids found no match; stores nothing), switch on/off, **Run it again on earlier

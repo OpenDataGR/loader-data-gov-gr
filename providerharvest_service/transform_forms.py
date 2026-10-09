@@ -17,7 +17,8 @@ OP_LABELS = {
     "eq": "is", "ne": "is not", "in": "is one of", "not_in": "is none of", "gt": "is greater than", "ge": "is at least",
     "lt": "is less than", "le": "is at most", "contains": "contains", "exists": "has a value", "not_exists": "is empty",
 }
-FORMAT_LABELS = {"xml_records": "XML", "json_records": "JSON", "csv_records": "CSV"}
+FORMAT_LABELS = {"xml_records": "XML", "json_records": "JSON", "csv_records": "CSV", "xlsx_records": "Excel"}
+TABULAR = ("csv_records", "xlsx_records")  # one record per row, columns by name: no nested records
 RENAME_ROWS = 5
 CONVERT_ROWS = 6
 
@@ -56,9 +57,10 @@ def summarize(step: dict) -> str:
             text += ", and one row per %s inside it" % explode.get("path")
             fields += [f["name"] for f in explode.get("fields") or []]
         return text + ". Fields: " + names(fields) + "." if fields else text + ". All top-level fields."
-    if kind == "csv_records":
+    if kind in TABULAR:
         fields = [f["name"] for f in step.get("fields") or []]
-        return "One record per row" + (". Columns: " + names(fields) + "." if fields else ". All columns.")
+        where = " of sheet «%s»" % step["sheet"] if step.get("sheet") else ""
+        return "One record per row%s" % where + (". Columns: " + names(fields) + "." if fields else ". All columns.")
     if kind == "lookup":
         added = [a.get("as") or a.get("column") for a in step.get("add") or []]
         miss = "records without a match are dropped" if step.get("on_missing") == "drop" else "records without a match are kept, with empty values"
@@ -105,7 +107,7 @@ def build_reader(kind: str, form: Mapping) -> dict:
     for path in chosen:
         name = _one(form, "name::" + path) or suggest_name(path, taken)
         taken.add(name)
-        if kind == "csv_records":
+        if kind in TABULAR:
             fields.append({"name": name, "path": path})
         elif explode_path and (path.startswith(explode_path + "/") or path.startswith(explode_path + "@")):
             relative = path[len(explode_path):].lstrip("/")
@@ -116,10 +118,13 @@ def build_reader(kind: str, form: Mapping) -> dict:
     if kind == "csv_records":
         step["delimiter"] = _one(form, "delimiter", ",") or ","
         step["encoding"] = _one(form, "encoding", "utf-8-sig") or "utf-8-sig"
+    elif kind == "xlsx_records":
+        if _one(form, "sheet"):
+            step["sheet"] = _one(form, "sheet")
     else:
         step["record"] = _one(form, "record")
     step["fields"] = fields
-    if explode_path and kind != "csv_records":
+    if explode_path and kind not in TABULAR:
         step["explode"] = {"path": explode_path, "fields": explode_fields, "keep_empty": bool(_one(form, "keep_empty"))}
     problems = te.validate([step])
     if problems:
@@ -175,7 +180,7 @@ def fields_after(steps: list[dict]) -> list[str]:
     names: list[str] = []
     for step in steps:
         kind = step.get("type")
-        if kind in ("xml_records", "json_records", "csv_records"):
+        if kind in ("xml_records", "json_records", "csv_records", "xlsx_records"):
             names = [f["name"] for f in step.get("fields") or []] + [f["name"] for f in (step.get("explode") or {}).get("fields") or []]
         elif kind == "lookup":
             names += [a.get("as") or a.get("column") for a in step.get("add") or [] if (a.get("as") or a.get("column")) not in names]

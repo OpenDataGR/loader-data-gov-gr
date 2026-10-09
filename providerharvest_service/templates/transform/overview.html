@@ -38,7 +38,7 @@
   <div class="panel" style="margin-top:1.5rem;">
     <h1>Index tables</h1>
     <p class="subtitle">
-      A table you upload (CSV or JSON, one row per item) that a transform can look things up in -- for example a station id, with its name and
+      A table you upload (Excel, CSV or JSON, one row per item; the first row of a spreadsheet is the header) that a transform can look things up in -- for example a station id, with its name and
       location. Any transform can use any table; replace a table when its details change.
     </p>
     {% if tables %}
@@ -64,8 +64,10 @@
       <input type="text" id="tname" name="name" required pattern="[a-z][a-z0-9_]{1,40}" placeholder="stations" style="max-width:18rem;">
       <label for="tdesc">Description (optional)</label>
       <input type="text" id="tdesc" name="description" maxlength="200" placeholder="Detector id, name and location" style="max-width:32rem;">
-      <label for="tfile">File (CSV with a header row, or JSON list of objects)</label>
-      <input type="file" id="tfile" name="file" required accept=".csv,.json,.txt">
+      <label for="tfile">File (Excel .xlsx, CSV with a header row, or a JSON list of objects)</label>
+      <input type="file" id="tfile" name="file" required accept=".xlsx,.xlsm,.csv,.json,.txt">
+      <label for="tsheet">Excel sheet (optional -- default: the first sheet that has data)</label>
+      <input type="text" id="tsheet" name="sheet" maxlength="80" style="max-width:18rem;">
       <div style="margin-top:0.9rem;"><button type="submit">Upload</button></div>
     </form>
   </div>
