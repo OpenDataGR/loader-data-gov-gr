@@ -1,7 +1,7 @@
 name: Retention check (one-off)
 
-# One-off, read-only: the web server's record of requests to the retention page (time, method, status),
-# and the source config as stored. Changes nothing. Deleted afterwards.
+# One-off, read-only: where the web server logs requests and whether anything about admin source pages
+# shows up there. Prints no addresses or cookies, only time, method, path and status. Deleted afterwards.
 on:
   workflow_dispatch:
 
@@ -10,14 +10,15 @@ jobs:
     runs-on: [self-hosted, loader]
     steps:
       - run: |
-          echo "--- requests to the retention page (time, method+path, status, bytes)"
-          for f in /var/log/nginx/access.log /var/log/nginx/access.log.1; do
-            sudo -n grep -h "/retention" "$f" 2>/dev/null | awk '{print $4, $6, $7, $9, $10}' ; done | sort | tail -20
-          echo "(end of requests)"
-          python3 - <<'PY'
-          import json, sqlite3
-          conn = sqlite3.connect("file:/opt/data-projects/loader-data-gov-gr/data/loader.db?mode=ro", uri=True)
-          for name, config in conn.execute("SELECT name, config FROM provider_source ORDER BY name"):
-              c = json.loads(config or "{}")
-              print("%-28s stored retention keys: %s" % (name, {k: v for k, v in c.items() if k.startswith("retention")} or "none"))
-          PY
+          echo "--- nginx log files"
+          sudo -n ls -la /var/log/nginx/ 2>&1 | head -12
+          echo "--- vhost log settings"
+          sudo -n grep -n "access_log\|error_log" /etc/nginx/sites-enabled/* /etc/nginx/nginx.conf 2>&1 | head -8
+          for f in /var/log/nginx/access.log; do
+            echo "--- lines in $f:" ; sudo -n wc -l < "$f"
+            echo "--- admin page requests today (time method path status) -- newest 15"
+            sudo -n grep -h "/admin/sources\|/retention" "$f" | awk '{print $4, $6, $7, $9}' | tail -15
+          done
+          echo "--- application log: POSTs seen by the service in the last 2 hours (path only)"
+          journalctl -u loader-data-gov-gr --since "-2hours" --no-pager | grep -i "retention\|POST /admin/sources" | tail -8 || true
+          echo "(end)"
