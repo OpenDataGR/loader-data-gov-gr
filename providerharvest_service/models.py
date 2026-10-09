@@ -431,3 +431,17 @@ class FtpAllowedIp(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
 
     account: Mapped["FtpAccount"] = relationship(back_populates="allowed_ips")
+
+
+class LoadTarget(Base):
+    """The Load Box's settings for one source: where its transformed output goes after the Transform Box.
+    Today one destination, the published API endpoint (``GET /data/{source name}``, the newest good output),
+    off until an admin turns it on. One row per source; the row exists only once something was set."""
+
+    __tablename__ = "load_target"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_new_id)
+    source_id: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    api_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_by: Mapped[str] = mapped_column(String, nullable=False, default="")

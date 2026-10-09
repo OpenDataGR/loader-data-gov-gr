@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% import "_macros.html" as macros %}
+{% block title %}Load Box -- loader.data.gov.gr{% endblock %}
+{% block content %}
+  <div class="panel">
+    <h1>Load Box</h1>
+    <p class="subtitle">
+      Where a source's result goes. Publishing a source gives its newest transformed output a fixed public address that anyone can call
+      -- or that a CKAN resource can link to -- and it always answers with the latest good output. Nothing is published until you switch it on.
+    </p>
+    {% if not rows %}
+      <div class="empty-state">{{ macros.icon("inbox", 40) }}<p>No sources yet. Register one in the Extract Box first.</p></div>
+    {% else %}
+      <table>
+        <thead><tr><th>Source</th><th>Newest output</th><th>API address</th><th></th></tr></thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td><div class="name-title">{{ r.source.title }}</div><span class="name-slug">{{ r.source.name }}</span></td>
+            <td>
+              {% if not r.transform %}<span class="muted">no transform -- <a href="/transform/sources/{{ r.source.id }}">set one up</a></span>
+              {% elif r.latest %}{{ r.latest.created_at|short_utc }} UTC<br><span class="muted">{{ r.latest.filename }} &middot; {{ r.latest.records_out }} records</span>
+              {% else %}<span class="muted">nothing transformed yet</span>{% endif %}
+            </td>
+            <td>
+              {% if r.published %}
+                <span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>published</span></span><br>
+                <a href="{{ r.url }}" target="_blank" rel="noopener"><code>{{ r.url }}</code></a>
+              {% else %}<span class="badge badge-pending"><span>not published</span></span>{% endif %}
+            </td>
+            <td>
+              <form method="post" action="/load/sources/{{ r.source.id }}/api" style="margin:0;"{% if r.published %} onsubmit="return confirm('Stop publishing {{ r.source.name }}? Anyone using its address will get a 404.');"{% endif %}>
+                <input type="hidden" name="enabled" value="{{ '0' if r.published else '1' }}">
+                <button type="submit" class="btn-secondary btn-sm">{{ "Unpublish" if r.published else "Publish" }}</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
+{% endblock %}

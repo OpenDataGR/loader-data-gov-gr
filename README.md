@@ -30,7 +30,7 @@ The service follows an ETL flow, and its tabs follow it: sources come **in**, ma
 |---|---|---|
 | **Extract Box** | the sources: registering them, how they deliver (pull over HTTP/SFTP/FTP, or push by API key or FTP/SFTP login), their runs and files | built (this was "Provider portal") |
 | **Transform Box** | turning what was extracted into what is wanted: read the format, add columns from an index table, filter, rename, convert, output | built (first slice, below) |
-| **Load Box** | sending the result out to data.gov.gr or elsewhere | planned |
+| **Load Box** | sending the result out to data.gov.gr or elsewhere | first slice built (published API address, below); CKAN push planned |
 | Admin dashboard, **Data boxes**, Security box | operating it: approvals and retention; the HTTP and FTP machines; access control | built |
 
 Only the tab is renamed for now; the addresses (`/provider/...`) are unchanged so existing links and the providers' own
@@ -188,6 +188,8 @@ for confirmation, since it replaces the current password at once and breaks the
 provider's uploads until they switch), and for an HTTPS push source **Rotate API
 key** (`/provider/sources/{id}/rotate-key`: the old key stops working immediately;
 before this a lost key meant deleting and re-registering the source).
+
+**Load Box** (`/load`; `load_api.py`, `ui_load.py`, `LoadTarget`). Per source, an admin can *publish* the transformed output: `GET /data/{source name}` (also `/data/{source name}/{any file name}`, for tools that want an extension) then answers, to anyone and without a login, with the newest successfully transformed output that still has its contents, in its own content type, with an `ETag` (conditional requests get 304) and a 60 s cache hint. Off by default; only for an active source; an unknown, unpublished, paused or empty source is the same 404; per-address limit of 60/min (shared limiter with `/proxy`). The planned next destination is a CKAN resource that links to this address, pushed automatically after each transform and by hand.
 
 **Transform Box** (`/transform`; `transform_engine.py`, `transform_forms.py`, `transform_runner.py`, `ui_transform.py`). A source's
 transform is an ordered list of steps run on every file it receives (and re-runnable over earlier ones), producing JSON, JSON Lines,
