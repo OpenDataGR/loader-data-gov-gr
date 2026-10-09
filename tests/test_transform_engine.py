@@ -308,7 +308,7 @@ def test_xml_output_escapes_text_marks_empty_values_and_refuses_bad_names():
 
 def test_a_whole_transform_reports_counts_and_a_preview():
     result = _go(LOOKUP, output="csv")
-    assert (result.records_in, result.records_out, result.content_type, result.extension) == (3, 3, "text/csv", "csv")
+    assert (result.records_in, result.records_out, result.content_type, result.extension) == (3, 3, "text/csv; charset=utf-8", "csv")
     assert result.content.decode().split("\n")[0] == "id,time,state,count,occ,speed,vehicle,name,latitude"
     assert result.preview[0]["name"] == "Kifisias"
 
@@ -395,3 +395,43 @@ def test_the_record_that_holds_the_most_is_offered_first_and_plain_text_leaves_n
     assert "value" in paths  # a leaf with attributes can be a record (as in a flat list of items)
     flat = "<l><i code='A'/><i code='B'/><i code='C'/></l>"
     assert [c["path"] for c in te.candidates(flat.encode(), "xml_records")] == ["i"]
+
+
+# -- CSV that Excel opens correctly -------------------------------------------------------------------------------------------
+
+GREEK_ROWS = [{"όνομα": "Λεωφόρος Κηφισίας", "n": 1}, {"όνομα": "Α;Β", "n": None}]
+
+
+def test_a_csv_for_excel_starts_with_a_utf_8_byte_order_mark_and_reads_back_as_greek():
+    data = te.write_output(GREEK_ROWS, "csv", bom=True)
+    assert data[:3] == b"\xef\xbb\xbf" and data.decode("utf-8-sig").split("\n")[1] == "Λεωφόρος Κηφισίας,1"
+
+
+def test_without_the_mark_the_file_is_plain_utf_8():
+    data = te.write_output(GREEK_ROWS, "csv", bom=False)
+    assert data[:3] != b"\xef\xbb\xbf" and data.decode("utf-8").startswith("όνομα,n")
+    assert te.write_output(GREEK_ROWS, "csv").decode("utf-8").startswith("όνομα,n")  # the engine's own default: no mark
+
+
+@pytest.mark.parametrize("delimiter, header, second_row", [
+    (",", "όνομα,n", "Α;Β,"), (";", "όνομα;n", '"Α;Β";'), ("\t", "όνομα\tn", "Α;Β\t"), ("|", "όνομα|n", "Α;Β|"),
+])
+def test_the_separator_is_a_choice_and_a_value_containing_it_is_quoted(delimiter, header, second_row):
+    lines = te.write_output(GREEK_ROWS, "csv", delimiter=delimiter).decode("utf-8").split("\n")
+    assert lines[0] == header and lines[2] == second_row  # "Α;Β" is quoted only where ";" is the separator
+
+
+@pytest.mark.parametrize("bad", ["", "::", "x", " ", "\n"])
+def test_a_separator_that_is_not_offered_is_refused(bad):
+    with pytest.raises(TransformError, match="separators"):
+        te.write_output(GREEK_ROWS, "csv", delimiter=bad)
+
+
+def test_the_settings_only_affect_csv_output():
+    assert te.write_output([{"a": "ς"}], "json", delimiter=";", bom=True) == te.write_output([{"a": "ς"}], "json")
+    assert te.write_output([{"a": "ς"}], "xml", delimiter=";", bom=True) == te.write_output([{"a": "ς"}], "xml")
+
+
+def test_run_passes_the_csv_settings_through():
+    result = te.run(b"<l><r><n>\xce\xa9</n></r></l>", [{"type": "xml_records", "record": "r", "fields": [{"name": "n", "path": "n"}]}], output="csv", delimiter=";", bom=True)
+    assert result.content[:3] == b"\xef\xbb\xbf" and result.content_type == "text/csv; charset=utf-8"

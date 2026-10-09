@@ -72,7 +72,7 @@ def test_the_output_format_and_name_follow_the_transform(client, source, _isolat
     _transform(_isolated_db, source["id"], output="csv")
     _upload(client, source, name="export.2026.xml")
     (out,) = _outputs(_isolated_harvest_db)
-    assert out.filename == "export.2026.csv" and out.content.decode().startswith("id,time,state,count,occ,speed,vehicle,name,lat")
+    assert out.filename == "export.2026.csv" and out.content.decode("utf-8-sig").startswith("id,time,state,count,occ,speed,vehicle,name,lat")
 
 
 def test_nothing_runs_for_a_source_without_a_transform_or_with_a_disabled_one(client, source, _isolated_db, _isolated_harvest_db):
@@ -252,3 +252,26 @@ def test_the_outputs_are_kept_when_the_period_has_not_passed(client, source, _is
     with _isolated_harvest_db() as h:
         retention.purge_source(h, source["id"], 90)
         assert h.scalar(select(TransformedFile)).content != b""
+
+
+# -- the CSV settings ---------------------------------------------------------------------------------------------------------
+
+def _csv_transform(session_factory, source_id, **settings):
+    with session_factory() as s:
+        t = Transform(source_id=source_id, steps=json.dumps([XML_STEP]), output_format="csv", enabled=True, **settings)
+        s.add(t)
+        s.commit()
+
+
+def test_a_transform_made_before_the_csv_settings_existed_gets_excel_friendly_output(client, source, _isolated_db, _isolated_harvest_db):
+    _csv_transform(_isolated_db, source["id"])  # csv_delimiter and csv_bom are NULL, as in an existing row
+    _upload(client, source)
+    (out,) = _outputs(_isolated_harvest_db)
+    assert out.content[:3] == b"\xef\xbb\xbf" and out.content.decode("utf-8-sig").split("\n")[0].startswith("id,time,state,")
+
+
+def test_the_chosen_separator_and_mark_are_used(client, source, _isolated_db, _isolated_harvest_db):
+    _csv_transform(_isolated_db, source["id"], csv_delimiter=";", csv_bom=False)
+    _upload(client, source)
+    (out,) = _outputs(_isolated_harvest_db)
+    assert out.content[:3] != b"\xef\xbb\xbf" and out.content.decode("utf-8").split("\n")[0].startswith("id;time;state;")

@@ -195,7 +195,7 @@ def _editor_context(session: Session, hsession: Session, source: ProviderSource,
     return {
         "source": source, "transform": transform, "steps": list(enumerate(steps, 1)), "problems": transform_runner.check(session, transform) if transform else [],
         "outputs": transform_runner.recent_outputs(hsession, source.id) if transform else [], "counts": transform_runner.output_counts(hsession, source.id) if transform else None,
-        "formats": te.OUTPUTS, "choices": transform_runner.REPROCESS_CHOICES, "has_sample": transform_runner.sample_file(hsession, source.id) is not None,
+        "formats": te.OUTPUTS, "delimiters": te.CSV_DELIMITERS, "choices": transform_runner.REPROCESS_CHOICES, "has_sample": transform_runner.sample_file(hsession, source.id) is not None,
         "add_types": [(k, v) for k, v in _SECTIONS.items() if k != "read"], "preview": None,
         "flash": request.query_params.get("flash"), "flash_kind": request.query_params.get("flash_kind", "success"), "size": _size, **extra,
     }
@@ -257,14 +257,18 @@ async def set_output(source_id: str, request: Request, session: Session = Depend
     form = await request.form()
     fmt = str(form.get("format") or "")
     root, record = str(form.get("root") or "records").strip(), str(form.get("record") or "record").strip()
+    delimiter = str(form.get("delimiter") or ",")
     try:
         if fmt not in te.OUTPUTS:
             raise te.TransformError("Choose one of the offered output formats.")
+        if delimiter not in te.CSV_DELIMITERS:
+            raise te.TransformError("Choose one of the offered CSV separators.")
         te._check_name(root, "The XML root name")
         te._check_name(record, "The XML record name")
     except te.TransformError as exc:
         return _go(back, str(exc), "error")
     transform.output_format, transform.root_name, transform.record_name = fmt, root, record
+    transform.csv_delimiter, transform.csv_bom = delimiter, bool(form.get("bom"))
     session.commit()
     return _go(back, "Output set to %s." % te.OUTPUTS[fmt][2])
 

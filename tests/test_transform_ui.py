@@ -467,3 +467,42 @@ def test_leaving_a_name_as_the_suggestion_or_using_greek_ones_both_work(client, 
     assert "added" in _flash(_go(client, source, "steps/new", data=form))
     bad = {"kind": "lookup", "table": "stations", "key": "id", "table_key": "MS", "add": ["ΚΑΤ/ΣΗ"], "as::ΚΑΤ/ΣΗ": "ΚΑΤ/ΣΗ"}
     assert "no spaces or symbols" in _go(client, source, "steps/new", data=bad).text
+
+
+# -- CSV settings on the page ---------------------------------------------------------------------------------------------------
+
+def test_the_csv_settings_are_offered_with_excel_friendly_defaults_and_saved(client, source, _isolated_db):
+    _go(client, source, "create")
+    page = client.get("/transform/sources/%s" % source["id"]).text
+    assert "CSV separator" in page and "semicolon" in page and "Mark the file as UTF-8" in page
+    assert re.search(r'name="bom" value="1"[^>]*checked', page)  # on by default
+    resp = _go(client, source, "output", data={"format": "csv", "root": "records", "record": "record", "delimiter": ";", "bom": "1"})
+    assert "Output set to CSV" in _flash(resp)
+    with _isolated_db() as s:
+        t = transform_runner.get_transform(s, source["id"])
+        assert (t.output_format, t.csv_delimiter, t.csv_bom) == ("csv", ";", True)
+    _go(client, source, "output", data={"format": "csv", "root": "records", "record": "record", "delimiter": "\t"})  # the box left unticked
+    with _isolated_db() as s:
+        t = transform_runner.get_transform(s, source["id"])
+        assert (t.csv_delimiter, t.csv_bom) == ("\t", False)
+
+
+def test_a_separator_that_is_not_offered_is_refused_and_nothing_changes(client, source, _isolated_db):
+    _go(client, source, "create")
+    assert "separators" in _flash(_go(client, source, "output", data={"format": "csv", "delimiter": "x"}))
+    with _isolated_db() as s:
+        assert transform_runner.get_transform(s, source["id"]).csv_delimiter is None
+
+
+def test_a_csv_download_says_it_is_utf_8_and_opens_as_greek(client, source, _isolated_db, _isolated_harvest_db):
+    _upload_data(client, source)
+    _upload_table(client)
+    _build(client, source, READER_FORM, LOOKUP_FORM)
+    _go(client, source, "output", data={"format": "csv", "delimiter": ";", "bom": "1"})
+    _go(client, source, "enabled", data={"enabled": "1"})
+    _upload_data(client, source)
+    with _isolated_harvest_db() as h:
+        out_id = h.scalar(select(TransformedFile.id))
+    resp = client.get("/transform/sources/%s/outputs/%s/download" % (source["id"], out_id))
+    assert resp.headers["content-type"] == "text/csv; charset=utf-8" and resp.content[:3] == b"\xef\xbb\xbf"
+    assert resp.content.decode("utf-8-sig").split("\n")[0].startswith("id;time;state;count;")

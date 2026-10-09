@@ -277,6 +277,9 @@ class Transform(Base):
     output_format: Mapped[str] = mapped_column(String, nullable=False, default="json")
     root_name: Mapped[str] = mapped_column(String, nullable=False, default="records")  # XML output only
     record_name: Mapped[str] = mapped_column(String, nullable=False, default="record")  # XML output only
+    # CSV output only. NULL (a transform made before these existed) means the defaults: comma, with a byte-order mark.
+    csv_delimiter: Mapped[str | None] = mapped_column(String, nullable=True)
+    csv_bom: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)

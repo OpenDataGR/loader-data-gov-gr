@@ -80,6 +80,17 @@
         <button type="submit" class="btn-secondary">Save</button>
       </form>
       <p class="muted" style="margin:0;">The XML names are used only when the format is XML.</p>
+      <form class="inline-form" method="post" action="/transform/sources/{{ source.id }}/output" style="margin-top:0.6rem;">
+        <input type="hidden" name="format" value="{{ transform.output_format }}">
+        <input type="hidden" name="root" value="{{ transform.root_name }}">
+        <input type="hidden" name="record" value="{{ transform.record_name }}">
+        <div><label for="delim">CSV separator</label>
+          <select id="delim" name="delimiter">{% for key, text in delimiters.items() %}<option value="{{ key }}"{% if key == (transform.csv_delimiter or ",") %} selected{% endif %}>{{ text }}</option>{% endfor %}</select></div>
+        <div><label style="display:flex; gap:0.4rem; align-items:center; font-weight:400; margin:0;"><input type="checkbox" name="bom" value="1" style="width:auto; margin:0;"{% if transform.csv_bom is none or transform.csv_bom %} checked{% endif %}>
+          Mark the file as UTF-8 so Excel shows Greek correctly</label></div>
+        <button type="submit" class="btn-secondary">Save CSV settings</button>
+      </form>
+      <p class="muted" style="margin:0;">Only used when the format is CSV. Re-run earlier files (below) to apply a change to outputs already made.</p>
 
       <h2 style="font-size:1.05rem; margin:1.6rem 0 0.2rem;">Try it</h2>
       <p class="muted" style="margin:0 0 0.4rem;">Runs the steps on this source's newest stored file and shows the result. Nothing is stored.</p>

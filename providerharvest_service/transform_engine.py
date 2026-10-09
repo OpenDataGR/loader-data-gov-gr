@@ -763,27 +763,31 @@ OUTPUTS = {
     "json": ("application/json", "json", "JSON (a list of records)"),
     "jsonl": ("application/x-ndjson", "jsonl", "JSON Lines (one record per line)"),
     "xml": ("application/xml", "xml", "XML"),
-    "csv": ("text/csv", "csv", "CSV"),
+    "csv": ("text/csv; charset=utf-8", "csv", "CSV"),
 }
+CSV_DELIMITERS = {",": "comma ( , )", ";": "semicolon ( ; ) -- what Excel with Greek or other European settings expects", "\t": "tab", "|": "pipe ( | )"}
 
 
-def write_output(records: list[Record], fmt: str, *, root: str = "records", record: str = "record") -> bytes:
+def write_output(records: list[Record], fmt: str, *, root: str = "records", record: str = "record", delimiter: str = ",", bom: bool = False) -> bytes:
     if fmt == "json":
         return json.dumps(records, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     if fmt == "jsonl":
         return "\n".join(json.dumps(r, ensure_ascii=False, separators=(",", ":")) for r in records).encode("utf-8")
     if fmt == "csv":
+        if delimiter not in CSV_DELIMITERS:
+            raise TransformError("Choose one of the offered CSV separators.")
         names: list[str] = []
         for r in records:
             for k in r:
                 if k not in names:
                     names.append(k)
         buffer = io.StringIO()
-        writer = csv.writer(buffer, lineterminator="\n")
+        writer = csv.writer(buffer, lineterminator="\n", delimiter=delimiter)
         writer.writerow(names)
         for r in records:
             writer.writerow(["" if r.get(n) is None else r.get(n) for n in names])
-        return buffer.getvalue().encode("utf-8")
+        # A leading byte-order mark is how Excel knows a file is UTF-8 (without it Greek turns to garbage).
+        return buffer.getvalue().encode("utf-8-sig" if bom else "utf-8")
     if fmt == "xml":
         top = ET.Element(_check_name(root, "The XML root name"))
         for r in records:
@@ -812,7 +816,7 @@ class Result:
 
 
 def run(content: bytes, steps: list[dict], *, output: str = "json", lookups: dict[str, dict] | None = None,
-        root: str = "records", record: str = "record") -> Result:
+        root: str = "records", record: str = "record", delimiter: str = ",", bom: bool = False) -> Result:
     """Apply ``steps`` to a received file. Raises ``TransformError``; never anything else for bad input."""
     if len(content) > MAX_INPUT_BYTES:
         raise TransformError("The file is larger than %d bytes." % MAX_INPUT_BYTES)
@@ -827,7 +831,7 @@ def run(content: bytes, steps: list[dict], *, output: str = "json", lookups: dic
         ctx = Context(lookups=lookups or {})
         for step in steps[1:]:
             records = STEPS[step["type"]]["apply"](records, step, ctx)
-        data = write_output(records, output, root=root, record=record)
+        data = write_output(records, output, root=root, record=record, delimiter=delimiter, bom=bom)
     except TransformError:
         raise
     except (KeyError, TypeError, AttributeError, IndexError, RecursionError, MemoryError) as exc:

@@ -81,6 +81,7 @@ def apply(session: Session, transform: Transform, content: bytes, filename: str 
     return engine.run(
         content, steps, output=transform.output_format, lookups=load_lookups(session, lookup_names(steps)),
         root=transform.root_name, record=transform.record_name,
+        delimiter=transform.csv_delimiter or ",", bom=True if transform.csv_bom is None else bool(transform.csv_bom),
     )
 
 
