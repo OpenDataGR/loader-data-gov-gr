@@ -264,6 +264,41 @@ class FtpBoxStatus(Base):
         return json.loads(self.banned_ips) if self.banned_ips else []
 
 
+class Transform(Base):
+    """What to do with one source's input before it goes anywhere: an ordered list of steps (see
+    transform_engine.py) and the output format. One per source. The original file is never changed;
+    the output is stored beside it (``TransformedFile`` in the harvest database)."""
+
+    __tablename__ = "transform"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_new_id)
+    source_id: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    steps: Mapped[str] = mapped_column(String, nullable=False, default="[]")  # JSON list of step objects
+    output_format: Mapped[str] = mapped_column(String, nullable=False, default="json")
+    root_name: Mapped[str] = mapped_column(String, nullable=False, default="records")  # XML output only
+    record_name: Mapped[str] = mapped_column(String, nullable=False, default="record")  # XML output only
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_by: Mapped[str] = mapped_column(String, nullable=False, default="")
+
+
+class LookupTable(Base):
+    """An index table an admin uploaded (CSV or JSON): rows that a transform's "lookup" step matches
+    against, to add columns to records (for example a station id -> its name and location)."""
+
+    __tablename__ = "lookup_table"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_new_id)
+    name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    description: Mapped[str] = mapped_column(String, nullable=False, default="")
+    columns: Mapped[str] = mapped_column(String, nullable=False, default="[]")  # JSON list of column names
+    rows: Mapped[str] = mapped_column(String, nullable=False, default="[]")  # JSON list of {column: value}
+    row_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    uploaded_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
+    uploaded_by: Mapped[str] = mapped_column(String, nullable=False, default="")
+
+
 class BoxSample(Base):
     """One reading of a box's figures, kept for the small charts on the Data boxes page (see
     box_history.py): at most one per box per five-minute bucket, kept seven days."""

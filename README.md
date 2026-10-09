@@ -29,7 +29,7 @@ The service follows an ETL flow, and its tabs follow it: sources come **in**, ma
 | Tab | Role | State |
 |---|---|---|
 | **Extract Box** | the sources: registering them, how they deliver (pull over HTTP/SFTP/FTP, or push by API key or FTP/SFTP login), their runs and files | built (this was "Provider portal") |
-| **Transform Box** | turning what was extracted into what is wanted (field mapping, cleaning) | planned |
+| **Transform Box** | turning what was extracted into what is wanted: read the format, add columns from an index table, filter, rename, convert, output | built (first slice, below) |
 | **Load Box** | sending the result out to data.gov.gr or elsewhere | planned |
 | Admin dashboard, **Data boxes**, Security box | operating it: approvals and retention; the HTTP and FTP machines; access control | built |
 
@@ -188,6 +188,22 @@ for confirmation, since it replaces the current password at once and breaks the
 provider's uploads until they switch), and for an HTTPS push source **Rotate API
 key** (`/provider/sources/{id}/rotate-key`: the old key stops working immediately;
 before this a lost key meant deleting and re-registering the source).
+
+**Transform Box** (`/transform`; `transform_engine.py`, `transform_forms.py`, `transform_runner.py`, `ui_transform.py`). A source's
+transform is an ordered list of steps run on every file it receives (and re-runnable over earlier ones), producing JSON, JSON Lines,
+XML or CSV stored beside the original -- which is never changed. It is built to be generic: step 1 is a **reader** for the file's
+format (XML, JSON or CSV, picked from a real stored file: the page finds the repeating records and their fields, so choosing them is
+clicking, not typing paths; XML is read by element name, ignoring namespaces and prefixes, and a repeated part inside a record can be
+turned into one row per repeat), and every later step works on the same flat records whatever the format: **lookup** (add columns from
+an uploaded **index table**, e.g. a station id -> its name and location, with a choice of what to do when there is no match),
+**filter**, **rename**, **convert** (int, float, bool, string, datetime to ISO UTC), **keep/remove fields**, **add a field** (constant
+or built from other fields). A new format or step is one more entry in `READERS` / `STEPS`. The page offers **Try on the latest file**
+(runs the steps and shows counts, the first rows and which ids found no match; stores nothing), switch on/off, **Run it again on earlier
+files** (newest 10/50/200, with a time limit), and downloads of the outputs. A transform that stops holding together (a step uses a field
+no earlier step produces, an index table or column is gone) is refused or switched off with the reason. Safety: provider XML is parsed
+with `defusedxml` (DTDs and entities refused), steps are data not code, and input, record, step and index-table sizes are capped. A
+failure leaves an error row and never blocks the file from arriving. Outputs (`TransformedFile`, harvest database) follow the source's
+loader retention: contents emptied, row kept. Only file inputs are transformed so far (pushed files; HTTP-source records are not).
 
 **Runs page.** A source's Runs page (`/provider/sources/{id}/runs`) pages through its whole history
 (it used to show only the newest 20): 25, 50 or 100 per page, newest first, with the total ("Showing 26-50 of

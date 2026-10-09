@@ -68,6 +68,30 @@ class HarvestedRecord(HarvestBase):
     run: Mapped["HarvestRun"] = relationship(back_populates="records")
 
 
+class TransformedFile(HarvestBase):
+    """The output of a source's transform for one run (see transform_runner.py): the transformed bytes
+    plus how it went. One per run (a re-run replaces it). ``status`` is "ok" or "error"; an error keeps
+    the message and no content, and never touches the original ``HarvestedFile``. Its contents follow the
+    same retention as the file it came from (emptied, row kept)."""
+
+    __tablename__ = "transformed_file"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_new_id)
+    run_id: Mapped[str] = mapped_column(ForeignKey("harvest_run.id"), nullable=False, unique=True, index=True)
+    source_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    transform_id: Mapped[str] = mapped_column(String, nullable=False)
+    filename: Mapped[str] = mapped_column(String, nullable=False, default="")
+    content_type: Mapped[str] = mapped_column(String, nullable=False, default="application/octet-stream")
+    size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False, default=b"")
+    records_in: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    records_out: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    stats: Mapped[str] = mapped_column(String, nullable=False, default="{}")  # JSON: lookup misses, dropped, conversion errors
+    status: Mapped[str] = mapped_column(String, nullable=False, default="ok")
+    error_message: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class HarvestedFile(HarvestBase):
     """One fetched whole file from one run, for SFTP/SCP/FTP sources --
     HTTP sources use ``HarvestedRecord`` instead (per-record JSON, not

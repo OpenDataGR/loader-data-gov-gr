@@ -30,7 +30,7 @@ from typing import Callable
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from providerharvest_service.harvest_models import HarvestedFile, HarvestRun
+from providerharvest_service.harvest_models import HarvestedFile, HarvestRun, TransformedFile
 from providerharvest_service.models import FtpAccount, ProviderSource
 
 logger = logging.getLogger(__name__)
@@ -166,7 +166,13 @@ def purge_source(hsession: Session, source_id: str, days: int, *, now: datetime.
         return 0, 0
     cutoff = (now or _now()) - datetime.timedelta(days=days)
     files, size = preview(hsession, source_id, days, now=now)
+    # A transform's output is kept as long as the file it came from: its contents go on the same day.
+    hsession.execute(update(TransformedFile).where(
+        TransformedFile.source_id == source_id, TransformedFile.created_at < cutoff,
+        TransformedFile.size > 0, func.length(TransformedFile.content) > 0,
+    ).values(content=b""))
     if not files:
+        hsession.commit()
         return 0, 0
     hsession.execute(update(HarvestedFile).where(*_candidates(source_id, cutoff)).values(content=b""))
     hsession.commit()

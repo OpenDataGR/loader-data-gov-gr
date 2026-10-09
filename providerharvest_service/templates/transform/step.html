@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% import "_macros.html" as macros %}
+{% block title %}{{ "Edit" if number else "Add" }} a step -- {{ source.title }} -- loader.data.gov.gr{% endblock %}
+{% block content %}
+  <style>
+    .field-table td, .field-table th { padding: 0.3rem 0.5rem; vertical-align: middle; }
+    .field-table input[type=text] { margin: 0; padding: 0.3rem 0.5rem; min-width: 9rem; }
+    .pick { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.3rem 0 0.8rem; }
+    .pick a, .pick span.cur { padding: 0.25rem 0.7rem; border: 1px solid var(--color-border); border-radius: 6px; text-decoration: none; font-size: 0.9rem; }
+    .pick span.cur { background: var(--color-primary-mid); color: #fff; border-color: var(--color-primary-mid); }
+    .problems { background: #fdecea; border: 1px solid #f3c2c2; color: #7a1f1f; padding: 0.6rem 0.9rem; border-radius: var(--radius); margin: 0.8rem 0; font-size: 0.9rem; }
+    .row-pair { display: flex; gap: 0.6rem; margin: 0.25rem 0; flex-wrap: wrap; }
+    .row-pair select, .row-pair input { width: auto; margin: 0; }
+    .checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: 0.2rem 1rem; margin: 0.3rem 0 0.8rem; }
+    .checks label { display: flex; gap: 0.4rem; align-items: center; font-weight: 400; margin: 0; }
+    .checks input { width: auto; margin: 0; }
+  </style>
+
+  <div class="panel">
+    <h1>{{ "Edit" if number else "Add" }}: {{ title }}</h1>
+    <p class="subtitle"><a href="/transform/sources/{{ source.id }}">&larr; back to the transform</a> &middot; {{ source.title }}{% if number %} &middot; step {{ number }}{% endif %}</p>
+    {% if error %}<div class="problems">{{ error }}</div>{% endif %}
+
+    {% if kind == "read" %}
+      {% set r = reader %}
+      {% if r.error and not r.kind %}
+        <div class="problems">{{ r.error }}</div>
+        {% if r.sample %}
+          <div class="pick">{% for key, meta in r.readers.items() %}<a href="?format={{ key }}">{{ meta.label }}</a>{% endfor %}</div>
+        {% endif %}
+      {% else %}
+        <p class="muted" style="margin-top:0;">
+          Looking at <strong>{{ r.sample.filename }}</strong> (received {{ r.sample.fetched_at|utc }} UTC). Choose what one record is and which fields to keep.
+        </p>
+        {% if r.error %}<div class="problems">{{ r.error }}</div>{% endif %}
+
+        <label>Format</label>
+        <div class="pick">
+          {% for key, meta in r.readers.items() %}
+            {% if key == r.kind %}<span class="cur">{{ meta.label }}</span>{% else %}<a href="?format={{ key }}">{{ meta.label }}</a>{% endif %}
+          {% endfor %}
+        </div>
+
+        {% if r.kind != "csv_records" %}
+          <label>One record is each...</label>
+          {% if r.candidates %}
+            <div class="pick">
+              {% for c in r.candidates %}
+                {% if c.path == r.record %}<span class="cur">{{ c.path }} &times;{{ c.count }}</span>
+                {% else %}<a href="?format={{ r.kind }}&record={{ c.path|urlencode }}">{{ c.path }} &times;{{ c.count }}</a>{% endif %}
+              {% endfor %}
+            </div>
+            <p class="muted" style="margin:0 0 0.6rem;">The repeating parts of the file, with how many times each occurs. Usually the one with the most records you care about.</p>
+          {% else %}
+            <p class="muted">Nothing repeating was found in this file.</p>
+          {% endif %}
+        {% endif %}
+
+        {% if r.info %}
+          <form method="post" action="{{ '/transform/sources/%s/steps/%d/edit' % (source.id, number) if number else '/transform/sources/%s/steps/new' % source.id }}">
+            <input type="hidden" name="kind" value="read">
+            <input type="hidden" name="format" value="{{ r.kind }}">
+            <input type="hidden" name="record" value="{{ r.record }}">
+
+            {% if r.kind == "csv_records" %}
+              <div class="row-pair"><div><label for="delim">Delimiter</label><input id="delim" name="delimiter" value="{{ r.delimiter or ',' }}" size="2" maxlength="1"></div></div>
+            {% elif r.info.repeating %}
+              <label for="explode">A repeated part inside each record gets one row per repeat</label>
+              <select id="explode" name="explode" style="max-width:26rem;">
+                <option value="">none -- one row per record</option>
+                {% for p in r.info.repeating %}<option value="{{ p }}"{% if p == r.explode %} selected{% endif %}>{{ p }}</option>{% endfor %}
+              </select>
+              <p class="muted" style="margin:0.2rem 0 0.8rem;">If chosen, every selected field below that sits inside it is read from each repeat; the other fields are copied onto every row.
+                <label style="display:inline-flex; gap:0.3rem; font-weight:400;"><input type="checkbox" name="keep_empty" value="1" style="width:auto; margin:0;"{% if r.keep_empty %} checked{% endif %}> keep records that have no repeat</label></p>
+            {% endif %}
+
+            <label>Fields to keep</label>
+            <div class="scroll" style="overflow-x:auto;">
+              <table class="field-table">
+                <thead><tr><th></th><th>In the file</th><th>Call it</th><th>Example</th></tr></thead>
+                <tbody>
+                  {% for f in r.info.fields %}
+                  <tr>
+                    <td><input type="checkbox" name="path" value="{{ f.path }}" aria-label="Keep {{ f.path }}"{% if f.path in r.selected or (not r.selected and not number) %} checked{% endif %}></td>
+                    <td><code>{{ f.path }}</code>{% if f.repeats %} <span class="muted" title="Occurs more than once in a record">&#8635;</span>{% endif %}</td>
+                    <td><input type="text" name="name::{{ f.path }}" value="{{ r.selected.get(f.path, '') }}" placeholder="(automatic)" maxlength="60"></td>
+                    <td class="muted">{{ f.example or "" }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            <p class="muted" style="margin:0.4rem 0 0;">&#8635; marks a field that occurs more than once in one record. Leave "Call it" empty for an automatic name.</p>
+            <div style="display:flex; gap:0.6rem; margin-top:1rem;"><button type="submit">Save step</button><a class="btn btn-secondary" href="/transform/sources/{{ source.id }}">Cancel</a></div>
+          </form>
+        {% endif %}
+      {% endif %}
+
+    {% else %}
+      <form method="post" action="{{ '/transform/sources/%s/steps/%d/edit' % (source.id, number) if number else '/transform/sources/%s/steps/new' % source.id }}">
+        <input type="hidden" name="kind" value="{{ kind }}">
+        {% set e = existing %}
+        {% if not available and kind != "add_field" %}<p class="muted">No fields are known yet at this point in the steps.</p>{% endif %}
+
+        {% if kind == "lookup" %}
+          {% if not tables %}
+            <div class="problems">There is no index table yet. <a href="/transform">Upload one</a> first.</div>
+          {% else %}
+            <label for="table">Index table</label>
+            <select id="table" name="table" onchange="document.querySelectorAll('.tbl').forEach(function(d){d.hidden = d.dataset.table !== this.value}.bind(this))" style="max-width:20rem;">
+              {% for name in tables %}<option value="{{ name }}"{% if name == e.get('table') %} selected{% endif %}>{{ name }}</option>{% endfor %}
+            </select>
+            <label for="key">Match this field of the records</label>
+            <select id="key" name="key" style="max-width:20rem;">{% for f in available %}<option value="{{ f }}"{% if f == e.get('key') %} selected{% endif %}>{{ f }}</option>{% endfor %}</select>
+            {% set first = (e.get('table') if e.get('table') in tables else tables.keys()|first) %}
+            {% for name, columns in tables.items() %}
+              <div class="tbl" data-table="{{ name }}"{% if name != first %} hidden{% endif %}>
+                <label>...against this column of {{ name }}</label>
+                <select name="table_key" {% if name != first %}disabled{% endif %} style="max-width:20rem;">{% for c in columns %}<option value="{{ c }}"{% if c == e.get('table_key') %} selected{% endif %}>{{ c }}</option>{% endfor %}</select>
+                <label>and add these columns</label>
+                <table class="field-table"><tbody>
+                  {% for c in columns %}
+                    {% set added = (e.get('add') or []) | selectattr('column', 'equalto', c) | list %}
+                    <tr><td><input type="checkbox" name="add" value="{{ c }}"{% if added %} checked{% endif %}></td><td><code>{{ c }}</code></td>
+                        <td><input type="text" name="as::{{ c }}" value="{{ added[0]['as'] if added else '' }}" placeholder="call it {{ c }}" maxlength="60"></td></tr>
+                  {% endfor %}
+                </tbody></table>
+              </div>
+            {% endfor %}
+            <label for="onm">If a record has no match</label>
+            <select id="onm" name="on_missing" style="max-width:26rem;">
+              <option value="keep"{% if e.get('on_missing', 'keep') == 'keep' %} selected{% endif %}>keep it, with empty values for the new columns</option>
+              <option value="drop"{% if e.get('on_missing') == 'drop' %} selected{% endif %}>drop it</option>
+            </select>
+            <script>
+              // only the chosen table's inputs are submitted (the others are disabled)
+              (function () {
+                var sel = document.getElementById('table');
+                function sync() { document.querySelectorAll('.tbl').forEach(function (d) { var on = d.dataset.table === sel.value; d.hidden = !on; d.querySelectorAll('select,input').forEach(function (i) { i.disabled = !on; }); }); }
+                sel.addEventListener('change', sync); sync();
+              })();
+            </script>
+          {% endif %}
+
+        {% elif kind == "filter" %}
+          <label for="field">Keep records where this field</label>
+          <div class="row-pair">
+            <select id="field" name="field">{% for f in available %}<option value="{{ f }}"{% if f == e.get('field') %} selected{% endif %}>{{ f }}</option>{% endfor %}</select>
+            <select name="op" aria-label="Test">{% for key, text in ops.items() %}<option value="{{ key }}"{% if key == e.get('op', 'eq') %} selected{% endif %}>{{ text }}</option>{% endfor %}</select>
+            <input type="text" name="value" value="{{ e.get('value', '') }}" placeholder="value (a, b, c for a list)" aria-label="Value">
+          </div>
+          <p class="muted" style="margin:0;">Numbers are compared as numbers (10 is more than 9), anything else as text. "has a value" and "is empty" need no value.</p>
+
+        {% elif kind == "rename" %}
+          <label>Rename fields</label>
+          {% set mapping = (e.get('map') or {}).items() | list %}
+          {% for i in rename_rows %}
+            <div class="row-pair">
+              <select name="old{{ i }}" aria-label="Field"><option value="">--</option>{% for f in available %}<option value="{{ f }}"{% if mapping|length > i and mapping[i][0] == f %} selected{% endif %}>{{ f }}</option>{% endfor %}</select>
+              <span style="align-self:center;">&rarr;</span>
+              <input type="text" name="new{{ i }}" value="{{ mapping[i][1] if mapping|length > i else '' }}" placeholder="new name" maxlength="60" aria-label="New name">
+            </div>
+          {% endfor %}
+
+        {% elif kind == "convert" %}
+          <label>Convert field types</label>
+          {% set conv = (e.get('fields') or {}).items() | list %}
+          {% for i in convert_rows %}
+            <div class="row-pair">
+              <select name="field{{ i }}" aria-label="Field"><option value="">--</option>{% for f in available %}<option value="{{ f }}"{% if conv|length > i and conv[i][0] == f %} selected{% endif %}>{{ f }}</option>{% endfor %}</select>
+              <span style="align-self:center;">&rarr;</span>
+              <select name="to{{ i }}" aria-label="Type"><option value="">--</option>{% for t in types %}<option value="{{ t }}"{% if conv|length > i and conv[i][1] == t %} selected{% endif %}>{{ t }}</option>{% endfor %}</select>
+            </div>
+          {% endfor %}
+          <p class="muted" style="margin:0;">A value that cannot be converted becomes empty and is counted in the preview. Times become ISO UTC (2026-10-09T08:41:00Z).</p>
+
+        {% elif kind == "select" or kind == "drop" %}
+          <label>{{ "Keep only these fields (in this order of appearance)" if kind == "select" else "Remove these fields" }}</label>
+          <div class="checks">
+            {% for f in available %}<label><input type="checkbox" name="fields" value="{{ f }}"{% if f in (e.get('fields') or []) %} checked{% endif %}> {{ f }}</label>{% endfor %}
+          </div>
+
+        {% elif kind == "add_field" %}
+          <label for="name">New field name</label>
+          <input id="name" type="text" name="name" value="{{ e.get('name', '') }}" maxlength="60" style="max-width:20rem;">
+          <label for="akind">Its value</label>
+          <select id="akind" name="value_kind" style="max-width:22rem;">
+            <option value="constant"{% if e.get('kind', 'constant') == 'constant' %} selected{% endif %}>the same text on every record</option>
+            <option value="template"{% if e.get('kind') == 'template' %} selected{% endif %}>built from other fields</option>
+          </select>
+          <label for="avalue">Text, or a template such as <code>{id}-{vehicle}</code></label>
+          <input id="avalue" type="text" name="value" value="{{ e.get('value', '') }}" maxlength="200" style="max-width:30rem;">
+          {% if available %}<p class="muted" style="margin:0.2rem 0 0;">Fields you can use: {{ available|join(", ") }}</p>{% endif %}
+        {% endif %}
+
+        <div style="display:flex; gap:0.6rem; margin-top:1.1rem;"><button type="submit">Save step</button><a class="btn btn-secondary" href="/transform/sources/{{ source.id }}">Cancel</a></div>
+      </form>
+    {% endif %}
+  </div>
+{% endblock %}

@@ -20,8 +20,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
-from providerharvest_service import harvest_db, harvest_runner
+from providerharvest_service import harvest_db, harvest_runner, transform_runner
 from providerharvest_service.admin_auth import require_ftp_sync_key
 from providerharvest_service.db import get_session
 from providerharvest_service.models import FtpAccount, ProviderSource, _utcnow
@@ -88,6 +89,7 @@ async def relay_upload(
         raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, str(exc)) from exc
 
     run = harvest_runner.record_pushed_file(hsession, source, file.filename or "upload.bin", content)
+    await run_in_threadpool(transform_runner.on_new_file, session, hsession, source, run, file.filename or "upload.bin", content)
     # Only when it arrived -- not who from: the request here comes from
     # the relay box, and the provider's own address is reported
     # separately by that box (see admin_ftp.report_ftp_box_status).

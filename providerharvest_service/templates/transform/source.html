@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% import "_macros.html" as macros %}
+{% block title %}Transform -- {{ source.title }} -- loader.data.gov.gr{% endblock %}
+{% block content %}
+  <style>
+    .step-card { display: flex; gap: 0.9rem; align-items: flex-start; padding: 0.7rem 0; border-top: 1px solid var(--color-border); }
+    .step-no { flex: 0 0 1.8rem; height: 1.8rem; border-radius: 50%; background: var(--color-primary-mid); color: #fff; display: grid; place-items: center; font-size: 0.85rem; font-weight: 600; }
+    .step-body { flex: 1; min-width: 0; }
+    .step-body .what { font-weight: 600; }
+    .step-actions { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+    .step-actions form { margin: 0; }
+    .problems { background: #fdecea; border: 1px solid #f3c2c2; color: #7a1f1f; padding: 0.6rem 0.9rem; border-radius: var(--radius); margin: 0.8rem 0; font-size: 0.9rem; }
+    .inline-form { display: flex; gap: 0.6rem; align-items: flex-end; flex-wrap: wrap; margin: 0.4rem 0; }
+    .inline-form select, .inline-form input { width: auto; margin: 0; }
+    .scroll { overflow-x: auto; }
+    .stat-row { display: flex; gap: 1.4rem; flex-wrap: wrap; margin: 0.6rem 0; font-size: 0.9rem; }
+  </style>
+
+  <div class="panel">
+    <h1>Transform -- {{ source.title }}</h1>
+    <p class="subtitle"><a href="/transform">&larr; back to the Transform Box</a> &middot; <span class="name-slug">{{ source.name }}</span></p>
+
+    {% if not transform %}
+      <div class="empty-state">
+        {{ macros.icon("inbox", 40) }}
+        <p>This source has no transform yet.</p>
+        <form method="post" action="/transform/sources/{{ source.id }}/create"><button type="submit">Create a transform</button></form>
+      </div>
+    {% else %}
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap;">
+        <div>
+          Status:
+          {% if transform.enabled %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>on</span></span> <span class="muted">new files are transformed as they arrive</span>
+          {% else %}<span class="badge badge-pending"><span>off</span></span> <span class="muted">files arrive as they are</span>{% endif %}
+        </div>
+        <form method="post" action="/transform/sources/{{ source.id }}/enabled" style="margin:0;">
+          <input type="hidden" name="enabled" value="{{ '0' if transform.enabled else '1' }}">
+          <button type="submit" class="{{ 'btn-secondary' if transform.enabled else '' }}">{{ "Switch off" if transform.enabled else "Switch on" }}</button>
+        </form>
+      </div>
+
+      {% if problems %}<div class="problems"><strong>Not ready:</strong> {{ problems[0] }}{% if problems|length > 1 %} (and {{ problems|length - 1 }} more){% endif %}</div>{% endif %}
+
+      <h2 style="font-size:1.05rem; margin:1.4rem 0 0.2rem;">Steps</h2>
+      <p class="muted" style="margin:0 0 0.4rem;">Run in this order on every file.</p>
+      {% for n, step in steps %}
+        <div class="step-card">
+          <div class="step-no">{{ n }}</div>
+          <div class="step-body"><div class="what">{{ step|step_label }}</div><div class="muted">{{ step|step_summary }}</div></div>
+          <div class="step-actions">
+            <a class="btn btn-secondary btn-sm" href="/transform/sources/{{ source.id }}/steps/{{ n }}/edit">Edit</a>
+            {% if n > 2 %}<form method="post" action="/transform/sources/{{ source.id }}/steps/{{ n }}/move"><input type="hidden" name="direction" value="up"><button class="btn-secondary btn-sm" aria-label="Move up" title="Move up">&uarr;</button></form>{% endif %}
+            {% if n > 1 and n < steps|length %}<form method="post" action="/transform/sources/{{ source.id }}/steps/{{ n }}/move"><input type="hidden" name="direction" value="down"><button class="btn-secondary btn-sm" aria-label="Move down" title="Move down">&darr;</button></form>{% endif %}
+            <form method="post" action="/transform/sources/{{ source.id }}/steps/{{ n }}/remove" onsubmit="return confirm('Remove step {{ n }}?');"><button class="btn-secondary btn-sm">Remove</button></form>
+          </div>
+        </div>
+      {% endfor %}
+      <div style="border-top:1px solid var(--color-border); padding-top:0.8rem;">
+        {% if not steps %}
+          {% if has_sample %}
+            <a class="btn" href="/transform/sources/{{ source.id }}/steps/new?type=read">Add the first step: read the file</a>
+          {% else %}
+            <p class="muted" style="margin:0;">The first step reads the file, and it is chosen by looking at a real one. There is no stored file from this source yet -- once one arrives, come back here.</p>
+          {% endif %}
+        {% else %}
+          <form class="inline-form" method="get" action="/transform/sources/{{ source.id }}/steps/new">
+            <div><label for="addtype">Add a step</label>
+              <select id="addtype" name="type">{% for key, text in add_types %}<option value="{{ key }}">{{ text }}</option>{% endfor %}</select></div>
+            <button type="submit" class="btn-secondary">Add</button>
+          </form>
+        {% endif %}
+      </div>
+
+      <h2 style="font-size:1.05rem; margin:1.6rem 0 0.2rem;">Output</h2>
+      <form class="inline-form" method="post" action="/transform/sources/{{ source.id }}/output">
+        <div><label for="fmt">Format</label>
+          <select id="fmt" name="format">{% for key, meta in formats.items() %}<option value="{{ key }}"{% if key == transform.output_format %} selected{% endif %}>{{ meta[2] }}</option>{% endfor %}</select></div>
+        <div><label for="root">XML root</label><input id="root" name="root" value="{{ transform.root_name }}" size="10"></div>
+        <div><label for="rec">XML record</label><input id="rec" name="record" value="{{ transform.record_name }}" size="10"></div>
+        <button type="submit" class="btn-secondary">Save</button>
+      </form>
+      <p class="muted" style="margin:0;">The XML names are used only when the format is XML.</p>
+
+      <h2 style="font-size:1.05rem; margin:1.6rem 0 0.2rem;">Try it</h2>
+      <p class="muted" style="margin:0 0 0.4rem;">Runs the steps on this source's newest stored file and shows the result. Nothing is stored.</p>
+      <form method="post" action="/transform/sources/{{ source.id }}/preview"><button type="submit"{% if not has_sample %} disabled{% endif %}>Try on the latest file</button></form>
+      {% if preview %}
+        <div style="margin-top:1rem;" id="preview">
+          {% if preview.error %}
+            <div class="problems"><strong>It did not work:</strong> {{ preview.error }}</div>
+          {% endif %}
+          {% if preview.filename %}<p class="muted" style="margin:0 0 0.4rem;">On <strong>{{ preview.filename }}</strong>, received {{ preview.at|utc }} UTC.</p>{% endif %}
+          {% if preview.result %}
+            <div class="stat-row">
+              <span><strong>{{ "{:,}".format(preview.result.records_in) }}</strong> records read</span>
+              <span><strong>{{ "{:,}".format(preview.result.records_out) }}</strong> written</span>
+              <span>{{ size(preview.size) }} output</span>
+              {% if preview.result.stats.dropped_by_filter %}<span>{{ preview.result.stats.dropped_by_filter }} dropped by a filter</span>{% endif %}
+              {% if preview.result.stats.dropped_by_lookup %}<span>{{ preview.result.stats.dropped_by_lookup }} dropped: no match in an index table</span>{% endif %}
+            </div>
+            {% if preview.result.stats.lookup_missing %}
+              <div class="problems">{{ preview.result.stats.lookup_missing }} record{{ "" if preview.result.stats.lookup_missing == 1 else "s" }} found no match in an index table.
+                Not found: <code>{{ preview.result.stats.missing_keys|join(", ") }}</code>{% if preview.result.stats.lookup_missing > preview.result.stats.missing_keys|length %} ...{% endif %}</div>
+            {% endif %}
+            {% if preview.result.stats.conversion_errors %}
+              <div class="problems">Values that could not be converted (left empty):
+                {% for field, n in preview.result.stats.conversion_errors.items() %}{{ field }}: {{ n }}{% if not loop.last %}, {% endif %}{% endfor %}</div>
+            {% endif %}
+            <p class="muted" style="margin:0.6rem 0 0.3rem;">The first {{ preview.rows|length }} records:</p>
+            <div class="scroll"><table>
+              <thead><tr>{% for c in preview.columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+              <tbody>{% for r in preview.rows %}<tr>{% for c in preview.columns %}<td class="muted">{{ r.get(c) if r.get(c) is not none else "" }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+            </table></div>
+          {% endif %}
+        </div>
+      {% endif %}
+
+      <h2 style="font-size:1.05rem; margin:1.6rem 0 0.2rem;">Run it again on earlier files</h2>
+      <p class="muted" style="margin:0 0 0.4rem;">After changing the steps, or for files that arrived before the transform was on. Replaces the stored output of each run.</p>
+      <form class="inline-form" method="post" action="/transform/sources/{{ source.id }}/reprocess">
+        <div><label for="lim">Newest</label>
+          <select id="lim" name="limit">{% for n in choices %}<option value="{{ n }}">{{ n }} runs</option>{% endfor %}</select></div>
+        <button type="submit" class="btn-secondary"{% if problems %} disabled{% endif %}>Run now</button>
+      </form>
+
+      <h2 style="font-size:1.05rem; margin:1.6rem 0 0.2rem;">Recent outputs</h2>
+      {% if not outputs %}
+        <p class="muted" style="margin:0;">None yet. {% if not transform.enabled %}Switch the transform on, or run it on earlier files above.{% else %}The next file that arrives will produce one.{% endif %}</p>
+      {% else %}
+        <p class="muted" style="margin:0 0 0.4rem;">{{ counts.ok }} ok{% if counts.failed %}, {{ counts.failed }} failed{% endif %} in all. Newest {{ outputs|length }}:</p>
+        <div class="scroll"><table>
+          <thead><tr><th>When</th><th>Result</th><th>Records</th><th>Size</th><th></th></tr></thead>
+          <tbody>
+            {% for o in outputs %}
+            <tr>
+              <td class="muted">{{ o.created_at.strftime("%m-%d %H:%M:%S") }} UTC</td>
+              <td>{% if o.status == "ok" %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>ok</span></span>
+                  {% else %}<span class="badge badge-error" title="{{ o.error_message }}">{{ macros.icon("rejected", 13) }}<span>failed</span></span><div class="muted">{{ o.error_message }}</div>{% endif %}
+                  {% if o.status == "ok" and o.size and not o.has_content %}<span class="badge badge-pending" title="Removed when it passed its retention period"><span>removed</span></span>{% endif %}</td>
+              <td>{% if o.status == "ok" %}{{ "{:,}".format(o.records_in) }} &rarr; {{ "{:,}".format(o.records_out) }}{% endif %}</td>
+              <td class="muted">{% if o.status == "ok" %}{{ size(o.size) }}{% endif %}</td>
+              <td>{% if o.status == "ok" and o.has_content %}<a class="btn btn-secondary btn-sm" href="/transform/sources/{{ source.id }}/outputs/{{ o.id }}/download">{{ macros.icon("download", 14) }} Download</a>{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table></div>
+      {% endif %}
+    {% endif %}
+  </div>
+{% endblock %}

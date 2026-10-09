@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% import "_macros.html" as macros %}
+{% block title %}Index table {{ table.name }} -- loader.data.gov.gr{% endblock %}
+{% block content %}
+  <div class="panel">
+    <h1>Index table -- {{ table.name }}</h1>
+    <p class="subtitle"><a href="/transform">&larr; back to the Transform Box</a> &middot; {{ "{:,}".format(table.row_count) }} rows, {{ columns|length }} columns
+      &middot; uploaded {{ table.uploaded_at|short_utc }} UTC{% if table.uploaded_by %} by {{ table.uploaded_by }}{% endif %}</p>
+    {% if table.description %}<p class="muted" style="margin-top:0;">{{ table.description }}</p>{% endif %}
+
+    <p class="muted" style="margin:0 0 0.4rem;">The first {{ rows|length }} rows:</p>
+    <div style="overflow-x:auto;">
+      <table>
+        <thead><tr>{% for c in columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+        <tbody>{% for r in rows %}<tr>{% for c in columns %}<td class="muted">{{ r.get(c) if r.get(c) is not none else "" }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+      </table>
+    </div>
+
+    <p style="margin:1rem 0 0.4rem;">
+      Used by {{ used_by|length }} transform{{ "" if used_by|length == 1 else "s" }}.
+      <a class="btn btn-secondary btn-sm" href="/transform/tables/{{ table.id }}/download">Download as CSV</a>
+    </p>
+
+    <form method="post" action="/transform/tables/{{ table.id }}/replace" enctype="multipart/form-data" style="margin-top:1.2rem;">
+      <h2 style="font-size:1rem; margin:0 0 0.5rem;">Replace the contents</h2>
+      <p class="muted" style="margin-top:0;">Files that arrive afterwards use the new contents; already transformed files are not changed (re-run them from the source's page).
+        A transform that uses a column the new file lacks stops the replacement.</p>
+      <input type="file" name="file" required accept=".csv,.json,.txt">
+      <div style="margin-top:0.8rem;"><button type="submit">Replace</button></div>
+    </form>
+
+    <form method="post" action="/transform/tables/{{ table.id }}/delete" style="margin-top:1.4rem;"
+          onsubmit="return confirm('Delete the index table {{ table.name }}? This cannot be undone.');">
+      <button type="submit" class="btn-danger">Delete this table</button>
+      {% if used_by %}<span class="muted"> -- not possible while a transform uses it</span>{% endif %}
+    </form>
+  </div>
+{% endblock %}

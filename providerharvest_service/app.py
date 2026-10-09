@@ -38,6 +38,7 @@ from providerharvest_service.ui_admin_ftp import router as admin_ftp_ui_router
 from providerharvest_service.ui_admin_failed_logins import router as admin_failed_logins_ui_router
 from providerharvest_service.ui_admin_login import router as admin_login_ui_router
 from providerharvest_service.ui_provider import router as provider_sources_ui_router
+from providerharvest_service.ui_transform import router as transform_ui_router
 
 
 @asynccontextmanager
@@ -69,6 +70,7 @@ app.include_router(ftp_accounts_router)
 app.include_router(ftp_accounts_sync_router)
 app.include_router(provider_sources_ui_router)
 app.include_router(admin_sources_ui_router)
+app.include_router(transform_ui_router)
 app.include_router(admin_ftp_ui_router)
 app.include_router(admin_failed_logins_ui_router)
 app.include_router(admin_login_ui_router)

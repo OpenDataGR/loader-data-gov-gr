@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% import "_macros.html" as macros %}
+{% block title %}Transform Box -- loader.data.gov.gr{% endblock %}
+{% block content %}
+  <div class="panel">
+    <h1>Transform Box</h1>
+    <p class="subtitle">
+      What happens to a source's input before it goes anywhere: read the file, add columns from an index table, filter, rename, convert
+      -- as a list of steps. The original file is never changed; the result is stored beside it.
+    </p>
+    {% if not rows %}
+      <div class="empty-state">{{ macros.icon("inbox", 40) }}<p>No sources yet. Register one in the Extract Box first.</p></div>
+    {% else %}
+      <table>
+        <thead><tr><th>Source</th><th>Transform</th><th>Steps</th><th>Outputs</th><th>Latest</th><th></th></tr></thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td><div class="name-title">{{ r.source.title }}</div><span class="name-slug">{{ r.source.name }}</span></td>
+            <td>
+              {% if not r.transform %}<span class="muted">none</span>
+              {% elif r.transform.enabled %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>on</span></span>
+              {% else %}<span class="badge badge-pending"><span>off</span></span>{% endif %}
+            </td>
+            <td>{{ r.steps if r.transform else "" }}</td>
+            <td>
+              {% if r.counts %}{{ r.counts.ok }} ok{% if r.counts.failed %}, <span style="color:var(--status-rejected)">{{ r.counts.failed }} failed</span>{% endif %}{% endif %}
+            </td>
+            <td class="muted">{% if r.counts and r.counts.latest %}{{ r.counts.latest|short_utc }} UTC{% endif %}</td>
+            <td><a class="btn btn-secondary btn-sm" href="/transform/sources/{{ r.source.id }}">{{ "Open" if r.transform else "Set up" }}</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
+
+  <div class="panel" style="margin-top:1.5rem;">
+    <h1>Index tables</h1>
+    <p class="subtitle">
+      A table you upload (CSV or JSON, one row per item) that a transform can look things up in -- for example a station id, with its name and
+      location. Any transform can use any table; replace a table when its details change.
+    </p>
+    {% if tables %}
+      <table>
+        <thead><tr><th>Name</th><th>Columns</th><th>Rows</th><th>Uploaded</th><th>Used by</th><th></th></tr></thead>
+        <tbody>
+          {% for t in tables %}
+          <tr>
+            <td><div class="name-title">{{ t.table.name }}</div><span class="muted">{{ t.table.description }}</span></td>
+            <td class="muted">{{ t.columns|join(", ") }}</td>
+            <td>{{ "{:,}".format(t.table.row_count) }}</td>
+            <td class="muted">{{ t.table.uploaded_at|short_utc }} UTC{% if t.table.uploaded_by %} &middot; {{ t.table.uploaded_by }}{% endif %}</td>
+            <td>{{ t.used_by }} transform{{ "" if t.used_by == 1 else "s" }}</td>
+            <td><a class="btn btn-secondary btn-sm" href="/transform/tables/{{ t.table.id }}">Open</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+    <form method="post" action="/transform/tables" enctype="multipart/form-data" style="margin-top:1.2rem;">
+      <h2 style="font-size:1rem; margin:0 0 0.5rem;">Upload a new index table</h2>
+      <label for="tname">Name</label>
+      <input type="text" id="tname" name="name" required pattern="[a-z][a-z0-9_]{1,40}" placeholder="stations" style="max-width:18rem;">
+      <label for="tdesc">Description (optional)</label>
+      <input type="text" id="tdesc" name="description" maxlength="200" placeholder="Detector id, name and location" style="max-width:32rem;">
+      <label for="tfile">File (CSV with a header row, or JSON list of objects)</label>
+      <input type="file" id="tfile" name="file" required accept=".csv,.json,.txt">
+      <div style="margin-top:0.9rem;"><button type="submit">Upload</button></div>
+    </form>
+  </div>
+{% endblock %}

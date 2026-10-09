@@ -33,7 +33,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
-from providerharvest_service import failed_auth, harvest_db, harvest_runner, provider_sources, sender_allowlist
+from providerharvest_service import failed_auth, harvest_db, harvest_runner, provider_sources, sender_allowlist, transform_runner
 from providerharvest_service.client_addr import sender_address
 from providerharvest_service.db import get_session
 from providerharvest_service.models import ProviderSource, _utcnow
@@ -111,6 +111,7 @@ async def push_upload(
         raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, str(exc)) from exc
 
     run = harvest_runner.record_pushed_file(hsession, source, file.filename or "upload.bin", content)
+    await run_in_threadpool(transform_runner.on_new_file, session, hsession, source, run, file.filename or "upload.bin", content)
     source.last_received_at = _utcnow()
     if sender:
         source.last_sender = sender
