@@ -1,0 +1,48 @@
+name: Transform live check (one-off)
+
+# One-off, read-only: that the new transformed_file table exists in the harvest database, and that the engine
+# handles the real newest attica file -- the steps an admin would choose in the page (read XML, one row per
+# reading, convert types) plus an index with only two stations to see unmatched ids counted. Times it and
+# prints counts and three rows. Stores nothing. Deleted afterwards.
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: [self-hosted, loader]
+    steps:
+      - run: |
+          set -a; . /etc/loader-data-gov-gr.env; set +a
+          cd /opt/data-projects/loader-data-gov-gr
+          venv/bin/python - <<'PY'
+          import json, time
+          from sqlalchemy import text
+          from providerharvest_service import harvest_db, transform_engine as te, transform_runner
+
+          factory = harvest_db.get_session_factory()
+          with factory() as s:
+              print("transformed_file table:", s.execute(text("SELECT to_regclass('public.transformed_file')")).scalar())
+              sample = transform_runner.sample_file(s, s.execute(text("SELECT id FROM (SELECT source_id AS id, count(*) c FROM harvest_run GROUP BY 1 ORDER BY 2 DESC LIMIT 1) t")).scalar())
+          print("file:", sample.filename, len(sample.content), "bytes, received", sample.fetched_at)
+          kind = te.detect_format(sample.content, sample.filename)
+          cands = te.candidates(sample.content, kind)
+          print("detected:", kind, "| top repeating:", cands[:3])
+          info = te.describe_record(sample.content, kind, "ds")
+          print("fields found:", [f["path"] for f in info["fields"]][:14], "| repeating:", info["repeating"])
+          steps = [
+              {"type": "xml_records", "record": "ds",
+               "fields": [{"name": "id", "path": "identifier/ident"}, {"name": "time", "path": "data/timeline/timestamp"}, {"name": "state", "path": "data/detectorState"}],
+               "explode": {"path": "data/value", "fields": [{"name": "count", "path": "@count"}, {"name": "occ", "path": "@occ"}, {"name": "speed", "path": "@speed"}, {"name": "vehicle", "path": "@vehicle"}]}},
+              {"type": "lookup", "table": "demo", "key": "id", "table_key": "id", "add": [{"column": "name"}], "on_missing": "keep"},
+              {"type": "convert", "fields": {"count": "int", "occ": "int", "speed": "int", "time": "datetime"}},
+          ]
+          first_ids = []
+          lookups = {"demo": te.lookup_table(["id", "name"], [{"id": "MS812", "name": "Demo A"}, {"id": "MS810", "name": "Demo B"}])}
+          for fmt in ("json", "csv", "xml"):
+              t0 = time.perf_counter()
+              result = te.run(sample.content, steps, output=fmt, lookups=lookups)
+              print("%-4s %6.0f ms  read=%d written=%d  output=%d bytes  unmatched=%d  conv_errors=%s" % (
+                  fmt, (time.perf_counter() - t0) * 1000, result.records_in, result.records_out, len(result.content), result.stats["lookup_missing"], result.stats["conversion_errors"]))
+          for row in result.preview[:3]:
+              print(row)
+          PY
