@@ -80,6 +80,9 @@ def summarize(step: dict) -> str:
     if kind == "add_field":
         how = "template" if step.get("kind") == "template" else "constant"
         return "Add «%s» = %s «%s»." % (step.get("name"), how, step.get("value"))
+    if kind == "utm":
+        return "Turn UTM zone %s%s coordinates «%s» (easting) and «%s» (northing) into «%s» and «%s» (WGS84 degrees, %s decimals)." % (
+            step.get("zone"), step.get("hemisphere", "N"), step.get("x"), step.get("y"), step.get("lat_name"), step.get("lon_name"), step.get("decimals", 6))
     return str(kind)
 
 
@@ -188,6 +191,13 @@ def build_step(kind: str, form: Mapping, *, tables: dict[str, list[str]] | None 
     elif kind == "add_field":
         step = {"type": "add_field", "name": _one(form, "name"), "kind": _one(form, "value_kind", "constant") or "constant", "value": _one(form, "value")}
         te.step_add_field([], step, te.Context(lookups={}))
+    elif kind == "utm":
+        step = {"type": "utm", "x": _one(form, "x"), "y": _one(form, "y"), "zone": _one(form, "zone"),
+                "hemisphere": "S" if _one(form, "hemisphere") == "S" else "N",
+                "lat_name": _one(form, "lat_name", "latitude") or "latitude", "lon_name": _one(form, "lon_name", "longitude") or "longitude",
+                "decimals": _one(form, "decimals", "6") or "6"}
+        te.step_utm([], step, te.Context(lookups={}))
+        step["zone"], step["decimals"] = int(step["zone"]), int(step["decimals"])
     else:
         raise TransformError("Unknown step.")
     return step
@@ -210,4 +220,6 @@ def fields_after(steps: list[dict]) -> list[str]:
             names = [n for n in names if n not in (step.get("fields") or [])]
         elif kind == "add_field" and step.get("name") not in names:
             names.append(step.get("name"))
+        elif kind == "utm":
+            names += [n for n in (step.get("lat_name"), step.get("lon_name")) if n not in names]
     return names

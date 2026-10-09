@@ -262,6 +262,12 @@ def check(config_session: Session, transform: Transform) -> list[str]:
                 need(placeholder)
         elif kind == "filter":
             need(step.get("field"))
+        elif kind == "utm":
+            need(step.get("x"), "easting field")
+            need(step.get("y"), "northing field")
+            for new in (step.get("lat_name"), step.get("lon_name")):
+                if new in available:
+                    problems.append("Step %d: a field called %r already exists -- choose another name." % (number, new))
         elif kind == "rename":
             for old in step.get("map") or {}:
                 need(old)

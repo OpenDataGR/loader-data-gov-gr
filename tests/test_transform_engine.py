@@ -435,3 +435,64 @@ def test_the_settings_only_affect_csv_output():
 def test_run_passes_the_csv_settings_through():
     result = te.run(b"<l><r><n>\xce\xa9</n></r></l>", [{"type": "xml_records", "record": "r", "fields": [{"name": "n", "path": "n"}]}], output="csv", delimiter=";", bom=True)
     assert result.content[:3] == b"\xef\xbb\xbf" and result.content_type == "text/csv; charset=utf-8"
+
+
+# -- UTM coordinates ---------------------------------------------------------------------------------------------------------
+
+def _utm_forward(lat, lon, zone):
+    """Independent check: the forward (latitude/longitude -> UTM) series, so the step's inverse is tested against it."""
+    import math
+
+    a, f, k0 = 6378137.0, 1 / 298.257223563, 0.9996
+    n = f / (2 - f)
+    big_a = a / (1 + n) * (1 + n ** 2 / 4 + n ** 4 / 64)
+    alpha = (n / 2 - 2 * n ** 2 / 3 + 5 * n ** 3 / 16 + 41 * n ** 4 / 180, 13 * n ** 2 / 48 - 3 * n ** 3 / 5 + 557 * n ** 4 / 1440,
+             61 * n ** 3 / 240 - 103 * n ** 4 / 140, 49561 * n ** 4 / 161280)
+    phi, lam = math.radians(lat), math.radians(lon - (zone * 6 - 183))
+    e = math.sqrt(f * (2 - f))
+    t = math.sinh(math.atanh(math.sin(phi)) - e * math.atanh(e * math.sin(phi)))
+    xi0, eta0 = math.atan2(t, math.cos(lam)), math.atanh(math.sin(lam) / math.sqrt(1 + t * t))
+    xi = xi0 + sum(al * math.sin(2 * j * xi0) * math.cosh(2 * j * eta0) for j, al in enumerate(alpha, 1))
+    eta = eta0 + sum(al * math.cos(2 * j * xi0) * math.sinh(2 * j * eta0) for j, al in enumerate(alpha, 1))
+    return 500000 + k0 * big_a * eta, k0 * big_a * xi
+
+
+@pytest.mark.parametrize("lat,lon,zone", [(37.9755, 23.7348, 34), (40.6401, 22.9444, 34), (35.3387, 25.1442, 35), (0.0, 21.0, 34), (-33.9, 18.4, 34)])
+def test_utm_coordinates_come_back_to_the_latitude_and_longitude_they_came_from(lat, lon, zone):
+    easting, northing = _utm_forward(lat, lon, zone)
+    got = te.utm_to_latlon(easting, northing, zone, north=lat >= 0) if lat >= 0 else te.utm_to_latlon(easting, northing + 10_000_000, zone, north=False)
+    assert got == pytest.approx((lat, lon), abs=1e-7)
+
+
+def test_the_central_meridian_at_the_equator_is_where_it_should_be():
+    assert te.utm_to_latlon(500000, 0, 34) == pytest.approx((0.0, 21.0), abs=1e-9)
+
+
+def _utm_records(rows):
+    return json.dumps({"p": rows}).encode()
+
+
+UTM_READ = {"type": "json_records", "record": "p", "fields": [{"name": "name", "path": "name"}, {"name": "x", "path": "x"}, {"name": "y", "path": "y"}]}
+
+
+def test_the_utm_step_adds_latitude_and_longitude_and_counts_what_it_could_not_read():
+    x, y = _utm_forward(37.9755, 23.7348, 34)
+    rows = [{"name": "ok", "x": x, "y": y}, {"name": "comma", "x": ("%f" % x).replace(".", ","), "y": str(y)},
+            {"name": "bad", "x": "n/a", "y": y}, {"name": "empty", "x": None, "y": None}]
+    step = {"type": "utm", "x": "x", "y": "y", "zone": 34, "hemisphere": "N", "lat_name": "latitude", "lon_name": "longitude", "decimals": 6}
+    result = run(_utm_records(rows), [UTM_READ, step], output="json")
+    out = json.loads(result.content)["record"] if isinstance(json.loads(result.content), dict) else json.loads(result.content)
+    flat = out if isinstance(out, list) else list(out)
+    by = {r["name"]: r for r in flat}
+    assert by["ok"]["latitude"] == pytest.approx(37.9755, abs=1e-6) and by["ok"]["longitude"] == pytest.approx(23.7348, abs=1e-6)
+    assert by["comma"]["latitude"] == pytest.approx(37.9755, abs=1e-5)
+    assert by["bad"]["latitude"] is None and by["empty"]["longitude"] is None
+    assert result.stats["conversion_errors"] == {"latitude": 1}  # "bad" counted, "empty" is just missing
+
+
+@pytest.mark.parametrize("change,message", [({"zone": 0}, "zone"), ({"zone": "x"}, "zone"), ({"decimals": 11}, "Decimals"),
+                                            ({"lon_name": "latitude"}, "different names"), ({"x": "bad name"}, "easting")])
+def test_a_wrong_utm_step_is_refused_with_a_reason(change, message):
+    step = {"type": "utm", "x": "x", "y": "y", "zone": 34, "hemisphere": "N", "lat_name": "latitude", "lon_name": "longitude", "decimals": 6, **change}
+    with pytest.raises(TransformError, match=message):
+        te.step_utm([], step, te.Context(lookups={}))

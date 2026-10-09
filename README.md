@@ -197,7 +197,7 @@ clicking, not typing paths; XML is read by element name, ignoring namespaces and
 turned into one row per repeat), and every later step works on the same flat records whatever the format: **lookup** (add columns from
 an uploaded **index table** (Excel .xlsx, CSV or JSON; for Excel the first row is the header, the first sheet with data is used unless one is named, dates and whole numbers are read cleanly, and a zip-bomb or damaged file is refused), e.g. a station id -> its name and location, with a choice of what to do when there is no match),
 **filter**, **rename**, **convert** (int, float, bool, string, datetime to ISO UTC), **keep/remove fields**, **add a field** (constant
-or built from other fields). A new format or step is one more entry in `READERS` / `STEPS`. The page offers **Try on the latest file**
+or built from other fields), **UTM to latitude/longitude** (WGS84 UTM easting/northing, e.g. zone 34 or 35 for Greece, into degrees; pure-Python, no projection library; bad values become empty and are counted). A new format or step is one more entry in `READERS` / `STEPS`. The page offers **Try on the latest file**
 (runs the steps and shows counts, the first rows and which ids found no match; stores nothing), switch on/off, **Run it again on earlier
 files** (newest 10/50/200, with a time limit), and downloads of the outputs. A transform that stops holding together (a step uses a field
 no earlier step produces, an index table or column is gone) is refused or switched off with the reason. Safety: provider XML is parsed

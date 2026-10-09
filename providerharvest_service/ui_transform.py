@@ -47,7 +47,7 @@ templates.env.globals["suggest_name"] = tf.suggest_name
 _TABLE_NAME = re.compile(r"^[a-z][a-z0-9_]{1,40}$")
 _SECTIONS = {"read": "Read the file", "lookup": "Add columns from an index table", "filter": "Keep only matching records",
              "rename": "Rename fields", "convert": "Convert field types", "select": "Keep only these fields",
-             "drop": "Remove fields", "add_field": "Add a field"}
+             "drop": "Remove fields", "add_field": "Add a field", "utm": "UTM coordinates to latitude / longitude"}
 
 
 def _who(request: Request) -> str:

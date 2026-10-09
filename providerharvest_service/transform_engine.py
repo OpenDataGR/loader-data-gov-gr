@@ -720,6 +720,82 @@ def step_add_field(records: list[Record], options: dict, ctx: Context) -> list[R
     return out
 
 
+# WGS84 / UTM (transverse Mercator, Kruger series -- accurate to well under a millimetre inside a zone), without a
+# projection library: the formulas are short and this keeps the service free of a heavy dependency.
+_UTM_A, _UTM_F, _UTM_K0 = 6378137.0, 1 / 298.257223563, 0.9996
+
+
+def utm_to_latlon(easting: float, northing: float, zone: int, north: bool = True) -> tuple[float, float]:
+    """Latitude and longitude in degrees (WGS84) of a UTM position."""
+    import math
+
+    n = _UTM_F / (2 - _UTM_F)
+    big_a = _UTM_A / (1 + n) * (1 + n ** 2 / 4 + n ** 4 / 64)
+    beta = (n / 2 - 2 * n ** 2 / 3 + 37 * n ** 3 / 96 - n ** 4 / 360, n ** 2 / 48 + n ** 3 / 15 - 437 * n ** 4 / 1440,
+            17 * n ** 3 / 480 - 37 * n ** 4 / 840, 4397 * n ** 4 / 161280)
+    delta = (2 * n - 2 * n ** 2 / 3 - 2 * n ** 3 + 116 * n ** 4 / 45, 7 * n ** 2 / 3 - 8 * n ** 3 / 5 - 227 * n ** 4 / 45,
+             56 * n ** 3 / 15 - 136 * n ** 4 / 35, 4279 * n ** 4 / 630)
+    xi0 = (northing - (0 if north else 10_000_000)) / (_UTM_K0 * big_a)
+    eta0 = (easting - 500_000) / (_UTM_K0 * big_a)
+    xi = xi0 - sum(b * math.sin(2 * j * xi0) * math.cosh(2 * j * eta0) for j, b in enumerate(beta, 1))
+    eta = eta0 - sum(b * math.cos(2 * j * xi0) * math.sinh(2 * j * eta0) for j, b in enumerate(beta, 1))
+    chi = math.asin(math.sin(xi) / math.cosh(eta))
+    lat = chi + sum(d * math.sin(2 * j * chi) for j, d in enumerate(delta, 1))
+    lon = math.radians(zone * 6 - 183) + math.atan2(math.sinh(eta), math.cos(xi))
+    return math.degrees(lat), math.degrees(lon)
+
+
+def _coordinate(value: Any) -> float:
+    """A coordinate as a number: text with a decimal comma ("4123456,7") is accepted."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        number = float(value)
+    else:
+        text = str(value if value is not None else "").strip().replace(" ", "")
+        if text == "":
+            raise ValueError("empty")
+        if "," in text and "." not in text:
+            text = text.replace(",", ".")
+        number = float(text.replace(",", ""))
+    if number != number or number in (float("inf"), float("-inf")):
+        raise ValueError("not finite")
+    return number
+
+
+def step_utm(records: list[Record], options: dict, ctx: Context) -> list[Record]:
+    x, y = _check_name(options.get("x"), "The easting field"), _check_name(options.get("y"), "The northing field")
+    lat_name = _check_name(options.get("lat_name"), "The latitude field name")
+    lon_name = _check_name(options.get("lon_name"), "The longitude field name")
+    if len({lat_name, lon_name}) != 2:
+        raise TransformError("The latitude and longitude fields need different names.")
+    try:
+        zone = int(options.get("zone"))
+    except (TypeError, ValueError):
+        zone = 0
+    if not 1 <= zone <= 60:
+        raise TransformError("The UTM zone is a number from 1 to 60 (Greece is 34 or 35).")
+    north = options.get("hemisphere", "N") != "S"
+    try:
+        decimals = int(options.get("decimals", 6))
+    except (TypeError, ValueError):
+        decimals = -1
+    if not 0 <= decimals <= 10:
+        raise TransformError("Decimals must be from 0 to 10.")
+    out = []
+    for record in records:
+        added = dict(record)
+        try:
+            lat, lon = utm_to_latlon(_coordinate(record.get(x)), _coordinate(record.get(y)), zone, north)
+            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                raise ValueError("outside the globe")
+            added[lat_name], added[lon_name] = round(lat, decimals), round(lon, decimals)
+        except (ValueError, OverflowError, ZeroDivisionError):
+            added[lat_name] = added[lon_name] = None
+            if record.get(x) is not None or record.get(y) is not None:
+                ctx.stats["conversion_errors"][lat_name] = ctx.stats["conversion_errors"].get(lat_name, 0) + 1
+        out.append(added)
+    return out
+
+
 STEPS: dict[str, dict[str, Any]] = {
     "lookup": {"label": "Add columns from an index table", "apply": step_lookup},
     "filter": {"label": "Keep only matching records", "apply": step_filter},
@@ -728,6 +804,7 @@ STEPS: dict[str, dict[str, Any]] = {
     "select": {"label": "Keep only these fields", "apply": step_select},
     "drop": {"label": "Remove fields", "apply": step_drop},
     "add_field": {"label": "Add a field", "apply": step_add_field},
+    "utm": {"label": "UTM coordinates to latitude / longitude", "apply": step_utm},
 }
 
 

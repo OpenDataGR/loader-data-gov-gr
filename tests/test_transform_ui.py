@@ -719,3 +719,26 @@ def test_deleting_needs_the_admin_login_and_a_real_source(client, source, _isola
     for url in ("/transform/sources/nope/outputs/%s/delete" % out_id, "/transform/sources/nope/outputs/delete-all"):
         assert "No such source" in _flash(client.post(url, follow_redirects=False))
     assert len(_all_outputs(_isolated_harvest_db)) == 1
+
+
+def test_the_utm_step_is_added_from_its_form_described_and_checked(client, source, _isolated_db):
+    _upload_data(client, source)
+    _upload_table(client, content="id,east,north\nMS812,737000,4205000\n")
+    lookup = {"kind": "lookup", "table": "stations", "key": "id", "table_key": "id", "add": ["east", "north"], "on_missing": "keep"}
+    _build(client, source, READER_FORM, lookup)
+    url = "/transform/sources/%s" % source["id"]
+    form = client.get(url + "/steps/new?type=utm").text
+    assert 'name="zone"' in form and 'value="34"' in form and "east" in form and "EGSA87" in form
+    ok = {"kind": "utm", "x": "east", "y": "north", "zone": "34", "hemisphere": "N", "lat_name": "latitude", "lon_name": "longitude", "decimals": "6"}
+    assert "added" in _flash(_go(client, source, "steps/new", data=ok))
+    assert _steps(_isolated_db, source["id"])[-1]["zone"] == 34
+    page = client.get(url).text
+    assert "UTM zone 34N" in page and "latitude" in page
+    assert "Kifisias" not in page and "records read" not in page
+    result = client.post(url + "/preview").text
+    assert "records read" in result and "37.96170" in result  # the matched station's real latitude
+    # a name that already exists is refused, with the reason
+    clash = _go(client, source, "steps/new", data={**ok, "lat_name": "east"})
+    assert clash.status_code == 200 and "already exists" in clash.text
+    # a bad zone is refused
+    assert "zone" in _go(client, source, "steps/new", data={**ok, "zone": "99"}).text
