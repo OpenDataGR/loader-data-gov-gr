@@ -1,125 +1,22 @@
-name: Retention live test (one-off)
+name: Remove throwaway test directories (one-off)
 
-# One-off, on the live system, touching only throwaway data:
-#  1. loader: the purge, run against the real PostgreSQL inside a transaction that is rolled back, so
-#     nothing is changed -- proves length(bytea) / UPDATE ... IN (subquery) behave on Postgres;
-#  2. a throwaway FTP account "rt-test" is added (default 30-day box retention); on the box an old and a
-#     new archive hour are planted in its .forwarded, the sync service is restarted (the cleanup runs at
-#     start) and the old hour must be gone, the new one kept, and the attica account's archive untouched;
-#  3. the throwaway account is removed again.
-# Deleted afterwards.
+# One-off, on the FTP box: removes the empty/throwaway account directories left by earlier live tests
+# (rt-test, v6lt-in, v6lt-out). Only those three names, only if no such account exists any more.
 on:
   workflow_dispatch:
 
 jobs:
-  postgres:
-    runs-on: [self-hosted, loader]
-    steps:
-      - run: |
-          set -a; . /etc/loader-data-gov-gr.env; set +a
-          cd /opt/data-projects/loader-data-gov-gr
-          venv/bin/python - <<'PY'
-          import datetime
-          from sqlalchemy import select
-          from sqlalchemy.orm import Session
-          from providerharvest_service import harvest_db, retention
-          from providerharvest_service.harvest_models import HarvestedFile, HarvestRun
-
-          factory = harvest_db.get_session_factory()
-          engine = factory.kw["bind"]
-          now = datetime.datetime.now(datetime.timezone.utc)
-          with engine.connect() as conn:
-              outer = conn.begin()
-              try:
-                  s = Session(bind=conn, join_transaction_mode="create_savepoint")
-                  run = HarvestRun(source_id="rt-live-test", source_name="rt-live-test", status="success", records_count=1)
-                  s.add(run); s.flush()
-                  old = HarvestedFile(run_id=run.id, filename="old.xml", size=5000, content=b"o" * 5000, fetched_at=now - datetime.timedelta(days=45))
-                  new = HarvestedFile(run_id=run.id, filename="new.xml", size=5000, content=b"n" * 5000, fetched_at=now - datetime.timedelta(days=2))
-                  s.add_all([old, new]); s.flush()
-                  print("preview 30 days:", retention.preview(s, "rt-live-test", 30))
-                  print("purge 30 days:  ", retention.purge_source(s, "rt-live-test", 30))
-                  print("again:          ", retention.purge_source(s, "rt-live-test", 30))
-                  s.expire_all()
-                  o, n = s.get(HarvestedFile, old.id), s.get(HarvestedFile, new.id)
-                  print("old: size=%s contents=%d purged=%s" % (o.size, len(o.content), retention.is_purged(o)))
-                  print("new: size=%s contents=%d purged=%s" % (n.size, len(n.content), retention.is_purged(n)))
-                  assert len(o.content) == 0 and o.size == 5000 and len(n.content) == 5000
-                  s.close()
-              finally:
-                  outer.rollback()
-          with factory() as s:
-              left = s.scalar(select(HarvestRun.id).where(HarvestRun.source_id == "rt-live-test"))
-              print("rolled back, test rows left in the database:", left)
-              assert left is None
-          print("POSTGRES OK")
-          PY
-
-  add:
-    needs: postgres
-    runs-on: [self-hosted, loader]
-    steps:
-      - run: |
-          /opt/data-projects/loader-data-gov-gr/venv/bin/python - <<'PY'
-          import bcrypt, datetime, sqlite3, uuid
-          conn = sqlite3.connect("/opt/data-projects/loader-data-gov-gr/data/loader.db", timeout=30)
-          h = bcrypt.hashpw(b"rt-live-test-pw-9", bcrypt.gensalt(rounds=12)).decode().replace("$2b$", "$2a$", 1)
-          now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S.%f")
-          conn.execute("DELETE FROM ftp_account WHERE username = 'rt-test'")
-          conn.execute("INSERT INTO ftp_account (id, username, password_hash, home_directory, protocol, enabled, created_at) VALUES (?,?,?,?,?,?,?)",
-                       (str(uuid.uuid4()), "rt-test", h, "/srv/ftp/rt-test", "ftp", 1, now))
-          conn.commit()
-          print("throwaway account added")
-          PY
-
-  box:
-    needs: add
+  clean:
     runs-on: [self-hosted, loader-ftp]
     steps:
       - run: |
           DB=$(systemctl cat loader-ftp-forwarder-sync | grep -o -- '--db-path [^ ]*' | head -1 | cut -d' ' -f2)
-          echo "box db: $DB"
-          for i in $(seq 1 24); do [ -d /srv/ftp/rt-test ] && break; sleep 10; done
-          ls -d /srv/ftp/rt-test
-          echo "--- policies the box was told"
-          sudo -n python3 -c "
-          import sqlite3
-          c = sqlite3.connect('$DB')
-          for r in c.execute('SELECT username, days FROM archive_policy ORDER BY username'): print(r)
-          "
-          A=/srv/ftp/attica-region-traffic-data/.forwarded
-          before=$(sudo -n find $A -mindepth 1 -maxdepth 1 -type d | wc -l)
-          echo "attica archive hour-folders before: $before"
-          NEW=$(date -u +%Y%m%d%H)
-          sudo -n mkdir -p /srv/ftp/rt-test/.forwarded/2020010100 /srv/ftp/rt-test/.forwarded/$NEW /srv/ftp/rt-test/.forwarded/keep-this
-          echo old | sudo -n tee /srv/ftp/rt-test/.forwarded/2020010100/old.txt >/dev/null
-          echo new | sudo -n tee /srv/ftp/rt-test/.forwarded/$NEW/new.txt >/dev/null
-          echo waiting | sudo -n tee /srv/ftp/rt-test/waiting.xml >/dev/null
-          echo "--- restarting the sync service (the cleanup runs once at start)"
-          sudo -n systemctl restart loader-ftp-forwarder-sync
-          sleep 25
-          echo "--- rt-test archive now:"
-          sudo -n ls /srv/ftp/rt-test/.forwarded
-          after=$(sudo -n find $A -mindepth 1 -maxdepth 1 -type d | wc -l)
-          echo "attica archive hour-folders after: $after"
-          sudo -n journalctl -u loader-ftp-forwarder-sync --since "-2min" --no-pager | grep -i "archive cleanup" || echo "(no cleanup line logged)"
-          test ! -e /srv/ftp/rt-test/.forwarded/2020010100
-          test -e /srv/ftp/rt-test/.forwarded/$NEW/new.txt
-          test -e /srv/ftp/rt-test/.forwarded/keep-this
-          test -e /srv/ftp/rt-test/waiting.xml
-          test "$after" -ge "$before"
-          echo "BOX OK"
-
-  remove:
-    needs: [add, box]
-    if: always()
-    runs-on: [self-hosted, loader]
-    steps:
-      - run: |
-          python3 - <<'PY'
-          import sqlite3
-          conn = sqlite3.connect("/opt/data-projects/loader-data-gov-gr/data/loader.db", timeout=30)
-          conn.execute("DELETE FROM ftp_account WHERE username = 'rt-test'")
-          conn.commit()
-          print("throwaway account removed")
-          PY
+          for name in rt-test v6lt-in v6lt-out; do
+            n=$(sudo -n python3 -c "import sqlite3; print(sqlite3.connect('$DB').execute('SELECT count(*) FROM ftp_account WHERE username = ?', ('$name',)).fetchone()[0])")
+            if [ "$n" = "0" ] && [ -d "/srv/ftp/$name" ]; then
+              sudo -n rm -rf "/srv/ftp/$name" && echo "removed /srv/ftp/$name"
+            else
+              echo "left /srv/ftp/$name (account rows: $n)"
+            fi
+          done
+          ls /srv/ftp
