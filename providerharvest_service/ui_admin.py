@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from providerharvest_service import build_info, connection_check, nav, provider_sources
+from providerharvest_service import build_info, connection_check, harvest_db, nav, provider_sources, retention
 from providerharvest_service.db import get_session
 
 router = APIRouter(prefix="/admin/sources", tags=["admin-ui"])
@@ -130,6 +130,94 @@ def delete_source(source_id: str, request: Request, session: Session = Depends(g
             _came_from(request, "/admin/sources", "No such source.", kind="error"), status_code=303
         )
     return RedirectResponse(_came_from(request, "/admin/sources", "Source deleted."), status_code=303)
+
+
+def _size(count: int) -> str:
+    value = float(count)
+    for unit in ("B", "kB", "MB", "GB", "TB"):
+        if value < 1000 or unit == "TB":
+            return ("%d %s" % (value, unit)) if unit == "B" else ("%.1f %s" % (value, unit))
+        value /= 1000
+
+
+def _harvest_session():
+    """A session on the harvest database, or None when it is not reachable (the page then shows no
+    figures and, when asked to shorten a period, cannot preview and so refuses to delete blindly)."""
+    try:
+        return harvest_db.get_session_factory()()
+    except Exception:  # noqa: BLE001 -- not configured / not reachable
+        return None
+
+
+def _retention_context(source, **extra) -> dict:
+    hsession = _harvest_session()
+    stored = None
+    if hsession is not None:
+        try:
+            files, size, oldest = retention.stored(hsession, source.id)
+            stored = {"files": files, "size": _size(size), "oldest": oldest.strftime("%Y-%m-%d %H:%M") if oldest else None}
+        except Exception:  # noqa: BLE001
+            stored = None
+        finally:
+            hsession.close()
+    return {
+        "source": source, "stored": stored, "applies_to_box": retention.applies_to_box(source),
+        "loader_options": [(d, retention.label(d)) for d in retention.LOADER_OPTIONS],
+        "box_options": [(d, retention.label(d)) for d in retention.BOX_OPTIONS],
+        "current_loader": retention.loader_days(source), "current_box": retention.box_days(source),
+        "default_loader": retention.LOADER_DEFAULT, "default_box": retention.BOX_DEFAULT, "confirm": None, **extra,
+    }
+
+
+@router.get("/{source_id}/retention", response_class=HTMLResponse)
+def retention_page(source_id: str, request: Request, session: Session = Depends(get_session)):
+    try:
+        source = provider_sources.get_or_404(session, source_id)
+    except provider_sources.NotFound:
+        return RedirectResponse(_came_from(request, "/admin/sources", "No such source.", kind="error"), status_code=303)
+    return templates.TemplateResponse(request, "admin/source_retention.html", _retention_context(source))
+
+
+@router.post("/{source_id}/retention")
+async def save_retention(source_id: str, request: Request, session: Session = Depends(get_session)):
+    """Save a source's two retention periods. Shortening one deletes data, so it is previewed and
+    confirmed first; with the harvest database out of reach nothing can be previewed, so a
+    shortening is refused rather than done blind."""
+    try:
+        source = provider_sources.get_or_404(session, source_id)
+    except provider_sources.NotFound:
+        return RedirectResponse(_came_from(request, "/admin/sources", "No such source.", kind="error"), status_code=303)
+    form = await request.form()
+    try:
+        loader = retention.parse_choice(form.get("loader"), retention.LOADER_OPTIONS, "files on the loader")
+        box = retention.parse_choice(form.get("box"), retention.BOX_OPTIONS, "files on the FTP box")
+    except retention.RetentionError as exc:
+        return RedirectResponse(_came_from(request, "/admin/sources", str(exc), kind="error"), status_code=303)
+
+    old_loader, old_box = retention.loader_days(source), retention.box_days(source)
+    loader_shorter = loader != 0 and (old_loader == 0 or loader < old_loader)
+    box_shorter = retention.applies_to_box(source) and box != 0 and (old_box == 0 or box < old_box)
+    if (loader_shorter or box_shorter) and not form.get("confirmed"):
+        files = size = 0
+        if loader_shorter:
+            hsession = _harvest_session()
+            if hsession is None:
+                return RedirectResponse(_came_from(
+                    request, "/admin/sources", "The stored data cannot be read just now, so what a shorter period would delete cannot be shown. Nothing was changed.",
+                    kind="error"), status_code=303)
+            try:
+                files, size = retention.preview(hsession, source.id, loader)
+            finally:
+                hsession.close()
+        if files or box_shorter:
+            context = _retention_context(source, confirm={
+                "loader": loader, "box": box, "loader_files": files, "loader_size": _size(size), "loader_label": retention.label(loader),
+                "box_shorter": box_shorter, "box_label": retention.label(box),
+            })
+            return templates.TemplateResponse(request, "admin/source_retention.html", context)
+    retention.set_retention(session, source, loader=loader, box=box if retention.applies_to_box(source) else None)
+    note = "Retention saved for %s: loader %s%s." % (source.name, retention.label(loader), ", FTP box %s" % retention.label(box) if retention.applies_to_box(source) else "")
+    return RedirectResponse(_came_from(request, "/admin/sources", note), status_code=303)
 
 
 _ALLOWED_REDIRECT_PATHS = ("/admin/sources",)

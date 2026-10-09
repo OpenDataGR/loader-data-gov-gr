@@ -241,6 +241,17 @@ the only way in, they are locked out until it is updated here.
 
 Plain FTP (port 21, unencrypted) stays open for now: a provider depends on it.
 
+### Archive retention
+
+The relay moves each forwarded file into `<home>/.forwarded/<YYYYMMDDHH>/` (a new file with the same name replaces
+the earlier one in that hour, so only the last file of each hour survives). Loader sends each account's retention
+in the account sync (`archive_days`; 0 or anything that is not a whole number means keep forever) and
+`account_sync.reconcile` keeps it in the local `archive_policy` table. Every six hours, and once at start,
+`archive_cleanup.py` removes hour-folders that are wholly older than the account's days. It runs as root on data
+from the network, so it is narrow: a whole number of days from 1 to 3650, only the account's own `.forwarded`
+directory, only directories named like an hour, never a symlink (not followed), only for a home strictly under the
+upload root, and never the files still waiting to be forwarded. `--cleanup-interval-s` changes the interval.
+
 ### Resources and actions from loader's FTP box page
 
 Every heartbeat also carries the box's own figures (`box_resources.py`: load, memory,

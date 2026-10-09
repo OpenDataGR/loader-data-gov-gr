@@ -174,6 +174,17 @@ provider's uploads until they switch), and for an HTTPS push source **Rotate API
 key** (`/provider/sources/{id}/rotate-key`: the old key stops working immediately;
 before this a lost key meant deleting and re-registering the source).
 
+**Data retention per source** (`retention.py`; Admin dashboard -> a source's "..." menu -> *Data retention*). Two
+fixed-choice dropdowns on each source: how long the **loader** keeps a received file's contents (7, 30, 90, 180, 365
+days or forever; default 90) and, for an FTP push source, how long the **FTP box** keeps its archive of forwarded
+files (1, 7, 14, 30, 90 days or forever; default 30). Stored in the source's `config`; an edit keeps it. On the loader
+an hourly thread in each worker empties the *contents* of files past the period -- the run, and the file's name, type,
+size and time, stay, and the Runs page shows the file as "removed (retention)" (download answers 410). Only whole files
+are purged, not an HTTP source's small JSON records. Shortening a period deletes data that cannot return, so the page
+previews what would go ("412 files, 173 MB") and asks first; if the stored data cannot be read it refuses rather than
+delete blind. The box is told each account's number in the account sync (`archive_days`) and deletes itself
+(`ftp-forwarder/archive_cleanup.py`). `LOADER_RETENTION=0` turns the loader's purge off.
+
 **Data boxes: resources and actions.** The *Data boxes* tab (`/admin/ftp`; it was "FTP box")
 shows the **HTTP box** -- loader itself -- and each FTP box, with each box's own figures
 (load, memory, disk, its addresses, network traffic in and out -- a rate between two reports

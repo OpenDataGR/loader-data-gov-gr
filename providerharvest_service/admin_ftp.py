@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from providerharvest_service import access_control, box_commands, box_history
+from providerharvest_service import access_control, box_commands, box_history, retention
 from providerharvest_service.admin_auth import require_admin_key, require_ftp_sync_key
 from providerharvest_service.client_addr import sender_address
 from providerharvest_service.db import get_session
@@ -147,6 +147,9 @@ class FtpAccountSyncOut(BaseModel):
     protocol: str
     enabled: bool
     allowed_ips: list[str]
+    # How many days the box keeps its archive of this account's forwarded files (0: forever). Its
+    # source's setting (retention.py); the box deletes and checks the number itself.
+    archive_days: int = 0
 
     model_config = {"from_attributes": True}
 
@@ -316,12 +319,17 @@ sync_router = APIRouter(tags=["ftp-accounts-sync"], dependencies=[Depends(requir
 
 
 @sync_router.get("/admin/ftp-accounts-sync", response_model=list[FtpAccountSyncOut])
-def sync_ftp_accounts(session: Session = Depends(get_session)) -> list[FtpAccount]:
+def sync_ftp_accounts(session: Session = Depends(get_session)) -> list[FtpAccountSyncOut]:
     """Only enabled accounts -- a disabled one should be removed from
     the remote box's own account store by its sync job (see that job's
     own reconciliation logic), not kept around there with credentials
     that should no longer work."""
-    return list(session.scalars(select(FtpAccount).where(FtpAccount.enabled.is_(True))).all())
+    out = []
+    for account in session.scalars(select(FtpAccount).where(FtpAccount.enabled.is_(True))).all():
+        item = FtpAccountSyncOut.model_validate(account)
+        item.archive_days = retention.box_days_for_account(session, account)
+        out.append(item)
+    return out
 
 
 class _BoxStatusFields(BaseModel):

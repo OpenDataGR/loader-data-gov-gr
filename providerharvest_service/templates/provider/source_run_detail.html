@@ -27,7 +27,7 @@
               <td class="name-slug">{{ file.filename }}</td>
               <td class="muted">{{ file.content_type }}</td>
               <td class="muted">{{ "%.1f KB" % (file.size / 1024) }}</td>
-              <td><a class="btn btn-secondary btn-sm" href="/provider/sources/{{ source.id }}/runs/{{ run_id }}/files/{{ file.id }}">{{ macros.icon("download", 14) }} Download</a></td>
+              <td>{% if file.size and not file.content %}<span class="badge badge-pending" title="The contents were removed when this file passed its retention period; the record stays."><span>removed (retention)</span></span>{% else %}<a class="btn btn-secondary btn-sm" href="/provider/sources/{{ source.id }}/runs/{{ run_id }}/files/{{ file.id }}">{{ macros.icon("download", 14) }} Download</a>{% endif %}</td>
             </tr>
             {% endfor %}
           </tbody>

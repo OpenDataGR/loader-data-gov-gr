@@ -321,6 +321,8 @@ def source_run_file_download(
     harvested_file = harvest_runner.get_file(hsession, file_id)
     if harvested_file is None or harvested_file.run_id != run_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No such file.")
+    if harvested_file.size and not harvested_file.content:
+        raise HTTPException(status.HTTP_410_GONE, "This file's contents were removed when it passed its retention period.")
     return Response(
         content=harvested_file.content,
         media_type=harvested_file.content_type,

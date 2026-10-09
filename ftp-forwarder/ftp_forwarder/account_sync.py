@@ -45,6 +45,11 @@ CREATE TABLE IF NOT EXISTS groups (
   gid INTEGER,
   members TEXT
 );
+-- How many days each account's archive of forwarded files is kept (0: forever); see archive_cleanup.py.
+CREATE TABLE IF NOT EXISTS archive_policy (
+  username TEXT PRIMARY KEY,
+  days INTEGER NOT NULL
+);
 """
 
 
@@ -90,6 +95,18 @@ def reconcile(db_path: str, accounts: list[dict]) -> None:
         removed = existing_usernames - current_usernames
         for username in removed:
             conn.execute("DELETE FROM ftp_account WHERE username = ?", (username,))
+            conn.execute("DELETE FROM archive_policy WHERE username = ?", (username,))
+
+        for account in accounts:
+            # A loader that does not send it (older code), or anything that is not a whole number
+            # of days, means "keep forever": the safe reading, since this decides what gets deleted.
+            days = account.get("archive_days")
+            days = days if isinstance(days, int) and not isinstance(days, bool) and days >= 0 else 0
+            conn.execute(
+                "INSERT INTO archive_policy (username, days) VALUES (?, ?) "
+                "ON CONFLICT(username) DO UPDATE SET days = excluded.days",
+                (account["username"], days),
+            )
 
         conn.commit()
     finally:

@@ -132,6 +132,7 @@
         </form>
       {% endif %}
       <a href="/provider/sources/{{ s.id }}/runs">{{ icon("history", 14) }} View runs</a>
+      {% if is_admin %}<a href="{{ action_prefix }}/{{ s.id }}/retention">{{ icon("queue", 14) }} Data retention</a>{% endif %}
       {% if s.transport_type == "push" %}
         {# The one home of a push source's login / API key / allowed senders -- no copies of its controls here. #}
         <a href="/provider/sources/{{ s.id }}/credentials">{{ icon("queue", 14) }} Credentials</a>

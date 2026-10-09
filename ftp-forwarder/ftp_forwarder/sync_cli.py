@@ -15,7 +15,7 @@ import time
 
 import requests
 
-from ftp_forwarder import access_rules, account_sync, box_commands, box_health, box_resources, ip_limits
+from ftp_forwarder import access_rules, account_sync, archive_cleanup, box_commands, box_health, box_resources, ip_limits
 from ftp_forwarder.attempts_log import AttemptsLogTail
 from ftp_forwarder.auth_log import AuthLogTail
 from ftp_forwarder.ssh_log import JournalSshTail
@@ -47,6 +47,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--db-path", required=True, help="Path to the local SQLite DB ProFTPD's mod_sql_sqlite reads")
     parser.add_argument("--interval-s", type=int, default=60)
+    parser.add_argument(
+        "--cleanup-interval-s", type=int, default=6 * 3600,
+        help="How often old forwarded files are removed from each account's archive, per loader's retention "
+             "setting (see archive_cleanup.py); needs --upload-root",
+    )
     parser.add_argument(
         "--upload-root",
         help="If set, create each synced account's home directory under this root (e.g. /srv/ftp) when it's missing",
@@ -142,6 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     # this is the second lock.
     ran: set[str] = set()
 
+    last_cleanup = float("-inf")  # the archive cleanup runs every few hours, and once at start
     while True:
         pending_logins.update(auth_tail.poll())
         sync_ok = True
@@ -157,6 +163,12 @@ def main(argv: list[str] | None = None) -> int:
             sync_ok = False
             sync_message = str(exc)
 
+        if args.upload_root and time.monotonic() - last_cleanup > args.cleanup_interval_s:
+            last_cleanup = time.monotonic()
+            try:
+                archive_cleanup.prune(args.db_path, args.upload_root)
+            except Exception:  # noqa: BLE001 -- housekeeping must never stop the sync loop
+                logger.exception("archive cleanup failed")
         health = box_health.collect_status(
             proftpd_unit=args.proftpd_unit,
             relay_unit=args.relay_unit,

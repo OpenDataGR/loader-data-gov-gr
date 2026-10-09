@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% import "_macros.html" as macros %}
+{% block title %}Data retention -- {{ source.title }} -- loader.data.gov.gr{% endblock %}
+{% block content %}
+  <div class="panel">
+    <h1>Data retention -- {{ source.title }}</h1>
+    <p class="subtitle">
+      <a href="/admin/sources">&larr; back to sources</a> &middot; <span class="name-slug">{{ source.name }}</span>
+    </p>
+
+    {% if confirm %}
+      <div class="flash flash-error" style="display:block;">
+        <strong>This deletes data that cannot be brought back.</strong>
+        <ul style="margin:0.4rem 0 0 1.1rem;">
+          {% if confirm.loader_files %}
+            <li>On the loader: the contents of <strong>{{ confirm.loader_files }}</strong> stored file{{ "s" if confirm.loader_files != 1 else "" }}
+              ({{ confirm.loader_size }}) older than {{ confirm.loader_label }} will be removed within the hour. Their runs stay in the history, marked as removed.</li>
+          {% endif %}
+          {% if confirm.box_shorter %}
+            <li>On the FTP box: archived files older than {{ confirm.box_label }} are removed at the box's next cleanup (about an hour).</li>
+          {% endif %}
+        </ul>
+      </div>
+      <form method="post" action="/admin/sources/{{ source.id }}/retention" style="margin-top:1rem; display:flex; gap:0.6rem;">
+        <input type="hidden" name="loader" value="{{ confirm.loader }}">
+        <input type="hidden" name="box" value="{{ confirm.box }}">
+        <input type="hidden" name="confirmed" value="1">
+        <button type="submit" class="btn-danger">Yes, delete and save</button>
+        <a class="btn btn-secondary" href="/admin/sources/{{ source.id }}/retention">Cancel</a>
+      </form>
+    {% else %}
+      <p class="subtitle" style="margin-top:0;">
+        How long this source's received files are kept. Past the period the cleanup removes a file's <em>contents</em>; the run,
+        the file's name, size and time stay in the history. A source with nothing chosen uses the defaults shown.
+      </p>
+
+      <form method="post" action="/admin/sources/{{ source.id }}/retention">
+        <label for="loader">Keep files on the loader for</label>
+        <select id="loader" name="loader">
+          {% for days, text in loader_options %}
+            <option value="{{ days }}"{% if days == current_loader %} selected{% endif %}>{{ text }}{% if days == default_loader %} (default){% endif %}</option>
+          {% endfor %}
+        </select>
+        {% if stored is not none %}
+          <p class="muted" style="margin:0.3rem 0 1rem;">
+            Held now: <strong>{{ stored.files }}</strong> file{{ "s" if stored.files != 1 else "" }}, {{ stored.size }}{% if stored.oldest %}, oldest from {{ stored.oldest }} UTC{% endif %}.
+          </p>
+        {% else %}
+          <p class="muted" style="margin:0.3rem 0 1rem;">The stored data could not be read just now, so no figures are shown.</p>
+        {% endif %}
+
+        {% if applies_to_box %}
+          <label for="box">Keep files on the FTP box for</label>
+          <select id="box" name="box">
+            {% for days, text in box_options %}
+              <option value="{{ days }}"{% if days == current_box %} selected{% endif %}>{{ text }}{% if days == default_box %} (default){% endif %}</option>
+            {% endfor %}
+          </select>
+          <p class="muted" style="margin:0.3rem 0 1rem;">
+            The box keeps what it forwarded in an archive, but only the <em>last file of each hour</em> (a new file with the same name replaces the
+            earlier one). The loader holds the complete record, so this is only a safety net.
+          </p>
+        {% else %}
+          <input type="hidden" name="box" value="{{ current_box }}">
+          <p class="muted" style="margin:0 0 1rem;">This source does not use an FTP box, so there is nothing to keep there.</p>
+        {% endif %}
+
+        <div style="display:flex; gap:0.6rem;">
+          <button type="submit">Save</button>
+          <a class="btn btn-secondary" href="/admin/sources">Cancel</a>
+        </div>
+      </form>
+    {% endif %}
+  </div>
+{% endblock %}

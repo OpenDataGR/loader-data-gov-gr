@@ -39,7 +39,7 @@ from providerharvest_service.ftp_credentials import (
     hash_password,
     password_problem,
 )
-from providerharvest_service import sender_allowlist
+from providerharvest_service import retention, sender_allowlist
 from providerharvest_service.models import FtpAccount, FtpAllowedIp, ProviderSource, _new_id
 
 TRANSPORT_TYPES = ("http", "sftp", "scp", "ftp", "push")
@@ -738,7 +738,7 @@ def update(session: Session, source_id: str, form: dict) -> ProviderSource:
     source.transport_type = transport_type
     source.frequency = frequency
     source.auth_type = auth_type
-    source.config = json.dumps(config)
+    source.config = json.dumps(retention.carry_over(source.config, config))  # (an edit must not forget the retention)
     source.notification_email = notification_email
     source.proxy_enabled = proxy_enabled
     session.flush()
