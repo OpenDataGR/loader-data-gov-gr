@@ -3,10 +3,16 @@
 {% block title %}Admin login -- loader.data.gov.gr{% endblock %}
 {% block content %}
   <div class="panel" style="max-width:360px; margin:2rem auto;">
-    <h1>Admin login</h1>
+    <h1>{{ "Log in" if oidc_enabled else "Admin login" }}</h1>
     {% if flash %}
       <div class="flash flash-error">{{ macros.icon("x", 16) }}{{ flash }}</div>
     {% endif %}
+    {% if oidc_enabled %}
+      <p class="muted" style="margin-top:0;">Use your data.gov.gr account.</p>
+      <a class="btn" href="/auth/login?next={{ next|urlencode }}" style="display:block; text-align:center;">{{ macros.icon("check", 14) }} Sign in with data.gov.gr</a>
+    {% endif %}
+    {% if password_login %}
+    {% if oidc_enabled %}<details style="margin-top:1.4rem;"><summary class="muted" style="cursor:pointer;">Use the shared account instead</summary>{% endif %}
     <form method="post" action="/admin/login">
       <input type="hidden" name="next" value="{{ next }}">
       <label for="username">Username</label>
@@ -17,5 +23,7 @@
         <button type="submit">{{ macros.icon("check", 14) }} Log in</button>
       </div>
     </form>
+    {% if oidc_enabled %}</details>{% endif %}
+    {% endif %}
   </div>
 {% endblock %}

@@ -38,6 +38,7 @@ from providerharvest_service.push_ingest import router as push_ingest_router
 from providerharvest_service.ui_admin import router as admin_sources_ui_router
 from providerharvest_service.ui_admin_ftp import router as admin_ftp_ui_router
 from providerharvest_service.ui_admin_failed_logins import router as admin_failed_logins_ui_router
+from providerharvest_service.ui_admin_login import auth_router as oidc_login_router
 from providerharvest_service.ui_admin_login import router as admin_login_ui_router
 from providerharvest_service.ui_provider import router as provider_sources_ui_router
 from providerharvest_service.ui_transform import router as transform_ui_router
@@ -76,6 +77,7 @@ app.include_router(transform_ui_router)
 app.include_router(admin_ftp_ui_router)
 app.include_router(admin_failed_logins_ui_router)
 app.include_router(admin_login_ui_router)
+app.include_router(oidc_login_router)
 app.include_router(proxy_router)
 app.include_router(load_api_router)
 app.include_router(load_ui_router)

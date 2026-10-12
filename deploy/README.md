@@ -418,3 +418,32 @@ cd /home/localadmin/actions-runner-loader-2
 Confirm both are online with `gh api repos/OpenDataGR/loader-data-gov-gr/actions/runners`, then push two
 small commits close together: the two test jobs should run side by side and the deploys one after the other.
 To undo: `./svc.sh stop && ./svc.sh uninstall` in that directory, then `./config.sh remove --token <TOKEN>`.
+
+## Login with the data.gov.gr Keycloak
+
+`providerharvest_service/oidc_login.py` (routes in `ui_admin_login.py`): the browser login is Keycloak's OpenID
+Connect authorization-code flow with PKCE. It is **off until all three of `LOADER_OIDC_ISSUER`,
+`LOADER_OIDC_CLIENT_ID` and `LOADER_OIDC_CLIENT_SECRET` are set**; until then the shared username/password login
+works exactly as before.
+
+In Keycloak (realm `data`, `https://auth.data.gov.gr`): a confidential client `loader-data-gov-gr` with only
+*Standard flow* on (Direct access grants off), valid redirect URI exactly `https://loader.data.gov.gr/auth/callback`,
+valid post-logout redirect URI `https://loader.data.gov.gr/*`, web origin `https://loader.data.gov.gr`; and a realm
+role `loader-admin` given to everyone who may use the loader. Anyone without the role is refused after signing in,
+with the reason shown, and the attempt appears in the Security box.
+
+On the VM, in `/etc/loader-data-gov-gr.env` (mode 600, never inline in a unit file):
+
+```
+LOADER_OIDC_ISSUER=https://auth.data.gov.gr/realms/data
+LOADER_OIDC_CLIENT_ID=loader-data-gov-gr
+LOADER_OIDC_CLIENT_SECRET=<the client's secret from Keycloak: Clients > loader-data-gov-gr > Credentials>
+LOADER_OIDC_REDIRECT_URI=https://loader.data.gov.gr/auth/callback
+LOADER_PUBLIC_BASE_URL=https://loader.data.gov.gr
+# optional: LOADER_OIDC_REQUIRED_ROLE=loader-admin   (the default)
+# later, once the Keycloak login has worked for real: LOADER_ADMIN_PASSWORD_LOGIN=off  (removes the shared password)
+```
+
+then restart the service. `LOADER_PUBLIC_BASE_URL` matters because behind the gateway a request looks like plain
+`http`. A session started this way is the same signed cookie as the shared login's, so every page and every "who did
+this" line shows the person's own Keycloak user name. Logging out also ends the Keycloak session.
