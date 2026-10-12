@@ -72,7 +72,7 @@ from starlette.concurrency import run_in_threadpool
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from providerharvest_service import provider_sources
+from providerharvest_service import provider_sources, request_template
 from providerharvest_service.client_addr import sender_address
 from providerharvest_service.db import get_session
 from providerharvest_service.engine.auth_strategies import build_auth_strategy
@@ -135,6 +135,18 @@ def _get_active_http_source_or_404(session: Session, source_name: str) -> Provid
     return source
 
 
+def request_is_swapped(transform) -> bool:
+    return bool(transform is not None and transform.request_swap and (transform.request_template or "").strip())
+
+
+def consumer_method(source: ProviderSource, transform) -> str:
+    """The method callers use on /proxy/<name>: the provider's own, or the other one when the request is turned around."""
+    provider = source.proxy_method
+    if not request_is_swapped(transform):
+        return provider
+    return "GET" if provider == "POST" else "POST"
+
+
 MAX_BODY_BYTES = 64 * 1024  # a POST body passed through to the provider (a lookup, not an upload)
 
 
@@ -142,9 +154,13 @@ def _forward(session: Session, source_name: str, method: str, query_params: dict
     source = _get_active_http_source_or_404(session, source_name)
     config = json.loads(source.config or "{}")
 
-    # One method per source, the one it was registered with: a source for a POST API is not reachable with GET (and the
-    # other way round), so nothing can be sent to a provider in a shape that was never agreed.
-    allowed = source.proxy_method
+    # One method per source for callers: the provider's own (the one it was registered with), or -- when the source's Transform page
+    # turns the request around -- the other one. Nothing can be sent to a provider in a shape that was never agreed.
+    from providerharvest_service import transform_runner
+
+    transform = transform_runner.get_transform(session, source.id)
+    swap = request_is_swapped(transform)
+    allowed = consumer_method(source, transform)
     if method != allowed:
         raise HTTPException(
             status.HTTP_405_METHOD_NOT_ALLOWED, "this source's proxy answers %s requests" % allowed, headers={"Allow": allowed}
@@ -167,22 +183,35 @@ def _forward(session: Session, source_name: str, method: str, query_params: dict
         # misconfiguration/attack, not a caller error.
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "upstream target is not reachable: %s" % exc) from exc
 
+    provider = source.proxy_method
+    params, provider_body = dict(query_params), body
+    if swap:
+        # Only what the template names goes on: the caller's own parameters and fields are dropped.
+        try:
+            if provider == "POST":
+                provider_body, params = request_template.build_json_body(transform.request_template, dict(query_params)), {}
+            else:
+                data = json.loads(body or b"null")
+                params = request_template.build_query(transform.request_template, data)
+        except request_template.RequestTemplateError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
     secret = provider_sources.credentials(session, source.id)
     auth_strategy = build_auth_strategy(source.auth_type)
     request_kwargs = auth_strategy.apply(
-        {"params": dict(query_params)}, secret, config.get("auth_opts") or {}
+        {"params": params}, secret, config.get("auth_opts") or {}
     )
     request_kwargs.setdefault("timeout", config.get("request_timeout_s", DEFAULT_TIMEOUT_S))
-    if method == "POST":
+    if provider == "POST":
         headers = dict(request_kwargs.get("headers") or {})
         headers["Content-Type"] = "application/json"
         request_kwargs["headers"] = headers
-        request_kwargs["data"] = body
+        request_kwargs["data"] = provider_body
 
     _rate_limiter_for(source.id, config.get("max_requests_per_minute", 60)).acquire()
 
     try:
-        upstream = (requests.post if method == "POST" else requests.get)(source.endpoint_url, **request_kwargs)
+        upstream = (requests.post if provider == "POST" else requests.get)(source.endpoint_url, **request_kwargs)
     except requests.RequestException as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "upstream request failed: %s" % exc) from exc
 

@@ -298,6 +298,10 @@ class Transform(Base):
     csv_bom: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # JSON output only: when the steps leave exactly one record, return that object instead of a one-element list (a lookup).
     output_single: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # The live proxy's request side: callers use the OTHER method than the provider (provider POST -> callers GET, provider GET -> callers
+    # POST), and this template turns their call into the provider's (see request_template.py). Off (NULL/False) = same method both ways.
+    request_swap: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    request_template: Mapped[str | None] = mapped_column(String, nullable=True)
     # One answer of the provider, pasted by an admin, to build and try the steps on -- for a source whose answers are not stored
     # (a live proxy keeps nothing). Never used to answer anyone.
     sample: Mapped[str | None] = mapped_column(String, nullable=True)

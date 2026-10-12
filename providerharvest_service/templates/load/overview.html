@@ -37,8 +37,9 @@
                 {% if r.proxy.live %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>live</span></span>
                 {% else %}<span class="badge badge-pending"><span>not live ({{ r.proxy.status }})</span></span>{% endif %}
                 <br>
-                {% if r.proxy.method == "POST" %}<span class="muted">POST</span> <code>{{ r.proxy.url }}</code>
+                {% if r.proxy.method == "POST" or r.proxy.turned %}<span class="muted">{{ r.proxy.method }}</span> <code>{{ r.proxy.url }}</code>
                 {% else %}<a href="{{ r.proxy.url }}" target="_blank" rel="noopener"><code>{{ r.proxy.url }}</code></a>{% endif %}
+                {% if r.proxy.turned %}<div class="muted">sent to the provider as {{ r.proxy.provider_method }}</div>{% endif %}
                 <div class="muted">{{ r.proxy.per_caller }}/min per caller &middot; <a href="/provider/sources/{{ r.source.id }}/edit">change on the source</a></div>
                 {% if r.transform and r.transform.enabled %}<div class="muted">answers reshaped by the <a href="/transform/sources/{{ r.source.id }}">transform</a></div>{% endif %}
               {% else %}<span class="muted">&mdash;</span>{% endif %}

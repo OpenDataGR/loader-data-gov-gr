@@ -210,6 +210,18 @@ answer anyone; use test data where possible). *When there is exactly one record,
 on by default for an API source) makes a lookup answer one object. Nothing is stored, so those sources have no "run again" or "recent
 outputs"; the Load Box says "pass-through, reshaped by the transform".
 
+**Request turn-around** (`request_template.py`, `Transform.request_swap` / `request_template`, the *Request* card on an API source's Transform
+page): the live proxy can accept the *other* method than the provider uses. Provider `POST` (the source's setting), callers `GET`: the
+caller's query parameters fill `{name}` placeholders in a JSON body template (`/proxy/registry?plate=AB1234` becomes the registry's
+POST body). Provider `GET`, callers `POST`: fields of the caller's JSON body (`{a/b}` for nested ones) fill a `name={field}` query
+template. Only what the template names is passed on (other parameters and fields are dropped); a value is escaped (JSON-escaped into
+the body, URL-encoded into the query), limited to 200 characters and refused if it holds a control character, so it cannot change the
+structure of what the provider receives; a template whose body is not valid JSON with a dummy value in each placeholder is refused when
+it is saved. A call that does not fit gets a `400` naming the parameter, never its value; the wrong method gets `405` with `Allow`. The
+provider's own credential is added as usual and wins over anything a caller supplies. The Load Box shows the call as callers make it
+(`GET /proxy/registry?plate=...`, "sent to the provider as POST"). It works together with the response transform above. Mind that a GET
+puts the value in the URL, so it appears in access logs.
+
 **Login** (`/admin/login`): the site sits behind a session; the session is started either by the shared username/password (the original placeholder) or, once configured, by the data.gov.gr Keycloak (`oidc_login.py`: authorization code + PKCE, signature/issuer/audience/nonce checks, role `loader-admin` required) -- setup in `deploy/README.md`; with `LOADER_OIDC_ACCESS=ckan-org-admin` the rule is CKAN's (a sysadmin or an administrator of an organization, asked of CKAN with the loader's sysadmin key). The Data boxes and Security box are for super admins only (a CKAN sysadmin, the Keycloak role `loader-superadmin`, or the shared break-glass account). The person's own Keycloak user name then appears everywhere the shared name did.
 
 **Integrity of what arrives** (FTP/SFTP push): the box's catch-up sweep skips a file that is still being written; the box sends a SHA-256 and the loader refuses a mismatch and answers with the hash of what it stored (a transfer counts as done only when both agree); a provider may also send `<file>.sha256` before each file for an end-to-end check, and a file that does not match it is put aside on the box instead of sent; each run's detail page shows the stored file's SHA-256. Details and a ready-to-send provider note: `ftp-forwarder/README.md`.
