@@ -134,6 +134,10 @@ def run_harvest(config_session: Session, harvest_session: Session, source_id: st
             "Manual harvest is only supported for transport_type in %s so far "
             "(got %r)." % (SUPPORTED_TRANSPORT_TYPES, source.transport_type)
         )
+    if source.proxy_only:
+        raise UnsupportedTransportType(
+            "This source is a live proxy for a POST API: it has nothing to pull. Consumers call /proxy/%s." % source.name
+        )
     if source.status != "active":
         raise provider_sources.InvalidTransition(
             "Only an active source can be harvested (current status: %r)" % source.status

@@ -189,6 +189,16 @@ provider's uploads until they switch), and for an HTTPS push source **Rotate API
 key** (`/provider/sources/{id}/rotate-key`: the old key stops working immediately;
 before this a lost key meant deleting and re-registering the source).
 
+**POST proxy** (`proxy.py`, `proxy_method`): an HTTP source can be registered with the method `POST`. Its live proxy
+(`POST /proxy/{name}`) then passes the caller's JSON body (application/json only, valid JSON, at most 64 kB) to the provider's
+endpoint, with the provider's credential added by the loader (a caller's own `Authorization` or other headers are never sent), and
+relays the answer. One method per source: a POST source answers `405` to GET and an ordinary source answers `405` to POST. Such a
+source is **proxy-only**: it is registered with frequency MANUAL, never pulled on a schedule, "Harvest now" is refused and the connection
+check does not call it (each call to a question-per-call API is a real request and may create something at the provider). The per-source
+request timeout (`request_timeout_s`) should fit a slow API, and any gateway in front of the loader needs a timeout at least as long
+(an Azure Application Gateway's backend setting defaults to 20 s). The proxy is public by design, like every `/proxy/*`: put nothing
+behind it that must not be reachable by whoever knows the source name.
+
 **Login** (`/admin/login`): the site sits behind a session; the session is started either by the shared username/password (the original placeholder) or, once configured, by the data.gov.gr Keycloak (`oidc_login.py`: authorization code + PKCE, signature/issuer/audience/nonce checks, role `loader-admin` required) -- setup in `deploy/README.md`; with `LOADER_OIDC_ACCESS=ckan-org-admin` the rule is CKAN's (a sysadmin or an administrator of an organization, asked of CKAN with the loader's sysadmin key). The Data boxes and Security box are for super admins only (a CKAN sysadmin, the Keycloak role `loader-superadmin`, or the shared break-glass account). The person's own Keycloak user name then appears everywhere the shared name did.
 
 **Integrity of what arrives** (FTP/SFTP push): the box's catch-up sweep skips a file that is still being written; the box sends a SHA-256 and the loader refuses a mismatch and answers with the hash of what it stored (a transfer counts as done only when both agree); a provider may also send `<file>.sha256` before each file for an end-to-end check, and a file that does not match it is put aside on the box instead of sent; each run's detail page shows the stored file's SHA-256. Details and a ready-to-send provider note: `ftp-forwarder/README.md`.

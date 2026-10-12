@@ -206,6 +206,22 @@ class ProviderSource(Base):
         return "push" if self.transport_type == "push" else "pull"
 
     @property
+    def proxy_method(self) -> str:
+        """How the live proxy calls this source's endpoint: "GET" (the default, and what every older source does)
+        or "POST" (a JSON body is passed through). Only meaningful for an HTTP source."""
+        try:
+            config = json.loads(self.config or "{}")
+        except ValueError:
+            return "GET"
+        return "POST" if isinstance(config, dict) and config.get("proxy_method") == "POST" else "GET"
+
+    @property
+    def proxy_only(self) -> bool:
+        """An HTTP source whose API is called with POST: it can only be reached through the proxy -- there is nothing to
+        pull on a schedule (each call asks one question, and may create something at the provider)."""
+        return self.transport_type == "http" and self.proxy_method == "POST"
+
+    @property
     def push_method(self) -> str | None:
         """For a push source, how it delivers: "https" (API key) or "ftp"
         (FTP/SFTP login). None for a pull source. Sources registered

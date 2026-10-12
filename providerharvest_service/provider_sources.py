@@ -43,6 +43,7 @@ from providerharvest_service import retention, sender_allowlist
 from providerharvest_service.models import FtpAccount, FtpAllowedIp, ProviderSource, _new_id
 
 TRANSPORT_TYPES = ("http", "sftp", "scp", "ftp", "push")
+PROXY_METHODS = ("GET", "POST")
 SSH_TRANSPORT_TYPES = ("sftp", "scp")
 # How a push-mode source receives its data: "https" (the provider calls
 # push_ingest.py with a generated API key) or "ftp" (the provider logs
@@ -217,7 +218,13 @@ def _http_fields(form: dict, errors: dict) -> tuple[str, dict, dict]:
             "name": (form.get("api_key_name") or "").strip() or "X-API-Key",
         }
 
+    proxy_method = (form.get("proxy_method") or "GET").strip().upper()
+    if proxy_method not in PROXY_METHODS:
+        errors["proxy_method"] = "must be one of %s" % (PROXY_METHODS,)
+        proxy_method = "GET"
+
     config_extra = {
+        "proxy_method": proxy_method,
         "auth_opts": auth_opts,
         "pagination": {
             "style": form.get("pagination_style") or "page_number",
@@ -482,6 +489,9 @@ def register(session: Session, form: dict) -> ProviderSource:
         auth_type = "push_ftp_account" if config.get("push_method") == "ftp" else "push_api_key"
     else:
         auth_type, credential_fields, config = _http_fields(form, errors)
+        if config.get("proxy_method") == "POST":
+            # A POST API is only reachable through the live proxy: it is never pulled on a schedule.
+            frequency, proxy_enabled = "MANUAL", True
 
     if errors:
         raise ValidationError(errors)
@@ -577,6 +587,7 @@ def config_to_form_fields(source: ProviderSource) -> dict:
         data["max_requests_per_minute"] = str(config.get("max_requests_per_minute", 60))
         data["proxy_rate_limit_per_ip"] = str(config.get("proxy_rate_limit_per_ip", 30))
         data["request_timeout_s"] = str(config.get("request_timeout_s", 30))
+        data["proxy_method"] = "POST" if config.get("proxy_method") == "POST" else "GET"
         data["max_pages"] = str(config.get("max_pages", 1000))
         data["max_retries"] = str(config.get("max_retries", 5))
     elif source.transport_type in SSH_TRANSPORT_TYPES:
@@ -729,6 +740,8 @@ def update(session: Session, source_id: str, form: dict) -> ProviderSource:
         auth_type = source.auth_type if source.transport_type == "push" else "push_api_key"
     else:
         auth_type, credential_fields, config = _http_fields(working_form, errors)
+        if config.get("proxy_method") == "POST":
+            frequency, proxy_enabled = "MANUAL", True
 
     if errors:
         raise ValidationError(errors)

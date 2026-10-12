@@ -144,6 +144,14 @@
         <input type="number" class="small" id="max_requests_per_minute" name="max_requests_per_minute" value="{{ data.get('max_requests_per_minute', '60') }}">
         {% if errors.max_requests_per_minute %}<div class="error">{{ errors.max_requests_per_minute }}</div>{% endif %}
 
+        <label for="proxy_method">How the live proxy calls this API</label>
+        <select id="proxy_method" name="proxy_method" style="max-width:30rem;">
+          <option value="GET"{% if data.get('proxy_method', 'GET') != 'POST' %} selected{% endif %}>GET -- the caller's query parameters are passed on (the usual case)</option>
+          <option value="POST"{% if data.get('proxy_method') == 'POST' %} selected{% endif %}>POST -- the caller's JSON body is passed on (an API that is asked one question per call)</option>
+        </select>
+        <p class="muted" style="margin:0.2rem 0 0.8rem;">A POST source is reached <strong>only</strong> through the live proxy: it is never pulled on a schedule and never "checked" by calling it, because each call is a real request that may create something at the provider. Set the request timeout above to fit a slow API.</p>
+        {% if errors.proxy_method %}<div class="error">{{ errors.proxy_method }}</div>{% endif %}
+
         <div class="checkbox-row">
           <input type="checkbox" id="proxy_enabled" name="proxy_enabled" {% if data.get('proxy_enabled') == 'on' %}checked{% endif %}>
           <label for="proxy_enabled">Also expose this as a live proxy (<code>/proxy/{name}</code>) for consumers who need real-time access, not just a scheduled pull</label>

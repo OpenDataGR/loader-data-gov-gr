@@ -97,6 +97,14 @@ def check_connection(
     """
     source = provider_sources.get_or_404(session, source_id)
 
+    if source.proxy_only:
+        # Asking a POST API "are you there" means making a real call, which can create something at the provider.
+        source.last_check_at = _utcnow()
+        source.last_check_status = None
+        source.last_check_message = "Not checked: this is a live POST proxy, and a check would make a real call to the provider."
+        session.commit()
+        return source
+
     status = "ok"
     try:
         if transport is None:

@@ -87,6 +87,8 @@ def due_sources(
     for source in provider_sources.list_all(config_session):
         if source.status != "active" or source.transport_type not in harvest_runner.SUPPORTED_TRANSPORT_TYPES:
             continue
+        if source.proxy_only:
+            continue  # a POST API is reached only through the live proxy
         interval = FREQUENCY_INTERVALS.get(source.frequency)
         if interval is None:  # MANUAL, or any future frequency this scheduler doesn't know yet
             continue

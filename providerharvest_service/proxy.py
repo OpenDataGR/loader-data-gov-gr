@@ -67,6 +67,7 @@ from collections import OrderedDict
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -131,22 +132,22 @@ def _get_active_http_source_or_404(session: Session, source_name: str) -> Provid
     return source
 
 
-@router.get("/{source_name}")
-def proxy_call(
-    source_name: str,
-    request: Request,
-    session: Session = Depends(get_session),
-) -> Response:
+MAX_BODY_BYTES = 64 * 1024  # a POST body passed through to the provider (a lookup, not an upload)
+
+
+def _forward(session: Session, source_name: str, method: str, query_params: dict, client_ip: str, body: bytes | None) -> Response:
     source = _get_active_http_source_or_404(session, source_name)
     config = json.loads(source.config or "{}")
 
-    # The real caller, not the socket peer: behind the gateway and nginx that
-    # is the gateway's own address, which would put every outside consumer in
-    # one shared bucket (see client_addr.py).
-    client_ip = sender_address(request) or "unknown"
-    per_ip_bucket = _per_ip_rate_limiter_for(
-        source.id, client_ip, config.get("proxy_rate_limit_per_ip", 30)
-    )
+    # One method per source, the one it was registered with: a source for a POST API is not reachable with GET (and the
+    # other way round), so nothing can be sent to a provider in a shape that was never agreed.
+    allowed = source.proxy_method
+    if method != allowed:
+        raise HTTPException(
+            status.HTTP_405_METHOD_NOT_ALLOWED, "this source's proxy answers %s requests" % allowed, headers={"Allow": allowed}
+        )
+
+    per_ip_bucket = _per_ip_rate_limiter_for(source.id, client_ip, config.get("proxy_rate_limit_per_ip", 30))
     if not per_ip_bucket.try_acquire():
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
@@ -166,14 +167,19 @@ def proxy_call(
     secret = provider_sources.credentials(session, source.id)
     auth_strategy = build_auth_strategy(source.auth_type)
     request_kwargs = auth_strategy.apply(
-        {"params": dict(request.query_params)}, secret, config.get("auth_opts") or {}
+        {"params": dict(query_params)}, secret, config.get("auth_opts") or {}
     )
     request_kwargs.setdefault("timeout", config.get("request_timeout_s", DEFAULT_TIMEOUT_S))
+    if method == "POST":
+        headers = dict(request_kwargs.get("headers") or {})
+        headers["Content-Type"] = "application/json"
+        request_kwargs["headers"] = headers
+        request_kwargs["data"] = body
 
     _rate_limiter_for(source.id, config.get("max_requests_per_minute", 60)).acquire()
 
     try:
-        upstream = requests.get(source.endpoint_url, **request_kwargs)
+        upstream = (requests.post if method == "POST" else requests.get)(source.endpoint_url, **request_kwargs)
     except requests.RequestException as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "upstream request failed: %s" % exc) from exc
 
@@ -181,4 +187,35 @@ def proxy_call(
         content=upstream.content,
         status_code=upstream.status_code,
         media_type=upstream.headers.get("content-type", "application/octet-stream"),
+    )
+
+
+@router.get("/{source_name}")
+async def proxy_get(source_name: str, request: Request, session: Session = Depends(get_session)) -> Response:
+    # The real caller, not the socket peer: behind the gateway and nginx that
+    # is the gateway's own address, which would put every outside consumer in
+    # one shared bucket (see client_addr.py).
+    return await run_in_threadpool(
+        _forward, session, source_name, "GET", dict(request.query_params), sender_address(request) or "unknown", None
+    )
+
+
+@router.post("/{source_name}")
+async def proxy_post(source_name: str, request: Request, session: Session = Depends(get_session)) -> Response:
+    """For a source registered with the POST method: the caller's JSON body is passed through, the loader adds the
+    provider's credential. The body is checked here -- JSON only, small -- before anything leaves the loader."""
+    if not (request.headers.get("content-type") or "").lower().startswith("application/json"):
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "send the body as application/json")
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > MAX_BODY_BYTES:
+        raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, "the body is limited to %d bytes" % MAX_BODY_BYTES)
+    body = await request.body()
+    if len(body) > MAX_BODY_BYTES:
+        raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, "the body is limited to %d bytes" % MAX_BODY_BYTES)
+    try:
+        json.loads(body)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "the body is not valid JSON") from exc
+    return await run_in_threadpool(
+        _forward, session, source_name, "POST", dict(request.query_params), sender_address(request) or "unknown", body
     )
