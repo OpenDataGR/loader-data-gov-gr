@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.responses import RedirectResponse
 
 from providerharvest_service import box_history, db, harvest_db, retention, scheduler
 from providerharvest_service.access_middleware import AccessControlMiddleware
@@ -83,6 +84,12 @@ app.include_router(load_api_router)
 app.include_router(load_ui_router)
 app.include_router(push_ingest_router)
 app.include_router(ftp_relay_ingest_router)
+
+
+@app.get("/", include_in_schema=False)
+def front_page() -> RedirectResponse:
+    """The bare address: somewhere to land (the login gate sends anyone not signed in to the login page first)."""
+    return RedirectResponse("/provider/sources", status_code=303)
 
 
 @app.get("/health")

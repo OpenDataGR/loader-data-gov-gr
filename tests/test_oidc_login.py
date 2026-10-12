@@ -231,3 +231,14 @@ def test_without_keycloak_configured_the_shared_login_still_works_exactly_as_bef
     browser = _browser()
     resp = browser.post("/admin/login", data={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD, "next": "/transform"})
     assert resp.headers["location"] == "/transform" and admin_session.COOKIE_NAME in browser.cookies
+
+
+def test_the_bare_address_leads_somewhere(monkeypatch):
+    from tests.test_ui_admin_ftp import ADMIN_PASSWORD, ADMIN_USERNAME
+
+    anonymous = _browser()
+    first = anonymous.get("/")
+    assert first.status_code == 303 and first.headers["location"].startswith("/admin/login")  # not signed in: the login page
+    anonymous.post("/admin/login", data={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD, "next": "/"})
+    resp = anonymous.get("/")
+    assert resp.status_code == 303 and resp.headers["location"] == "/provider/sources"
