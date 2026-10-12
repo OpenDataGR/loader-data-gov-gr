@@ -16,16 +16,17 @@ import datetime
 import json
 import logging
 import re
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from providerharvest_service import (
-    request_template, admin_session, build_info, harvest_db, nav, provider_sources, retention, transform_engine as te, transform_forms as tf, transform_runner,
+    proxy, request_template, admin_session, build_info, harvest_db, nav, provider_sources, retention, transform_engine as te, transform_forms as tf, transform_runner,
 )
 from providerharvest_service.db import get_session
 from providerharvest_service.harvest_models import TransformedFile
@@ -202,6 +203,7 @@ def _editor_context(session: Session, hsession: Session, source: ProviderSource,
                                                    failed_only=request.query_params.get("show") == "failed") if transform else [], "counts": transform_runner.output_counts(hsession, source.id) if transform else None,
         "formats": te.OUTPUTS, "delimiters": te.CSV_DELIMITERS, "choices": transform_runner.REPROCESS_CHOICES, "has_sample": transform_runner.sample_for(session, hsession, source.id) is not None,
         "is_http": source.transport_type == "http", "provider_method": source.proxy_method,
+        "fetch_params": (request_template.placeholders(transform.request_template) if transform and transform.request_swap and source.proxy_method == "POST" else []),
         "request_swap": bool(transform and transform.request_swap), "request_template": (transform.request_template if transform else "") or "",
         "proxy_name": source.name, "pasted_sample": bool(transform and transform.sample),
         "pasted_sample_kb": round(len(transform.sample.encode("utf-8")) / 1000, 1) if transform and transform.sample else 0,
@@ -262,6 +264,61 @@ async def set_request(source_id: str, request: Request, session: Session = Depen
     logger.info("transform box: %s %s the request turn-around of source %s", _who(request) or "?", "set" if swap else "switched off", source.name)
     return _go(back, "Callers now use %s on /proxy/%s." % ("GET" if source.proxy_method == "POST" else "POST", source.name) if swap
                else "Callers use the same method as the provider (%s)." % source.proxy_method)
+
+
+@router.post("/sources/{source_id}/fetch-sample")
+async def fetch_sample(source_id: str, request: Request, session: Session = Depends(get_session)):
+    """Make ONE real call to the provider, with a test request the admin gives, and keep its answer as the sample -- so the steps can
+    be built without pasting anything. Admin-only (the whole page is), confirmed in the browser, and rate-limited like any call."""
+    source, transform = _with(session, source_id)
+    back = "/transform/sources/%s" % source_id
+    if source is None or transform is None:
+        return _go("/transform", "No such transform.", "error")
+    if source.transport_type != "http":
+        return _go(back, "Only an API source has answers to fetch.", "error")
+    form = await request.form()
+    provider = source.proxy_method
+    try:
+        if provider == "POST":
+            if transform.request_swap and (transform.request_template or "").strip():
+                values = {k[len("param_"):]: str(v) for k, v in form.items() if k.startswith("param_")}
+                body = request_template.build_json_body(transform.request_template, values)
+            else:
+                text = str(form.get("body") or "").strip()
+                if not text:
+                    raise te.TransformError("Give the request to send to the provider (JSON).")
+                if len(text.encode("utf-8")) > proxy.MAX_BODY_BYTES:
+                    raise te.TransformError("The request is larger than %d kB." % (proxy.MAX_BODY_BYTES // 1000))
+                try:
+                    json.loads(text)
+                except ValueError:
+                    raise te.TransformError("The request is not valid JSON.") from None
+                body = text.encode("utf-8")
+            params: dict = {}
+        else:
+            body = None
+            params = dict(parse_qsl(str(form.get("query") or "").lstrip("?"), keep_blank_values=True))
+        upstream = await run_in_threadpool(proxy.call_provider, session, source, params, body)
+        if not 200 <= upstream.status_code < 300:
+            raise te.TransformError("The provider answered HTTP %d, so there is no sample to keep." % upstream.status_code)
+        transform_runner.set_sample(transform, upstream.content.decode("utf-8", errors="replace"))
+    except request_template.RequestTemplateError as exc:
+        return _go(back, str(exc), "error")
+    except te.TransformError as exc:
+        session.rollback()
+        return _go(back, str(exc), "error")
+    except HTTPException as exc:
+        session.rollback()
+        return _go(back, "The provider could not be asked: %s" % exc.detail, "error")
+    transform.updated_at, transform.updated_by = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None), _who(request)
+    session.commit()
+    logger.info("transform box: %s fetched a sample answer for source %s from the provider", _who(request) or "?", source.name)
+    steps = transform_runner.steps_of(transform)
+    message = "Sample fetched (%s kB). %s" % (round(len(transform.sample.encode("utf-8")) / 1000, 1), "Now choose the fields to keep." if not steps else "It replaces the previous sample.")
+    if steps:
+        return _go(back, message)
+    # no steps yet: straight to choosing the fields (this address already has a query, so the message goes in it too)
+    return RedirectResponse("%s/steps/new?%s" % (back, urlencode({"type": "read", "flash": message, "flash_kind": "success"})), status_code=303)
 
 
 @router.post("/sources/{source_id}/sample")

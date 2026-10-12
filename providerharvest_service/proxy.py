@@ -150,6 +150,37 @@ def consumer_method(source: ProviderSource, transform) -> str:
 MAX_BODY_BYTES = 64 * 1024  # a POST body passed through to the provider (a lookup, not an upload)
 
 
+def call_provider(session: Session, source: ProviderSource, params: dict, body: bytes | None):
+    """One real call to the provider's endpoint, with the source's own credential, method (``proxy_method``), timeout and rate limit.
+    The caller has already built ``params`` / ``body``. Raises ``HTTPException`` (502) when the target is not allowed or the call fails.
+    Used by the live proxy and by the Transform Box's "fetch a sample"."""
+    config = json.loads(source.config or "{}")
+    try:
+        assert_safe_http_url(source.endpoint_url)
+    except UnsafeNetworkTargetError as exc:
+        # Re-validated on every call (DNS can rebind between registration and now, same requirement as a scheduled harvest run) -- a
+        # target that fails this now is a server misconfiguration/attack, not a caller error.
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "upstream target is not reachable: %s" % exc) from exc
+
+    secret = provider_sources.credentials(session, source.id)
+    auth_strategy = build_auth_strategy(source.auth_type)
+    request_kwargs = auth_strategy.apply({"params": params}, secret, config.get("auth_opts") or {})
+    request_kwargs.setdefault("timeout", config.get("request_timeout_s", DEFAULT_TIMEOUT_S))
+    provider = source.proxy_method
+    if provider == "POST":
+        headers = dict(request_kwargs.get("headers") or {})
+        headers["Content-Type"] = "application/json"
+        request_kwargs["headers"] = headers
+        request_kwargs["data"] = body
+
+    _rate_limiter_for(source.id, config.get("max_requests_per_minute", 60)).acquire()
+
+    try:
+        return (requests.post if provider == "POST" else requests.get)(source.endpoint_url, **request_kwargs)
+    except requests.RequestException as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "upstream request failed: %s" % exc) from exc
+
+
 def _forward(session: Session, source_name: str, method: str, query_params: dict, client_ip: str, body: bytes | None) -> Response:
     source = _get_active_http_source_or_404(session, source_name)
     config = json.loads(source.config or "{}")
@@ -174,15 +205,6 @@ def _forward(session: Session, source_name: str, method: str, query_params: dict
             headers={"Retry-After": "60"},
         )
 
-    try:
-        assert_safe_http_url(source.endpoint_url)
-    except UnsafeNetworkTargetError as exc:
-        # Re-validated on every call (DNS can rebind between
-        # registration and now, same requirement as a scheduled
-        # harvest run) -- a target that fails this now is a server
-        # misconfiguration/attack, not a caller error.
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "upstream target is not reachable: %s" % exc) from exc
-
     provider = source.proxy_method
     params, provider_body = dict(query_params), body
     if swap:
@@ -196,24 +218,7 @@ def _forward(session: Session, source_name: str, method: str, query_params: dict
         except request_template.RequestTemplateError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
-    secret = provider_sources.credentials(session, source.id)
-    auth_strategy = build_auth_strategy(source.auth_type)
-    request_kwargs = auth_strategy.apply(
-        {"params": params}, secret, config.get("auth_opts") or {}
-    )
-    request_kwargs.setdefault("timeout", config.get("request_timeout_s", DEFAULT_TIMEOUT_S))
-    if provider == "POST":
-        headers = dict(request_kwargs.get("headers") or {})
-        headers["Content-Type"] = "application/json"
-        request_kwargs["headers"] = headers
-        request_kwargs["data"] = provider_body
-
-    _rate_limiter_for(source.id, config.get("max_requests_per_minute", 60)).acquire()
-
-    try:
-        upstream = (requests.post if provider == "POST" else requests.get)(source.endpoint_url, **request_kwargs)
-    except requests.RequestException as exc:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "upstream request failed: %s" % exc) from exc
+    upstream = call_provider(session, source, params, provider_body)
 
     if 200 <= upstream.status_code < 300:
         reshaped = _reshape(session, source, upstream.content)

@@ -208,7 +208,11 @@ one that is switched off, the answer passes through as before. An API's answers 
 **sample answer** an admin pastes on the source's Transform page (JSON, up to 200 kB, kept in the config database, never used to
 answer anyone; use test data where possible). *When there is exactly one record, return that object instead of a list* (JSON output,
 on by default for an API source) makes a lookup answer one object. Nothing is stored, so those sources have no "run again" or "recent
-outputs"; the Load Box says "pass-through, reshaped by the transform".
+outputs"; the Load Box says "pass-through, reshaped by the transform". Instead of pasting, the sample card can **fetch one from the provider**
+(`POST /transform/sources/{id}/fetch-sample`, `proxy.call_provider`): one real call with a test request the admin gives (the values of the
+request template's placeholders, a JSON body, or query parameters), the source's own credential, timeout and rate limit, confirmed in the
+browser first because it may create a record at the provider; the answer (2xx, JSON, up to 200 kB) becomes the sample and the page goes
+straight to choosing the fields. The provider's content is never echoed in an error message.
 
 **Request turn-around** (`request_template.py`, `Transform.request_swap` / `request_template`, the *Request* card on an API source's Transform
 page): the live proxy can accept the *other* method than the provider uses. Provider `POST` (the source's setting), callers `GET`: the

@@ -56,6 +56,25 @@
             <textarea name="sample" rows="8" aria-label="Sample answer" style="font-family:monospace; font-size:0.8rem;">{{ transform.sample or "" }}</textarea>
             <div style="display:flex; gap:0.6rem; margin-top:0.4rem;"><button type="submit">Save sample</button>{% if pasted_sample %}<button type="submit" class="btn-secondary" onclick="this.form.sample.value=''">Remove</button>{% endif %}</div>
           </form>
+          <div style="border-top:1px solid var(--color-border); margin-top:1rem; padding-top:0.8rem;">
+            <div style="font-weight:600;">Or fetch one from the provider</div>
+            <p class="muted" style="margin:0.3rem 0 0.5rem;">Makes <strong>one real call</strong> to the provider with a test request you give, using this source's own credential, and keeps the answer as the sample. It may create a record at the provider. Use a test case, not a real person.</p>
+            <form method="post" action="/transform/sources/{{ source.id }}/fetch-sample" onsubmit="return confirm('This makes one real call to the provider, which may create a record there. Continue?');">
+              {% if provider_method == "POST" and fetch_params %}
+                {% for name in fetch_params %}
+                  <label for="fp_{{ name }}">{{ name }} (the value a caller would send)</label>
+                  <input type="text" id="fp_{{ name }}" name="param_{{ name }}" maxlength="200" style="max-width:20rem;" required>
+                {% endfor %}
+              {% elif provider_method == "POST" %}
+                <label for="fetch_body">The request to send (JSON)</label>
+                <textarea id="fetch_body" name="body" rows="5" style="font-family:monospace; font-size:0.8rem;" placeholder='{"document": {"statements": {"platenumber": "..."}}}' required></textarea>
+              {% else %}
+                <label for="fetch_query">Query parameters to send (name=value&amp;name2=value2; may be empty)</label>
+                <input type="text" id="fetch_query" name="query" style="max-width:30rem;" placeholder="plate=AB1234">
+              {% endif %}
+              <div style="margin-top:0.5rem;"><button type="submit" class="btn-secondary">Fetch a sample</button></div>
+            </form>
+          </div>
         </details>
       {% endif %}
       {% if is_http %}
