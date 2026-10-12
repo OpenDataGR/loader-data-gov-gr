@@ -31,7 +31,7 @@ import hmac
 import json
 import os
 import time
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import bcrypt
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -117,6 +117,19 @@ def unseal(purpose: str, value: str) -> dict | None:
     return data if isinstance(data, dict) and time.time() <= data.get("exp", 0) else None
 
 
+SUPERADMIN_ONLY_MESSAGE = "Only super admins can open the Data boxes and the Security box."
+
+
+def needs_superadmin(path: str) -> bool:
+    """The pages (and their actions) only a super admin may use: the Data boxes page with its box actions and log
+    viewers, and everything in the Security box. The per-account FTP actions under /admin/ftp/<account>/... are part
+    of managing a source and stay open to everyone who is signed in."""
+    return (
+        path == "/admin/ftp" or path.startswith(("/admin/ftp/http-box", "/admin/ftp/boxes/"))
+        or path == "/admin/security" or path.startswith("/admin/security/")
+    )
+
+
 def user_info(username: str, profile_cookie: str) -> dict:
     """What the menu shows about the signed-in person. The profile cookie only adds detail; it counts only when it is
     validly signed and is about the same user name as the session itself."""
@@ -134,8 +147,9 @@ def user_info(username: str, profile_cookie: str) -> dict:
         access = "Role %s" % profile["role"]
     else:
         access = ""
+    # Without a valid profile cookie nobody is a super admin: it is the cookie, signed by this server at login, that says so.
     return {"username": username, "name": profile.get("n") or "", "email": profile.get("e") or "",
-            "via": profile.get("via") or "Shared account", "access": access}
+            "via": profile.get("via") or "Unknown", "access": access, "super": bool(profile.get("super"))}
 
 
 def create_session_cookie(username: str, *, ttl_s: int = DEFAULT_TTL_S) -> str:
@@ -189,6 +203,8 @@ class AdminSessionMiddleware(BaseHTTPMiddleware):
             username = verify_session_cookie(token) if token else None
             if username is not None:
                 request.state.user = user_info(username, request.cookies.get(PROFILE_COOKIE, ""))
+            if username is not None and needs_superadmin(request.url.path) and not request.state.user["super"]:
+                return RedirectResponse("/provider/sources?%s" % urlencode({"flash": SUPERADMIN_ONLY_MESSAGE, "flash_kind": "error"}), status_code=303)
             if not token or username is None:
                 next_path = request.url.path
                 if request.url.query:

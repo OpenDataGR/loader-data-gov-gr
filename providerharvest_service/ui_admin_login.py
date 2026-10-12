@@ -83,11 +83,13 @@ async def login_submit(request: Request):
             "/admin/login?next=%s&flash=Invalid+username+or+password" % quote(next_url, safe=""), status_code=303
         )
 
-    return _start_session(next_url, username)
+    # The shared account is the break-glass login of the whole site, so it counts as a super admin.
+    return _start_session(next_url, username, {"u": str(username), "via": "Shared account", "super": True})
 
 
-def _start_session(next_url: str, username: str) -> RedirectResponse:
+def _start_session(next_url: str, username: str, profile: dict) -> RedirectResponse:
     response = RedirectResponse(next_url, status_code=303)
+    response.set_cookie(admin_session.PROFILE_COOKIE, admin_session.seal("profile", profile), max_age=admin_session.DEFAULT_TTL_S, httponly=True, secure=True, samesite="lax")
     response.set_cookie(
         admin_session.COOKIE_NAME,
         admin_session.create_session_cookie(username),
@@ -151,8 +153,7 @@ async def oidc_callback(request: Request):
         response = _back_to_login(str(exc))
     else:
         logger.info("oidc: %s signed in", username)
-        response = _start_session(_safe_next(next_url), username)
+        response = _start_session(_safe_next(next_url), username, profile)
         response.set_cookie(oidc_login.ID_COOKIE, id_token, max_age=admin_session.DEFAULT_TTL_S, httponly=True, secure=True, samesite="lax")
-        response.set_cookie(admin_session.PROFILE_COOKIE, admin_session.seal("profile", profile), max_age=admin_session.DEFAULT_TTL_S, httponly=True, secure=True, samesite="lax")
     response.delete_cookie(oidc_login.TX_COOKIE, path="/auth")
     return response

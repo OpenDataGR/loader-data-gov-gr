@@ -80,6 +80,11 @@ def required_role() -> str:
     return _env("LOADER_OIDC_REQUIRED_ROLE") or DEFAULT_ROLE
 
 
+def superadmin_role() -> str:
+    """With the ``role`` rule, the realm role that makes someone a super admin (Data boxes and Security box)."""
+    return _env("LOADER_OIDC_SUPERADMIN_ROLE") or "loader-superadmin"
+
+
 def access_rule() -> str:
     """Who is let in once Keycloak has said who they are: ``role`` (the realm role, the default) or
     ``ckan-org-admin`` (a CKAN sysadmin or an administrator of at least one CKAN organization -- see ckan_access.py)."""
@@ -234,11 +239,13 @@ def finish(request_base_url: str, tx_cookie: str, params: dict) -> tuple[str, st
             raise OidcError(str(exc)) from exc  # fails closed: CKAN could not be asked, so nobody gets in this way
         if not verdict.allowed:
             raise NotAllowed(username, verdict.reason)
-        profile.update({"sys": verdict.sysadmin, "orgs": list(verdict.organizations[:4]), "norg": len(verdict.organizations)})
+        profile.update({"sys": verdict.sysadmin, "orgs": list(verdict.organizations[:4]), "norg": len(verdict.organizations),
+                        "super": verdict.sysadmin})
     elif required_role() not in _roles(access, ident):
         raise NotAllowed(username, "it needs the role %s. Ask an administrator." % required_role())
     else:
         profile["role"] = required_role()
+        profile["super"] = superadmin_role() in _roles(access, ident)
     return username, str(tx.get("next") or ""), tokens["id_token"], profile
 
 

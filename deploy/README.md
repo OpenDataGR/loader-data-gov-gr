@@ -455,6 +455,16 @@ asks `organization_list_for_user(permission=admin)` -- checked on the real CKAN:
 editors and members get none (`manage_group`, `create_dataset` and `read` would let editors in too). It fails closed: when
 CKAN cannot be asked the login is refused, and a person with no CKAN account yet is told to sign in to data.gov.gr once.
 
+**Super admins.** The *Data boxes* page (with its box actions and log viewers) and the whole *Security box* are for
+super admins only, enforced on the server for every request -- not just by hiding the menu tabs; anyone else is sent
+back to the Extract Box with a message and nothing is done. A super admin is a CKAN **sysadmin** (with
+`LOADER_OIDC_ACCESS=ckan-org-admin`), or someone with the Keycloak realm role `loader-superadmin` (with the default role
+rule; the role name can be changed with `LOADER_OIDC_SUPERADMIN_ROLE`), or the shared break-glass account. It is decided
+once, at login, and recorded in a signed profile cookie, so a session that has no valid profile (for example one that was
+started before this existed) is not a super admin until its owner logs in again. The per-account FTP actions under
+`/admin/ftp/<account>/...` (set or rotate a password, allowed addresses, enable/disable) belong to managing a source and
+stay open to everyone who is signed in.
+
 `LOADER_PUBLIC_BASE_URL` matters because behind the gateway a request looks like plain
 `http`. A session started this way is the same signed cookie as the shared login's, so every page and every "who did
 this" line shows the person's own Keycloak user name. Logging out also ends the Keycloak session.
