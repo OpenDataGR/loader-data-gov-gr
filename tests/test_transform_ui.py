@@ -750,3 +750,18 @@ def test_the_outputs_say_how_long_they_are_kept_and_where_that_is_set(client, so
     assert "kept as long as this source" in page and "<strong>90 days</strong>" in page and "/retention" in page
     retention_page = client.get("/admin/sources/%s/retention" % source["id"]).text
     assert "transformed outputs" in retention_page
+
+
+def test_the_failed_outputs_can_be_listed_even_when_the_newest_ones_are_fine(client, source, _isolated_db, _isolated_harvest_db):
+    _upload_data(client, source)
+    _upload_table(client)
+    _build(client, source, READER_FORM)
+    _go(client, source, "enabled", data={"enabled": "1"})
+    _upload_data(client, source, content=b"<broken")  # fails: not well-formed
+    for _ in range(11):
+        _upload_data(client, source)
+    url = "/transform/sources/%s" % source["id"]
+    newest = client.get(url).text
+    assert "1 failed in all" in newest and "Show the failed ones" in newest and "It did not work" not in newest and "well-formed" not in newest
+    failed = client.get(url + "?show=failed").text
+    assert "Show the newest of all" in failed and failed.count('class="badge badge-error"') == 1

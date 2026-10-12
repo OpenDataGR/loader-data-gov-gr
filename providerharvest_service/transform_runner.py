@@ -190,17 +190,18 @@ def reprocess(config_session: Session, hsession: Session, source_id: str, *, lim
     return summary
 
 
-def recent_outputs(hsession: Session, source_id: str, limit: int = 10):
+def recent_outputs(hsession: Session, source_id: str, limit: int = 10, *, failed_only: bool = False):
     """The newest outputs as rows (id, created_at, status, error_message, records_in/out, size, has_content) --
     never the contents themselves, which can be large and are only needed for a download."""
-    return hsession.execute(
-        select(
-            TransformedFile.id, TransformedFile.created_at, TransformedFile.status, TransformedFile.error_message,
-            TransformedFile.filename, TransformedFile.content_type,
-            TransformedFile.records_in, TransformedFile.records_out, TransformedFile.size,
-            (func.length(TransformedFile.content) > 0).label("has_content"),
-        ).where(TransformedFile.source_id == source_id).order_by(TransformedFile.created_at.desc()).limit(limit)
-    ).all()
+    query = select(
+        TransformedFile.id, TransformedFile.created_at, TransformedFile.status, TransformedFile.error_message,
+        TransformedFile.filename, TransformedFile.content_type,
+        TransformedFile.records_in, TransformedFile.records_out, TransformedFile.size,
+        (func.length(TransformedFile.content) > 0).label("has_content"),
+    ).where(TransformedFile.source_id == source_id)
+    if failed_only:
+        query = query.where(TransformedFile.status == "error")
+    return hsession.execute(query.order_by(TransformedFile.created_at.desc()).limit(limit)).all()
 
 
 def output_counts(hsession: Session, source_id: str) -> dict:
