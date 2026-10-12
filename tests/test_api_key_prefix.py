@@ -68,3 +68,15 @@ def test_the_form_has_the_field_and_explains_it():
 
     template = pathlib.Path("providerharvest_service/templates/provider/source_form.html").read_text(encoding="utf-8")
     assert 'name="api_key_prefix"' in template and "Word before the key" in template and "Token" in template
+
+
+def test_a_custom_word_is_typed_in_its_own_box_and_must_not_be_empty(_isolated_db):
+    with _isolated_db() as session:
+        source = provider_sources.register(session, _form(api_key_prefix="__custom__", api_key_prefix_custom="Splunk"))
+        assert '"prefix": "Splunk"' in source.config
+        with pytest.raises(provider_sources.ValidationError) as excinfo:
+            provider_sources.register(session, _form(name="other", api_key_prefix="__custom__", api_key_prefix_custom=" "))
+        assert "type the word" in excinfo.value.errors["api_key_prefix"]
+        with pytest.raises(provider_sources.ValidationError) as excinfo:
+            provider_sources.register(session, _form(name="another", api_key_prefix="__custom__", api_key_prefix_custom="two words"))
+        assert "api_key_prefix" in excinfo.value.errors

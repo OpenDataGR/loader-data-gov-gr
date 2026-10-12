@@ -219,6 +219,10 @@ def _http_fields(form: dict, errors: dict) -> tuple[str, dict, dict]:
             "name": (form.get("api_key_name") or "").strip() or "X-API-Key",
         }
         prefix = (form.get("api_key_prefix") or "").strip()
+        if prefix == "__custom__":  # "Custom..." chosen in the dropdown: the word is typed in its own box
+            prefix = (form.get("api_key_prefix_custom") or "").strip()
+            if not prefix:
+                errors["api_key_prefix"] = "type the word, or choose another option"
         if prefix:
             if not _KEY_PREFIX.match(prefix):
                 errors["api_key_prefix"] = "a single word of letters, digits, '-' or '_' (e.g. Token or Bearer)"

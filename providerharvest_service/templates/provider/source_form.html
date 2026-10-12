@@ -106,7 +106,33 @@
         {% set stored_http = data.get('auth_type') if (editing and data.get('transport_type', 'http') == 'http') else none %}
         <div id="auth-api_key">
           <label for="api_key">API key{% if editing %} (leave blank to keep current){% endif %}{% if stored_http == "api_key" %} <span class="badge badge-ok" title="A value is already stored; it is never shown again"><span>stored</span></span>{% endif %}</label>
-          <input type="text" id="api_key" name="api_key" value="{{ data.get('api_key', '') }}" placeholder="{{ dots if stored_http == 'api_key' else '' }}" autocomplete="off">
+          {% set pfx = data.get('api_key_prefix_custom', '') if data.get('api_key_prefix') == '__custom__' else data.get('api_key_prefix', '') %}
+          {% set pfx_standard = ['Token', 'Bearer', 'ApiKey'] %}
+          {% set pfx_is_custom = data.get('api_key_prefix') == '__custom__' or (pfx and pfx not in pfx_standard) %}
+          <div class="key-row" style="display:flex; gap:0.5rem; align-items:center; max-width:46rem;">
+            <select id="api_key_prefix" name="api_key_prefix" aria-label="Word before the key" title="The word some APIs want before the key, e.g. Authorization: Token &lt;key&gt;" style="width:9.5rem; flex:none;">
+              <option value=""{% if not pfx %} selected{% endif %}>no word</option>
+              {% for word in pfx_standard %}<option value="{{ word }}"{% if pfx == word and not pfx_is_custom %} selected{% endif %}>{{ word }}</option>{% endfor %}
+              <option value="__custom__"{% if pfx_is_custom %} selected{% endif %}>Custom&hellip;</option>
+            </select>
+            <input type="text" id="api_key_prefix_custom" name="api_key_prefix_custom" value="{{ pfx if pfx_is_custom else '' }}" placeholder="word" aria-label="Custom word before the key" maxlength="20" autocomplete="off" style="width:8rem; flex:none;{% if not pfx_is_custom %} display:none;{% endif %}">
+            <input type="text" id="api_key" name="api_key" value="{{ data.get('api_key', '') }}" placeholder="{{ dots if stored_http == 'api_key' else '' }}" autocomplete="off" style="flex:1; min-width:0;">
+          </div>
+          <p class="muted" style="margin:0.2rem 0 0.8rem;">Some APIs want <code>Authorization: Token &lt;key&gt;</code> or <code>Bearer &lt;key&gt;</code>: choose the word on the left and type only the key. It applies to headers only; choose <em>no word</em> to send the key alone.</p>
+          {% if errors.api_key_prefix %}<div class="error">{{ errors.api_key_prefix }}</div>{% endif %}
+          <script>
+            document.addEventListener('DOMContentLoaded', function () {
+              var word = document.getElementById('api_key_prefix'), custom = document.getElementById('api_key_prefix_custom'), where = document.getElementById('api_key_location');
+              function sync() {
+                var query = where && where.value === 'query';           // a query parameter never gets a word
+                word.style.display = query ? 'none' : '';
+                custom.style.display = (!query && word.value === '__custom__') ? '' : 'none';
+              }
+              word.addEventListener('change', function () { sync(); if (word.value === '__custom__') custom.focus(); });
+              if (where) where.addEventListener('change', sync);
+              sync();
+            });
+          </script>
           <label for="api_key_location">Send as</label>
           <select id="api_key_location" name="api_key_location">
             <option value="header" {% if data.get('api_key_location', 'header') == 'header' %}selected{% endif %}>header</option>
@@ -114,11 +140,6 @@
           </select>
           <label for="api_key_name">Header/parameter name</label>
           <input type="text" id="api_key_name" name="api_key_name" value="{{ data.get('api_key_name', 'X-API-Key') }}">
-          <label for="api_key_prefix">Word before the key (optional)</label>
-          <input type="text" id="api_key_prefix" name="api_key_prefix" list="api_key_prefixes" value="{{ data.get('api_key_prefix', '') }}" placeholder="e.g. Token or Bearer" style="max-width:14rem;" autocomplete="off">
-          <datalist id="api_key_prefixes"><option value="Token"><option value="Bearer"><option value="ApiKey"></datalist>
-          <p class="muted" style="margin:0.2rem 0 0.8rem;">Some APIs want <code>Authorization: Token &lt;key&gt;</code> or <code>Authorization: Bearer &lt;key&gt;</code>. Enter the word here and only the key above -- it is added for you (headers only). Leave empty to send the key alone.</p>
-          {% if errors.api_key_prefix %}<div class="error">{{ errors.api_key_prefix }}</div>{% endif %}
         </div>
 
         <div id="auth-basic_auth" style="display:none">
