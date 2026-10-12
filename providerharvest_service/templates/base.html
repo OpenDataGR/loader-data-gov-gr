@@ -373,6 +373,8 @@
       </a>
     </div>
     <nav class="masthead-nav">
+      {# No menu on the login page: nothing in it is for someone who has not signed in. #}
+      {% if request.url.path != '/admin/login' %}
       <a href="/provider/sources" class="{{ 'active' if request.url.path.startswith('/provider') else '' }}">{{ macros.icon("provider", 16) }} Extract Box</a>
       {# Sources waiting for approval, as a number on the dashboard tab. Not on the login page: nothing about the
          queue is for someone who has not logged in. #}
@@ -382,7 +384,6 @@
       <a href="/admin/sources" class="{{ 'active' if request.url.path == '/admin/sources' else '' }}">{{ macros.icon("admin", 16) }} Admin dashboard{% if pending_n %}<span class="nav-count" title="{{ pending_n }} source{{ '' if pending_n == 1 else 's' }} awaiting approval" aria-label="{{ pending_n }} awaiting approval">{{ pending_n }}</span>{% endif %}</a>
       <a href="/admin/ftp" class="{{ 'active' if request.url.path == '/admin/ftp' else '' }}">{{ macros.icon("push", 16) }} Data boxes</a>
       <a href="/admin/security/failed-logins" class="{{ 'active' if request.url.path.startswith('/admin/security') else '' }}">{{ macros.icon("rejected", 16) }} Security box</a>
-      {% if request.url.path != '/admin/login' %}
         <form method="post" action="/admin/logout" style="margin-left:auto; display:flex;">
           <button type="submit" class="btn-secondary btn-sm" style="align-self:center;">{{ macros.icon("x", 14) }} Log out</button>
         </form>

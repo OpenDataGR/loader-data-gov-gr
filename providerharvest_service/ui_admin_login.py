@@ -103,9 +103,10 @@ def _start_session(next_url: str, username: str) -> RedirectResponse:
 def logout(request: Request) -> RedirectResponse:
     # Ends this site's session, and Keycloak's too when the person came in through it -- otherwise "log out"
     # followed by "sign in" would silently sign them straight back in.
-    target = oidc_login.logout_url(str(request.base_url)) if oidc_login.enabled() else None
+    target = oidc_login.logout_url(str(request.base_url), request.cookies.get(oidc_login.ID_COOKIE, "")) if oidc_login.enabled() else None
     response = RedirectResponse(target or "/admin/login", status_code=303)
     response.delete_cookie(admin_session.COOKIE_NAME)
+    response.delete_cookie(oidc_login.ID_COOKIE)
     return response
 
 
@@ -137,7 +138,7 @@ async def oidc_callback(request: Request):
     if not oidc_login.enabled():
         return RedirectResponse("/admin/login", status_code=303)
     try:
-        username, next_url = await run_in_threadpool(
+        username, next_url, id_token = await run_in_threadpool(
             oidc_login.finish, str(request.base_url), request.cookies.get(oidc_login.TX_COOKIE, ""), dict(request.query_params)
         )
     except oidc_login.NotAllowed as exc:
@@ -150,5 +151,6 @@ async def oidc_callback(request: Request):
     else:
         logger.info("oidc: %s signed in", username)
         response = _start_session(_safe_next(next_url), username)
+        response.set_cookie(oidc_login.ID_COOKIE, id_token, max_age=admin_session.DEFAULT_TTL_S, httponly=True, secure=True, samesite="lax")
     response.delete_cookie(oidc_login.TX_COOKIE, path="/auth")
     return response

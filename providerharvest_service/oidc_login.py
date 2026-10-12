@@ -41,6 +41,7 @@ from providerharvest_service import admin_session
 logger = logging.getLogger(__name__)
 
 TX_COOKIE = "loader_oidc_tx"
+ID_COOKIE = "loader_oidc_id"  # the ID token, kept so that logging out can tell Keycloak which session to end
 TX_TTL_S = 600
 DEFAULT_ROLE = "loader-admin"
 _ASYMMETRIC = ["RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512"]
@@ -180,8 +181,8 @@ def _roles(*claim_sets: dict) -> set[str]:
     return roles
 
 
-def finish(request_base_url: str, tx_cookie: str, params: dict) -> tuple[str, str]:
-    """Completes a login: (the user name to start a session for, where to send them afterwards).
+def finish(request_base_url: str, tx_cookie: str, params: dict) -> tuple[str, str, str]:
+    """Completes a login: (the user name to start a session for, where to send them afterwards, the ID token).
     Raises ``OidcError`` (``NotAllowed`` for a person who lacks the role)."""
     if params.get("error"):
         raise OidcError("The login server declined the sign-in (%s)." % str(params.get("error_description") or params["error"])[:200])
@@ -219,10 +220,10 @@ def finish(request_base_url: str, tx_cookie: str, params: dict) -> tuple[str, st
         raise OidcError("The login server did not say who you are (no user name).")
     if required_role() not in _roles(access, ident):
         raise NotAllowed(username, required_role())
-    return username, str(tx.get("next") or "")
+    return username, str(tx.get("next") or ""), tokens["id_token"]
 
 
-def logout_url(request_base_url: str) -> str | None:
+def logout_url(request_base_url: str, id_token_hint: str = "") -> str | None:
     """Where to send the browser to end the Keycloak session too, or None when it cannot be worked out."""
     try:
         endpoint = discovery().get("end_session_endpoint")
@@ -230,4 +231,7 @@ def logout_url(request_base_url: str) -> str | None:
         return None
     if not endpoint:
         return None
-    return endpoint + "?" + urlencode({"client_id": client_id(), "post_logout_redirect_uri": (_env("LOADER_PUBLIC_BASE_URL") or request_base_url).rstrip("/") + "/admin/login"})
+    query = {"client_id": client_id(), "post_logout_redirect_uri": (_env("LOADER_PUBLIC_BASE_URL") or request_base_url).rstrip("/") + "/admin/login"}
+    if id_token_hint:
+        query["id_token_hint"] = id_token_hint  # with it Keycloak ends the session without asking "are you sure?"
+    return endpoint + "?" + urlencode(query)

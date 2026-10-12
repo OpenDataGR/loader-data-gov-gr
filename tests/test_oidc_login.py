@@ -207,12 +207,20 @@ def test_the_way_back_cannot_be_turned_into_an_open_redirect(keycloak):
     assert _call_back(browser, query).headers["location"] == "/provider/sources"
 
 
-def test_logging_out_also_ends_the_keycloak_session(keycloak):
+def test_logging_out_also_ends_the_keycloak_session_without_asking_again(keycloak):
     browser = _browser()
+    _call_back(browser, _start(browser, keycloak))  # signed in: the ID token is kept for logging out
     target = browser.post("/admin/logout").headers["location"]
     assert target.startswith(ISSUER + "/protocol/openid-connect/logout?")
     query = parse_qs(urlparse(target).query)
     assert query["client_id"] == [CLIENT] and query["post_logout_redirect_uri"] == [BASE + "/admin/login"]
+    assert jwt.decode(query["id_token_hint"][0], options={"verify_signature": False})["preferred_username"] == "ksfikas"
+    assert oidc_login.ID_COOKIE not in browser.cookies and admin_session.COOKIE_NAME not in browser.cookies
+
+
+def test_logging_out_without_having_come_through_keycloak_still_works(keycloak):
+    target = _browser().post("/admin/logout").headers["location"]
+    assert target.startswith(ISSUER + "/protocol/openid-connect/logout?") and "id_token_hint" not in target
 
 
 def test_the_shared_password_can_be_switched_off_once_keycloak_works(keycloak, monkeypatch):
@@ -242,3 +250,14 @@ def test_the_bare_address_leads_somewhere(monkeypatch):
     anonymous.post("/admin/login", data={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD, "next": "/"})
     resp = anonymous.get("/")
     assert resp.status_code == 303 and resp.headers["location"] == "/provider/sources"
+
+
+def test_the_login_page_has_no_menu_but_every_other_page_does(client_logged_in=None):
+    from tests.test_ui_admin_ftp import ADMIN_PASSWORD, ADMIN_USERNAME
+
+    browser = _browser()
+    login = browser.get("/admin/login").text
+    assert "Transform Box</a>" not in login and "Log out" not in login
+    browser.post("/admin/login", data={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD, "next": "/"})
+    page = browser.get("/transform").text
+    assert "Transform Box</a>" in page and "Load Box</a>" in page and "Log out" in page
