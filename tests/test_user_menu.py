@@ -78,3 +78,10 @@ def test_a_profile_cookie_cannot_be_used_as_a_session_and_logout_clears_it(keycl
     assert admin_session.PROFILE_COOKIE in browser.cookies
     browser.post("/admin/logout")
     assert admin_session.PROFILE_COOKIE not in browser.cookies
+
+
+def test_the_account_card_closes_on_an_outside_click_and_on_escape(keycloak):
+    browser = _browser()
+    _sign_in(browser, keycloak)
+    page = browser.get("/provider/sources").text
+    assert "menu.contains(e.target)" in page and "menu.open = false" in page and "e.key === 'Escape'" in page
