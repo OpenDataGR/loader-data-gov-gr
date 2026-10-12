@@ -10,6 +10,8 @@ class ApiKeyAuth(AuthStrategy):
     ``auth_opts`` (non-secret, lives in HarvestSource.config):
         location: "header" | "query"   (default "header")
         name: the header or query-param name (default "X-API-Key")
+        prefix: a word sent before the key in a header, e.g. "Token" or "Bearer" -> ``Authorization: Token <key>``.
+                A key that already starts with that word is not given it twice.
     """
 
     name = "api_key"
@@ -24,6 +26,9 @@ class ApiKeyAuth(AuthStrategy):
         kwargs = dict(request_kwargs)
         if location == "header":
             headers = dict(kwargs.get("headers") or {})
+            prefix = ((auth_opts or {}).get("prefix") or "").strip()
+            if prefix and not api_key.lower().startswith(prefix.lower() + " "):
+                api_key = "%s %s" % (prefix, api_key)
             headers[param_name] = api_key
             kwargs["headers"] = headers
         elif location == "query":

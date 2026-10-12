@@ -44,6 +44,7 @@ from providerharvest_service.models import FtpAccount, FtpAllowedIp, ProviderSou
 
 TRANSPORT_TYPES = ("http", "sftp", "scp", "ftp", "push")
 PROXY_METHODS = ("GET", "POST")
+_KEY_PREFIX = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,19}$")  # the word before an API key: Token, Bearer, ...
 SSH_TRANSPORT_TYPES = ("sftp", "scp")
 # How a push-mode source receives its data: "https" (the provider calls
 # push_ingest.py with a generated API key) or "ftp" (the provider logs
@@ -217,6 +218,12 @@ def _http_fields(form: dict, errors: dict) -> tuple[str, dict, dict]:
             "location": form.get("api_key_location") or "header",
             "name": (form.get("api_key_name") or "").strip() or "X-API-Key",
         }
+        prefix = (form.get("api_key_prefix") or "").strip()
+        if prefix:
+            if not _KEY_PREFIX.match(prefix):
+                errors["api_key_prefix"] = "a single word of letters, digits, '-' or '_' (e.g. Token or Bearer)"
+            else:
+                auth_opts["prefix"] = prefix
 
     proxy_method = (form.get("proxy_method") or "GET").strip().upper()
     if proxy_method not in PROXY_METHODS:
@@ -580,6 +587,7 @@ def config_to_form_fields(source: ProviderSource) -> dict:
         auth_opts = config.get("auth_opts") or {}
         data["api_key_location"] = auth_opts.get("location", "header")
         data["api_key_name"] = auth_opts.get("name", "X-API-Key")
+        data["api_key_prefix"] = auth_opts.get("prefix") or ""
         data["oauth2_token_url"] = auth_opts.get("token_url", "")
         data["oauth2_scope"] = auth_opts.get("scope") or ""
         pagination = config.get("pagination") or {}

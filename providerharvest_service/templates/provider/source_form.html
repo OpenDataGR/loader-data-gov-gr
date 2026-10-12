@@ -100,9 +100,13 @@
           {% endfor %}
         </div>
 
+        {# When editing, a stored secret is never sent back to the browser: the field stays empty, so it says so -- dots in the
+           field and a "stored" badge -- and an empty field keeps it. #}
+        {% set dots = "••••••••••••" %}
+        {% set stored_http = data.get('auth_type') if (editing and data.get('transport_type', 'http') == 'http') else none %}
         <div id="auth-api_key">
-          <label for="api_key">API key{% if editing %} (leave blank to keep current){% endif %}</label>
-          <input type="text" id="api_key" name="api_key" value="{{ data.get('api_key', '') }}">
+          <label for="api_key">API key{% if editing %} (leave blank to keep current){% endif %}{% if stored_http == "api_key" %} <span class="badge badge-ok" title="A value is already stored; it is never shown again"><span>stored</span></span>{% endif %}</label>
+          <input type="text" id="api_key" name="api_key" value="{{ data.get('api_key', '') }}" placeholder="{{ dots if stored_http == 'api_key' else '' }}" autocomplete="off">
           <label for="api_key_location">Send as</label>
           <select id="api_key_location" name="api_key_location">
             <option value="header" {% if data.get('api_key_location', 'header') == 'header' %}selected{% endif %}>header</option>
@@ -110,20 +114,25 @@
           </select>
           <label for="api_key_name">Header/parameter name</label>
           <input type="text" id="api_key_name" name="api_key_name" value="{{ data.get('api_key_name', 'X-API-Key') }}">
+          <label for="api_key_prefix">Word before the key (optional)</label>
+          <input type="text" id="api_key_prefix" name="api_key_prefix" list="api_key_prefixes" value="{{ data.get('api_key_prefix', '') }}" placeholder="e.g. Token or Bearer" style="max-width:14rem;" autocomplete="off">
+          <datalist id="api_key_prefixes"><option value="Token"><option value="Bearer"><option value="ApiKey"></datalist>
+          <p class="muted" style="margin:0.2rem 0 0.8rem;">Some APIs want <code>Authorization: Token &lt;key&gt;</code> or <code>Authorization: Bearer &lt;key&gt;</code>. Enter the word here and only the key above -- it is added for you (headers only). Leave empty to send the key alone.</p>
+          {% if errors.api_key_prefix %}<div class="error">{{ errors.api_key_prefix }}</div>{% endif %}
         </div>
 
         <div id="auth-basic_auth" style="display:none">
-          <label for="basic_username">Username{% if editing %} (leave blank to keep current){% endif %}</label>
-          <input type="text" id="basic_username" name="basic_username" value="{{ data.get('basic_username', '') }}">
-          <label for="basic_password">Password{% if editing %} (leave blank to keep current){% endif %}</label>
-          <input type="password" id="basic_password" name="basic_password" value="{{ data.get('basic_password', '') }}">
+          <label for="basic_username">Username{% if editing %} (leave blank to keep current){% endif %}{% if stored_http == "basic_auth" %} <span class="badge badge-ok" title="A value is already stored; it is never shown again"><span>stored</span></span>{% endif %}</label>
+          <input type="text" id="basic_username" name="basic_username" value="{{ data.get('basic_username', '') }}" placeholder="{{ dots if stored_http == 'basic_auth' else '' }}" autocomplete="off">
+          <label for="basic_password">Password{% if editing %} (leave blank to keep current){% endif %}{% if stored_http == "basic_auth" %} <span class="badge badge-ok" title="A value is already stored; it is never shown again"><span>stored</span></span>{% endif %}</label>
+          <input type="password" id="basic_password" name="basic_password" value="{{ data.get('basic_password', '') }}" placeholder="{{ dots if stored_http == 'basic_auth' else '' }}" autocomplete="new-password">
         </div>
 
         <div id="auth-oauth2_client_credentials" style="display:none">
-          <label for="oauth2_client_id">Client ID{% if editing %} (leave blank to keep current){% endif %}</label>
-          <input type="text" id="oauth2_client_id" name="oauth2_client_id" value="{{ data.get('oauth2_client_id', '') }}">
-          <label for="oauth2_client_secret">Client secret{% if editing %} (leave blank to keep current){% endif %}</label>
-          <input type="password" id="oauth2_client_secret" name="oauth2_client_secret" value="{{ data.get('oauth2_client_secret', '') }}">
+          <label for="oauth2_client_id">Client ID{% if editing %} (leave blank to keep current){% endif %}{% if stored_http == "oauth2_client_credentials" %} <span class="badge badge-ok" title="A value is already stored; it is never shown again"><span>stored</span></span>{% endif %}</label>
+          <input type="text" id="oauth2_client_id" name="oauth2_client_id" value="{{ data.get('oauth2_client_id', '') }}" placeholder="{{ dots if stored_http == 'oauth2_client_credentials' else '' }}" autocomplete="off">
+          <label for="oauth2_client_secret">Client secret{% if editing %} (leave blank to keep current){% endif %}{% if stored_http == "oauth2_client_credentials" %} <span class="badge badge-ok" title="A value is already stored; it is never shown again"><span>stored</span></span>{% endif %}</label>
+          <input type="password" id="oauth2_client_secret" name="oauth2_client_secret" value="{{ data.get('oauth2_client_secret', '') }}" placeholder="{{ dots if stored_http == 'oauth2_client_credentials' else '' }}" autocomplete="new-password">
           <label for="oauth2_token_url">Token URL</label>
           <input type="text" id="oauth2_token_url" name="oauth2_token_url" value="{{ data.get('oauth2_token_url', '') }}">
           <label for="oauth2_scope">Scope (optional)</label>
@@ -131,10 +140,10 @@
         </div>
 
         <div id="auth-mtls" style="display:none">
-          <label for="mtls_client_cert">Client certificate (PEM){% if editing %} (leave blank to keep current){% endif %}</label>
-          <textarea id="mtls_client_cert" name="mtls_client_cert" rows="4">{{ data.get('mtls_client_cert', '') }}</textarea>
-          <label for="mtls_client_key">Client key (PEM){% if editing %} (leave blank to keep current){% endif %}</label>
-          <textarea id="mtls_client_key" name="mtls_client_key" rows="4">{{ data.get('mtls_client_key', '') }}</textarea>
+          <label for="mtls_client_cert">Client certificate (PEM){% if editing %} (leave blank to keep current){% endif %}{% if stored_http == "mtls" %} <span class="badge badge-ok" title="A value is already stored; it is never shown again"><span>stored</span></span>{% endif %}</label>
+          <textarea id="mtls_client_cert" name="mtls_client_cert" rows="4" placeholder="{{ dots if stored_http == 'mtls' else '' }}">{{ data.get('mtls_client_cert', '') }}</textarea>
+          <label for="mtls_client_key">Client key (PEM){% if editing %} (leave blank to keep current){% endif %}{% if stored_http == "mtls" %} <span class="badge badge-ok" title="A value is already stored; it is never shown again"><span>stored</span></span>{% endif %}</label>
+          <textarea id="mtls_client_key" name="mtls_client_key" rows="4" placeholder="{{ dots if stored_http == 'mtls' else '' }}">{{ data.get('mtls_client_key', '') }}</textarea>
         </div>
 
         <label for="items_path">Records path in the response (optional)</label>
@@ -229,8 +238,8 @@
         <label for="ftp_username">Username</label>
         <input type="text" id="ftp_username" name="ftp_username" value="{{ data.get('ftp_username', '') }}">
 
-        <label for="ftp_password">Password{% if editing %} (leave blank to keep current){% endif %}</label>
-        <input type="password" id="ftp_password" name="ftp_password" value="{{ data.get('ftp_password', '') }}">
+        <label for="ftp_password">Password{% if editing %} (leave blank to keep current){% endif %}{% if editing and data.get('transport_type') == 'ftp' %} <span class="badge badge-ok" title="A value is already stored; it is never shown again"><span>stored</span></span>{% endif %}</label>
+        <input type="password" id="ftp_password" name="ftp_password" value="{{ data.get('ftp_password', '') }}" placeholder="{{ '••••••••••••' if (editing and data.get('transport_type') == 'ftp') else '' }}" autocomplete="new-password">
 
         <label for="ftp_port">Port</label>
         <input type="number" class="small" id="ftp_port" name="ftp_port" value="{{ data.get('ftp_port', '21') }}">
