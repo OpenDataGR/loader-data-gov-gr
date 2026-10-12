@@ -82,6 +82,7 @@ def apply(session: Session, transform: Transform, content: bytes, filename: str 
         content, steps, output=transform.output_format, lookups=load_lookups(session, lookup_names(steps)),
         root=transform.root_name, record=transform.record_name,
         delimiter=transform.csv_delimiter or ",", bom=True if transform.csv_bom is None else bool(transform.csv_bom),
+        single=bool(transform.output_single),
     )
 
 
@@ -150,11 +151,44 @@ def sample_file(hsession: Session, source_id: str, run_id: str | None = None) ->
     return Sample(*row) if row else None
 
 
+MAX_SAMPLE_BYTES = 200_000
+PASTED_SAMPLE_NAME = "pasted sample.json"
+
+
+def sample_for(config_session: Session, hsession: Session, source_id: str, run_id: str | None = None) -> Sample | None:
+    """What the steps are built and tried on: a stored file of the source (the newest, or the given run's) -- and, for a source
+    that stores nothing (a live proxy), the sample answer an admin pasted."""
+    stored = sample_file(hsession, source_id, run_id)
+    if stored is not None or run_id:
+        return stored
+    transform = get_transform(config_session, source_id)
+    if transform is not None and transform.sample:
+        return Sample("", PASTED_SAMPLE_NAME, transform.sample.encode("utf-8"), transform.updated_at or _now())
+    return None
+
+
+def set_sample(transform: Transform, text: str | None) -> bool:
+    """Keep (or, when empty, remove) a pasted sample answer. Raises ``engine.TransformError`` for something that is not JSON or is
+    too big. True when a sample is now kept."""
+    text = (text or "").strip()
+    if not text:
+        transform.sample = None
+        return False
+    if len(text.encode("utf-8")) > MAX_SAMPLE_BYTES:
+        raise engine.TransformError("The sample is larger than %d kB." % (MAX_SAMPLE_BYTES // 1000))
+    try:
+        json.loads(text)
+    except ValueError as exc:
+        raise engine.TransformError("The sample is not valid JSON (%s)." % exc) from None
+    transform.sample = text
+    return True
+
+
 def preview(config_session: Session, hsession: Session, transform: Transform, run_id: str | None = None) -> tuple[Sample | None, engine.Result | None, str | None]:
     """(the file used, the result, an error message) -- nothing is stored."""
-    sample = sample_file(hsession, transform.source_id, run_id)
+    sample = sample_for(config_session, hsession, transform.source_id, run_id)
     if sample is None:
-        return None, None, "There is no stored file to try this on yet."
+        return None, None, "There is nothing to try this on yet: no stored file, and no pasted sample."
     try:
         return sample, apply(config_session, transform, sample.content, sample.filename), None
     except engine.TransformError as exc:

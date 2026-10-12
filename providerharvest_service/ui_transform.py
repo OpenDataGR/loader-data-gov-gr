@@ -200,7 +200,9 @@ def _editor_context(session: Session, hsession: Session, source: ProviderSource,
         "failed_only": request.query_params.get("show") == "failed",
         "outputs": transform_runner.recent_outputs(hsession, source.id, 50 if request.query_params.get("show") == "failed" else 10,
                                                    failed_only=request.query_params.get("show") == "failed") if transform else [], "counts": transform_runner.output_counts(hsession, source.id) if transform else None,
-        "formats": te.OUTPUTS, "delimiters": te.CSV_DELIMITERS, "choices": transform_runner.REPROCESS_CHOICES, "has_sample": transform_runner.sample_file(hsession, source.id) is not None,
+        "formats": te.OUTPUTS, "delimiters": te.CSV_DELIMITERS, "choices": transform_runner.REPROCESS_CHOICES, "has_sample": transform_runner.sample_for(session, hsession, source.id) is not None,
+        "is_http": source.transport_type == "http", "pasted_sample": bool(transform and transform.sample),
+        "pasted_sample_kb": round(len(transform.sample.encode("utf-8")) / 1000, 1) if transform and transform.sample else 0,
         "add_types": [(k, v) for k, v in _SECTIONS.items() if k != "read"], "preview": None,
         "flash": request.query_params.get("flash"), "flash_kind": request.query_params.get("flash_kind", "success"), "size": _size, **extra,
     }
@@ -215,13 +217,39 @@ def source_page(source_id: str, request: Request, session: Session = Depends(get
 
 
 @router.post("/sources/{source_id}/create")
-def create_transform(source_id: str, request: Request, session: Session = Depends(get_session)):
-    if _source_or_none(session, source_id) is None:
+async def create_transform(source_id: str, request: Request, session: Session = Depends(get_session)):
+    source = _source_or_none(session, source_id)
+    if source is None:
         return _go("/transform", "No such source.", "error")
     if transform_runner.get_transform(session, source_id) is None:
-        session.add(Transform(source_id=source_id, steps="[]", enabled=False, updated_by=_who(request)))
+        transform = Transform(source_id=source_id, steps="[]", enabled=False, updated_by=_who(request))
+        sample = str((await request.form()).get("sample") or "")
+        try:
+            if source.transport_type == "http":
+                transform.output_single = True  # an API answers one question: one object back, not a list of one
+                transform_runner.set_sample(transform, sample)
+        except te.TransformError as exc:
+            return _go("/transform/sources/%s" % source_id, str(exc), "error")
+        session.add(transform)
         session.commit()
-    return _go("/transform/sources/%s" % source_id, "Transform created. Add the first step: read the file.")
+    return _go("/transform/sources/%s" % source_id, "Transform created. Add the first step: read the %s." % ("answer" if source.transport_type == "http" else "file"))
+
+
+@router.post("/sources/{source_id}/sample")
+async def set_sample(source_id: str, request: Request, session: Session = Depends(get_session)):
+    source, transform = _with(session, source_id)
+    back = "/transform/sources/%s" % source_id
+    if source is None or transform is None:
+        return _go("/transform", "No such transform.", "error")
+    try:
+        kept = transform_runner.set_sample(transform, str((await request.form()).get("sample") or ""))
+    except te.TransformError as exc:
+        session.rollback()
+        return _go(back, str(exc), "error")
+    transform.updated_at, transform.updated_by = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None), _who(request)
+    session.commit()
+    logger.info("transform box: %s %s the sample answer of source %s", _who(request) or "?", "saved" if kept else "removed", source.name)
+    return _go(back, "Sample answer saved." if kept else "Sample answer removed.")
 
 
 def _with(session: Session, source_id: str):
@@ -270,6 +298,8 @@ async def set_output(source_id: str, request: Request, session: Session = Depend
             te._check_name(root, "The XML root element")
             te._check_name(record, "The XML record element")
             transform.root_name, transform.record_name = root, record
+        if "single_present" in form:
+            transform.output_single = bool(form.get("single"))
         if "delimiter" in form:
             delimiter = str(form.get("delimiter") or ",")
             if delimiter not in te.CSV_DELIMITERS:
@@ -285,12 +315,15 @@ async def set_output(source_id: str, request: Request, session: Session = Depend
 
 # -- steps ------------------------------------------------------------------------------------------------------------------------------------------
 
-def _reader_context(hsession: Session, source_id: str, request: Request, existing: dict | None) -> dict:
-    sample = transform_runner.sample_file(hsession, source_id)
+def _reader_context(session: Session, hsession: Session, source_id: str, request: Request, existing: dict | None) -> dict:
+    sample = transform_runner.sample_for(session, hsession, source_id)
     ctx: dict = {"sample": sample, "kind": None, "candidates": [], "record": "", "info": None, "selected": {}, "explode": "", "readers": te.READERS, "error": None,
                  "sheets": [], "sheet": ""}
     if sample is None:
-        ctx["error"] = "There is no stored file from this source yet, so there is nothing to look at. Once one arrives you can choose its fields here."
+        src = _source_or_none(session, source_id)
+        ctx["error"] = ("There is no sample answer yet, so there is nothing to look at. Paste one answer of the provider on this source's Transform page, then come back."
+                        if src is not None and src.transport_type == "http"
+                        else "There is no stored file from this source yet, so there is nothing to look at. Once one arrives you can choose its fields here.")
         return ctx
     params = request.query_params
     kind = params.get("format") or (existing or {}).get("type") or te.detect_format(sample.content, sample.filename)
@@ -338,7 +371,7 @@ def _step_page(request: Request, session: Session, hsession: Session, source: Pr
            "tables": _table_columns(session), "types": te.CONVERT_TYPES, "ops": tf.OP_LABELS, "title": _SECTIONS.get(kind, kind), "rename_rows": range(tf.RENAME_ROWS),
            "convert_rows": range(tf.CONVERT_ROWS), "error": extra.pop("error", None), "flash": request.query_params.get("flash"), "flash_kind": request.query_params.get("flash_kind", "success")}
     if kind == "read":
-        ctx["reader"] = _reader_context(hsession, source.id, request, existing)
+        ctx["reader"] = _reader_context(session, hsession, source.id, request, existing)
     ctx.update(extra)
     return templates.TemplateResponse(request, "transform/step.html", ctx)
 

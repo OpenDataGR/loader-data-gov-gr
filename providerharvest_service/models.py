@@ -296,6 +296,11 @@ class Transform(Base):
     # CSV output only. NULL (a transform made before these existed) means the defaults: comma, with a byte-order mark.
     csv_delimiter: Mapped[str | None] = mapped_column(String, nullable=True)
     csv_bom: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # JSON output only: when the steps leave exactly one record, return that object instead of a one-element list (a lookup).
+    output_single: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # One answer of the provider, pasted by an admin, to build and try the steps on -- for a source whose answers are not stored
+    # (a live proxy keeps nothing). Never used to answer anyone.
+    sample: Mapped[str | None] = mapped_column(String, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)

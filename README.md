@@ -199,6 +199,17 @@ request timeout (`request_timeout_s`) should fit a slow API, and any gateway in 
 (an Azure Application Gateway's backend setting defaults to 20 s). The proxy is public by design, like every `/proxy/*`: put nothing
 behind it that must not be reachable by whoever knows the source name.
 
+**Transform on live answers** (`proxy._reshape`, `Transform.sample`, `Transform.output_single`): an API source (HTTP, with a live
+proxy) can have a transform too. A successful (2xx) answer of the provider is run through the source's switched-on transform before it
+leaves the loader -- typically one *read JSON* step that keeps only chosen fields -- so the other fields never leave. It **fails
+closed**: when the transform cannot be applied (the answer is not JSON, the fields are not there) the caller gets `502 the provider's
+answer could not be reshaped`, never the unreshaped answer; an error from the provider is passed on as it is; with no transform, or
+one that is switched off, the answer passes through as before. An API's answers are not stored, so the steps are built and tried on a
+**sample answer** an admin pastes on the source's Transform page (JSON, up to 200 kB, kept in the config database, never used to
+answer anyone; use test data where possible). *When there is exactly one record, return that object instead of a list* (JSON output,
+on by default for an API source) makes a lookup answer one object. Nothing is stored, so those sources have no "run again" or "recent
+outputs"; the Load Box says "pass-through, reshaped by the transform".
+
 **Login** (`/admin/login`): the site sits behind a session; the session is started either by the shared username/password (the original placeholder) or, once configured, by the data.gov.gr Keycloak (`oidc_login.py`: authorization code + PKCE, signature/issuer/audience/nonce checks, role `loader-admin` required) -- setup in `deploy/README.md`; with `LOADER_OIDC_ACCESS=ckan-org-admin` the rule is CKAN's (a sysadmin or an administrator of an organization, asked of CKAN with the loader's sysadmin key). The Data boxes and Security box are for super admins only (a CKAN sysadmin, the Keycloak role `loader-superadmin`, or the shared break-glass account). The person's own Keycloak user name then appears everywhere the shared name did.
 
 **Integrity of what arrives** (FTP/SFTP push): the box's catch-up sweep skips a file that is still being written; the box sends a SHA-256 and the loader refuses a mismatch and answers with the hash of what it stored (a transfer counts as done only when both agree); a provider may also send `<file>.sha256` before each file for an end-to-end check, and a file that does not match it is put aside on the box instead of sent; each run's detail page shows the stored file's SHA-256. Details and a ready-to-send provider note: `ftp-forwarder/README.md`.

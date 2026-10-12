@@ -62,6 +62,7 @@ process.
 from __future__ import annotations
 
 import json
+import logging
 from collections import OrderedDict
 
 import requests
@@ -78,6 +79,8 @@ from providerharvest_service.engine.auth_strategies import build_auth_strategy
 from providerharvest_service.engine.transport.rate_limit import TokenBucket
 from providerharvest_service.engine.validators import UnsafeNetworkTargetError, assert_safe_http_url
 from providerharvest_service.models import ProviderSource
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/proxy", tags=["proxy"])
 
@@ -183,11 +186,32 @@ def _forward(session: Session, source_name: str, method: str, query_params: dict
     except requests.RequestException as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "upstream request failed: %s" % exc) from exc
 
+    if 200 <= upstream.status_code < 300:
+        reshaped = _reshape(session, source, upstream.content)
+        if reshaped is not None:
+            return reshaped
     return Response(
         content=upstream.content,
         status_code=upstream.status_code,
         media_type=upstream.headers.get("content-type", "application/octet-stream"),
     )
+
+
+def _reshape(session: Session, source: ProviderSource, content: bytes) -> Response | None:
+    """The provider's successful answer through the source's transform (the Transform Box), when one is switched on. None when
+    there is no transform to apply. It fails closed: a transform that cannot be applied gives an error -- the unreshaped answer is
+    never passed on instead, since a transform that keeps only some fields exists to keep the others from leaving."""
+    from providerharvest_service import transform_engine, transform_runner
+
+    transform = transform_runner.get_transform(session, source.id)
+    if transform is None or not transform.enabled:
+        return None
+    try:
+        result = transform_runner.apply(session, transform, content, "answer.json")
+    except transform_engine.TransformError as exc:
+        logger.warning("proxy %s: the transform could not be applied to the provider's answer: %s", source.name, exc)
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "the provider's answer could not be reshaped") from exc
+    return Response(content=result.content, status_code=status.HTTP_200_OK, media_type=result.content_type)
 
 
 @router.get("/{source_name}")

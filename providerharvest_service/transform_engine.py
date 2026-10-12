@@ -848,9 +848,11 @@ OUTPUTS = {
 CSV_DELIMITERS = {",": "comma ( , )", ";": "semicolon ( ; ) -- what Excel with Greek or other European settings expects", "\t": "tab", "|": "pipe ( | )"}
 
 
-def write_output(records: list[Record], fmt: str, *, root: str = "records", record: str = "record", delimiter: str = ",", bom: bool = False) -> bytes:
+def write_output(records: list[Record], fmt: str, *, root: str = "records", record: str = "record", delimiter: str = ",", bom: bool = False,
+                 single: bool = False) -> bytes:
     if fmt == "json":
-        return json.dumps(records, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        payload = records[0] if (single and len(records) == 1) else records  # a lookup returns its one object, not a list of one
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     if fmt == "jsonl":
         return "\n".join(json.dumps(r, ensure_ascii=False, separators=(",", ":")) for r in records).encode("utf-8")
     if fmt == "csv":
@@ -896,7 +898,7 @@ class Result:
 
 
 def run(content: bytes, steps: list[dict], *, output: str = "json", lookups: dict[str, dict] | None = None,
-        root: str = "records", record: str = "record", delimiter: str = ",", bom: bool = False) -> Result:
+        root: str = "records", record: str = "record", delimiter: str = ",", bom: bool = False, single: bool = False) -> Result:
     """Apply ``steps`` to a received file. Raises ``TransformError``; never anything else for bad input."""
     if len(content) > MAX_INPUT_BYTES:
         raise TransformError("The file is larger than %d bytes." % MAX_INPUT_BYTES)
@@ -911,7 +913,7 @@ def run(content: bytes, steps: list[dict], *, output: str = "json", lookups: dic
         ctx = Context(lookups=lookups or {})
         for step in steps[1:]:
             records = STEPS[step["type"]]["apply"](records, step, ctx)
-        data = write_output(records, output, root=root, record=record, delimiter=delimiter, bom=bom)
+        data = write_output(records, output, root=root, record=record, delimiter=delimiter, bom=bom, single=single)
     except TransformError:
         raise
     except (KeyError, TypeError, AttributeError, IndexError, RecursionError, MemoryError) as exc:

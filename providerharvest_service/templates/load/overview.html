@@ -7,8 +7,8 @@
     <p class="subtitle">
       Where a source's result goes. There are two ways out. A <strong>published</strong> source gives its newest transformed output a fixed public
       address that anyone can call -- or that a CKAN resource can link to -- and it always answers with the latest good output; nothing is published
-      until you switch it on. A <strong>live proxy</strong> passes each call straight through to the provider: nothing is stored or transformed on
-      the way. A live proxy is set on the source itself (Extract Box); it is shown here so the whole path is visible.
+      until you switch it on. A <strong>live proxy</strong> passes each call straight through to the provider: nothing is stored
+      on the way. A live proxy is set on the source itself (Extract Box); it is shown here so the whole path is visible. If the source has a switched-on transform, the provider's answers are reshaped by it on the way.
     </p>
     {% if not rows %}
       <div class="empty-state">{{ macros.icon("inbox", 40) }}<p>No sources yet. Register one in the Extract Box first.</p></div>
@@ -20,7 +20,7 @@
           <tr>
             <td><div class="name-title">{{ r.source.title }}</div><span class="name-slug">{{ r.source.name }}</span></td>
             <td>
-              {% if r.proxy and r.proxy.only %}<span class="muted">pass-through -- nothing is stored or transformed</span>
+              {% if r.proxy and r.proxy.only %}<span class="muted">pass-through{% if r.transform and r.transform.enabled %}, reshaped by the transform{% endif %} -- nothing is stored{% if not (r.transform and r.transform.enabled) %} or transformed{% endif %}</span>
               {% elif not r.transform %}<span class="muted">no transform -- <a href="/transform/sources/{{ r.source.id }}">set one up</a></span>
               {% elif r.latest %}{{ r.latest.created_at|short_utc }} UTC<br><span class="muted">{{ r.latest.filename }} &middot; {{ r.latest.records_out }} records</span>
               {% else %}<span class="muted">nothing transformed yet</span>{% endif %}
@@ -40,6 +40,7 @@
                 {% if r.proxy.method == "POST" %}<span class="muted">POST</span> <code>{{ r.proxy.url }}</code>
                 {% else %}<a href="{{ r.proxy.url }}" target="_blank" rel="noopener"><code>{{ r.proxy.url }}</code></a>{% endif %}
                 <div class="muted">{{ r.proxy.per_caller }}/min per caller &middot; <a href="/provider/sources/{{ r.source.id }}/edit">change on the source</a></div>
+                {% if r.transform and r.transform.enabled %}<div class="muted">answers reshaped by the <a href="/transform/sources/{{ r.source.id }}">transform</a></div>{% endif %}
               {% else %}<span class="muted">&mdash;</span>{% endif %}
             </td>
             <td>

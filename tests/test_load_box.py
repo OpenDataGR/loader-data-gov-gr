@@ -145,7 +145,7 @@ def test_a_source_without_a_live_proxy_shows_none(client, source, _isolated_db):
     assert "/proxy/private-feed" not in client.get("/load").text
 
 
-def test_the_transform_box_does_not_offer_a_transform_for_a_pass_through_source(client, source, _isolated_db):
+def test_the_transform_box_offers_a_transform_for_an_api_source_and_says_it_acts_on_live_answers(client, source, _isolated_db):
     registry_id = _http_source(_isolated_db, "registry", post=True)
     page = client.get("/transform").text
-    assert "live proxy passes each call through unchanged" in page and "/transform/sources/%s" % registry_id not in page
+    assert "acts on live answers" in page and "/transform/sources/%s" % registry_id in page
