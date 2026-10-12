@@ -5,6 +5,7 @@ here. Behind the site-wide login (admin_session.py)."""
 from __future__ import annotations
 
 import datetime
+import json
 import logging
 import os
 from urllib.parse import urlencode
@@ -35,6 +36,21 @@ def _go(flash: str | None = None, kind: str = "success") -> RedirectResponse:
     return RedirectResponse("/load" + query, status_code=303)
 
 
+def _proxy_of(source: ProviderSource, base: str) -> dict | None:
+    """The live proxy as a destination: the source's address through the proxy, how it calls the provider, and whether it
+    answers right now. None for a source that has no live proxy. The settings themselves live on the source (Extract Box)."""
+    if source.transport_type != "http" or source.proxy_enabled is False:
+        return None
+    try:
+        config = json.loads(source.config or "{}")
+    except ValueError:
+        config = {}
+    return {
+        "url": "%s/proxy/%s" % (base, source.name), "method": source.proxy_method, "live": source.status == "active",
+        "status": source.status, "per_caller": config.get("proxy_rate_limit_per_ip", 30), "only": source.proxy_only,
+    }
+
+
 @router.get("", response_class=HTMLResponse)
 def overview(request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)):
     targets = {t.source_id: t for t in session.scalars(select(LoadTarget)).all()}
@@ -48,6 +64,7 @@ def overview(request: Request, session: Session = Depends(get_session), hsession
             "source": source, "transform": transforms.get(source.id), "published": bool(target and target.api_enabled),
             "latest": load_api.latest_output(hsession, source.id) if transforms.get(source.id) else None,
             "url": "%s/data/%s" % (base, source.name),
+            "proxy": _proxy_of(source, base),
         })
     return templates.TemplateResponse(request, "load/overview.html", {
         "rows": rows, "flash": request.query_params.get("flash"), "flash_kind": request.query_params.get("flash_kind", "success"),

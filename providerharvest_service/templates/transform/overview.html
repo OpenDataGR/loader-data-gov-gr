@@ -18,7 +18,8 @@
           <tr>
             <td><div class="name-title">{{ r.source.title }}</div><span class="name-slug">{{ r.source.name }}</span></td>
             <td>
-              {% if not r.transform %}<span class="muted">none</span>
+              {% if r.source.proxy_only %}<span class="muted">not used -- the live proxy passes each call through unchanged</span>
+              {% elif not r.transform %}<span class="muted">none</span>
               {% elif r.transform.enabled %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>on</span></span>
               {% else %}<span class="badge badge-pending"><span>off</span></span>{% endif %}
             </td>
@@ -27,7 +28,7 @@
               {% if r.counts %}{{ r.counts.ok }} ok{% if r.counts.failed %}, <span style="color:var(--status-rejected)">{{ r.counts.failed }} failed</span>{% endif %}{% endif %}
             </td>
             <td class="muted">{% if r.counts and r.counts.latest %}{{ r.counts.latest|short_utc }} UTC{% endif %}</td>
-            <td><a class="btn btn-secondary btn-sm" href="/transform/sources/{{ r.source.id }}">{{ "Open" if r.transform else "Set up" }}</a></td>
+            <td>{% if not r.source.proxy_only %}<a class="btn btn-secondary btn-sm" href="/transform/sources/{{ r.source.id }}">{{ "Open" if r.transform else "Set up" }}</a>{% endif %}</td>
           </tr>
           {% endfor %}
         </tbody>

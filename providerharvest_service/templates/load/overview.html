@@ -5,34 +5,50 @@
   <div class="panel">
     <h1>Load Box</h1>
     <p class="subtitle">
-      Where a source's result goes. Publishing a source gives its newest transformed output a fixed public address that anyone can call
-      -- or that a CKAN resource can link to -- and it always answers with the latest good output. Nothing is published until you switch it on.
+      Where a source's result goes. There are two ways out. A <strong>published</strong> source gives its newest transformed output a fixed public
+      address that anyone can call -- or that a CKAN resource can link to -- and it always answers with the latest good output; nothing is published
+      until you switch it on. A <strong>live proxy</strong> passes each call straight through to the provider: nothing is stored or transformed on
+      the way. A live proxy is set on the source itself (Extract Box); it is shown here so the whole path is visible.
     </p>
     {% if not rows %}
       <div class="empty-state">{{ macros.icon("inbox", 40) }}<p>No sources yet. Register one in the Extract Box first.</p></div>
     {% else %}
       <table>
-        <thead><tr><th>Source</th><th>Newest output</th><th>API address</th><th></th></tr></thead>
+        <thead><tr><th>Source</th><th>Newest output</th><th>Published address</th><th>Live proxy</th><th></th></tr></thead>
         <tbody>
           {% for r in rows %}
           <tr>
             <td><div class="name-title">{{ r.source.title }}</div><span class="name-slug">{{ r.source.name }}</span></td>
             <td>
-              {% if not r.transform %}<span class="muted">no transform -- <a href="/transform/sources/{{ r.source.id }}">set one up</a></span>
+              {% if r.proxy and r.proxy.only %}<span class="muted">pass-through -- nothing is stored or transformed</span>
+              {% elif not r.transform %}<span class="muted">no transform -- <a href="/transform/sources/{{ r.source.id }}">set one up</a></span>
               {% elif r.latest %}{{ r.latest.created_at|short_utc }} UTC<br><span class="muted">{{ r.latest.filename }} &middot; {{ r.latest.records_out }} records</span>
               {% else %}<span class="muted">nothing transformed yet</span>{% endif %}
             </td>
             <td>
-              {% if r.published %}
+              {% if r.proxy and r.proxy.only %}<span class="muted">&mdash;</span>
+              {% elif r.published %}
                 <span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>published</span></span><br>
                 <a href="{{ r.url }}" target="_blank" rel="noopener"><code>{{ r.url }}</code></a>
               {% else %}<span class="badge badge-pending"><span>not published</span></span>{% endif %}
             </td>
             <td>
+              {% if r.proxy %}
+                {% if r.proxy.live %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>live</span></span>
+                {% else %}<span class="badge badge-pending"><span>not live ({{ r.proxy.status }})</span></span>{% endif %}
+                <br>
+                {% if r.proxy.method == "POST" %}<span class="muted">POST</span> <code>{{ r.proxy.url }}</code>
+                {% else %}<a href="{{ r.proxy.url }}" target="_blank" rel="noopener"><code>{{ r.proxy.url }}</code></a>{% endif %}
+                <div class="muted">{{ r.proxy.per_caller }}/min per caller &middot; <a href="/provider/sources/{{ r.source.id }}/edit">change on the source</a></div>
+              {% else %}<span class="muted">&mdash;</span>{% endif %}
+            </td>
+            <td>
+              {% if r.proxy and r.proxy.only %}{% else %}
               <form method="post" action="/load/sources/{{ r.source.id }}/api" style="margin:0;"{% if r.published %} onsubmit="return confirm('Stop publishing {{ r.source.name }}? Anyone using its address will get a 404.');"{% endif %}>
                 <input type="hidden" name="enabled" value="{{ '0' if r.published else '1' }}">
                 <button type="submit" class="btn-secondary btn-sm">{{ "Unpublish" if r.published else "Publish" }}</button>
               </form>
+              {% endif %}
             </td>
           </tr>
           {% endfor %}
