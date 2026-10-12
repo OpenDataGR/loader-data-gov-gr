@@ -189,6 +189,8 @@ provider's uploads until they switch), and for an HTTPS push source **Rotate API
 key** (`/provider/sources/{id}/rotate-key`: the old key stops working immediately;
 before this a lost key meant deleting and re-registering the source).
 
+**Integrity of what arrives** (FTP/SFTP push): the box's catch-up sweep skips a file that is still being written; the box sends a SHA-256 and the loader refuses a mismatch and answers with the hash of what it stored (a transfer counts as done only when both agree); a provider may also send `<file>.sha256` before each file for an end-to-end check, and a file that does not match it is put aside on the box instead of sent; each run's detail page shows the stored file's SHA-256. Details and a ready-to-send provider note: `ftp-forwarder/README.md`.
+
 **Load Box** (`/load`; `load_api.py`, `ui_load.py`, `LoadTarget`). Per source, an admin can *publish* the transformed output: `GET /data/{source name}` (also `/data/{source name}/{any file name}`, for tools that want an extension) then answers, to anyone and without a login, with the newest successfully transformed output that still has its contents, in its own content type, with an `ETag` (conditional requests get 304) and a 60 s cache hint. Off by default; only for an active source; an unknown, unpublished, paused or empty source is the same 404; per-address limit of 60/min (shared limiter with `/proxy`). The planned next destination is a CKAN resource that links to this address, pushed automatically after each transform and by hand.
 
 **Transform Box** (`/transform`; `transform_engine.py`, `transform_forms.py`, `transform_runner.py`, `ui_transform.py`). A source's

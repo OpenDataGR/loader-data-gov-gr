@@ -12,6 +12,7 @@ below gain a real owner check; for now there's exactly one provider.
 from __future__ import annotations
 
 import datetime
+import hashlib
 import os
 from urllib.parse import urlencode
 
@@ -370,10 +371,13 @@ def source_run_detail(
     is_file_transport = source.transport_type != "http"
     records = None if is_file_transport else harvest_runner.list_records(hsession, run_id)
     files = harvest_runner.list_files(hsession, run_id) if is_file_transport else None
+    # What the loader holds, as a fingerprint a provider can compare with their own (``sha256sum file``); not
+    # stored, worked out from the contents -- so a file whose contents were removed by retention has none.
+    checksums = {f.id: hashlib.sha256(f.content).hexdigest() for f in files or [] if f.content}
     return templates.TemplateResponse(
         request,
         "provider/source_run_detail.html",
-        {"source": source, "run_id": run_id, "records": records, "files": files},
+        {"source": source, "run_id": run_id, "records": records, "files": files, "checksums": checksums},
     )
 
 

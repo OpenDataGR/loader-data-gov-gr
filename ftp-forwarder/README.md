@@ -67,6 +67,41 @@ down with it.
 Both are **pull-based and outbound-only** -- this box calls loader
 over HTTPS; loader never needs to be able to reach this box at all.
 
+## Integrity checks: is the file that arrived the file that was sent?
+
+Three checks, from the box towards the loader and (optionally) from the provider towards the box:
+
+1. **Half-written files are not forwarded.** The live watcher reacts only when the writer has closed the file
+   (`IN_CLOSE_WRITE`). The periodic catch-up sweep, which also looks at whatever is in an account's folder,
+   leaves a file alone until nothing has written to it for `--settle-s` seconds (default 120). Before this, a sweep
+   that happened to run during an upload forwarded a cut-off file (seen as ~1% of an hourly feed failing with
+   "not valid XML: unclosed token").
+2. **Box to loader checksum.** The box sends the SHA-256 of the file it holds (`X-Content-SHA256`); the loader refuses
+   a mismatch (nothing stored, `502`, so the box sends it again) and answers with the SHA-256 of what it stored. The
+   box archives a file only when its own hash and the loader's answer agree. An older loader or box that sends or
+   returns no hash is trusted as before.
+3. **Provider checksum file (optional, used only by providers who send one).** A provider that wants end-to-end
+   proof sends `<file name>.sha256` *before* the file, containing the SHA-256 of the file in the form `sha256sum`
+   writes (`<64 hex digits>  <file name>`). When the file is closed, the box compares it with that checksum:
+   a match is forwarded as usual (the checksum file is archived beside it); a mismatch, or a checksum file that is
+   empty or not a 64-digit SHA-256, puts both aside in `<account folder>/.rejected/` (names prefixed with the time) and
+   logs why -- nothing is sent, nothing is retried for ever, and the provider simply sends the pair again. A checksum
+   file is never forwarded as data. One that is more than an hour older than the file, or newer than it, is ignored
+   (it belongs to another upload) so a stale one cannot reject a good file. Providers that send none are not affected.
+
+The run's detail page (Extract Box) shows the SHA-256 of each stored file, so a provider can compare it by eye with
+their own.
+
+### Text for a provider
+
+> To let us prove that every file arrived whole, you can send a checksum with each file. For a file `Detector.xml`:
+> 1. Compute its SHA-256 -- Linux/macOS: `sha256sum Detector.xml > Detector.xml.sha256`; Windows PowerShell:
+>    `(Get-FileHash Detector.xml -Algorithm SHA256).Hash.ToLower() + "  Detector.xml" | Set-Content Detector.xml.sha256`.
+> 2. Upload `Detector.xml.sha256` **first**, then `Detector.xml` (same folder).
+>
+> If the two do not match we do not use the file, and set it aside; just send the pair again. The checksum file is
+> optional -- without it nothing changes.
+
 ## Why a real FTP daemon here, not just OpenSSH's own SFTP subsystem
 
 Loader's own app VM already proves out this project's preferred, most
@@ -324,6 +359,7 @@ systemd unit under `deploy/` for the real, deployed invocation):
 --retry-backoff-s 1.0               # optional
 --worker-count 8                   # optional
 --catch-up-interval-s 60           # optional -- also how often the account list itself is re-read
+--settle-s 120                     # optional -- the sweep leaves a file alone until it has been quiet this long
 ```
 
 `ftp_forwarder.sync_cli` (account sync + box-health heartbeat):

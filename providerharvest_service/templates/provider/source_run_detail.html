@@ -19,7 +19,7 @@
         <p class="muted">Showing up to 50 files, oldest first.</p>
         <table>
           <thead>
-            <tr><th>Filename</th><th>Type</th><th>Size</th><th></th></tr>
+            <tr><th>Filename</th><th>Type</th><th>Size</th><th title="Compare with `sha256sum` of the file you sent">SHA-256</th><th></th></tr>
           </thead>
           <tbody>
             {% for file in files %}
@@ -27,6 +27,7 @@
               <td class="name-slug">{{ file.filename }}</td>
               <td class="muted">{{ file.content_type }}</td>
               <td class="muted">{{ "%.1f KB" % (file.size / 1024) }}</td>
+              <td>{% if checksums.get(file.id) %}<code style="font-size:0.72rem; word-break:break-all;" title="SHA-256 of the file as the loader holds it -- the same as `sha256sum` of what was sent, if it arrived whole">{{ checksums[file.id] }}</code>{% endif %}</td>
               <td>{% if file.size and not file.content %}<span class="badge badge-pending" title="The contents were removed when this file passed its retention period; the record stays."><span>removed (retention)</span></span>{% else %}<a class="btn btn-secondary btn-sm" href="/provider/sources/{{ source.id }}/runs/{{ run_id }}/files/{{ file.id }}">{{ macros.icon("download", 14) }} Download</a>{% endif %}</td>
             </tr>
             {% endfor %}

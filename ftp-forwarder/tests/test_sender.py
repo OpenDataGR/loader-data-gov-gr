@@ -217,3 +217,82 @@ def test_a_file_whose_send_is_not_confirmed_stays_where_it_was(tmp_path):
         process_one(session, config, account, file_path)
 
     assert file_path.exists()  # not archived: the sweep will find it again
+
+
+# -- a checksum file from the provider (<name>.sha256) -----------------------------------------------------------------------
+
+def _sidecar(file_path, text):
+    side = file_path.with_name(file_path.name + ".sha256")
+    side.write_text(text, encoding="utf-8")
+    return side
+
+
+def test_a_file_that_matches_the_providers_checksum_file_is_sent_and_both_are_archived(tmp_path):
+    account, file_path = _account(tmp_path), _file(tmp_path)
+    side = _sidecar(file_path, "%s  data.csv\n" % _sha())
+    session = FakeSession([FakeResponse(200, json.dumps({"sha256": _sha()}))])
+
+    assert process_one(session, _config(), account, file_path) is True
+
+    assert not file_path.exists() and not side.exists() and len(session.calls) == 1
+    assert len(list((tmp_path / ".forwarded").rglob("data.csv*"))) == 2
+
+
+def test_a_file_that_does_not_match_is_put_aside_not_sent_and_not_retried_for_ever(tmp_path):
+    account, file_path = _account(tmp_path), _file(tmp_path)
+    _sidecar(file_path, "%s *data.csv\n" % ("a" * 64))
+    session = FakeSession([])
+
+    assert process_one(session, _config(), account, file_path) is False
+
+    assert session.calls == [] and not file_path.exists()
+    kept = sorted(p.name for p in (tmp_path / ".rejected").iterdir())
+    assert len(kept) == 2 and any(n.endswith("data.csv") for n in kept) and any(n.endswith("data.csv.sha256") for n in kept)
+
+
+@pytest.mark.parametrize("text", ["", "\n\n", "not-a-checksum data.csv", "abc123"])
+def test_an_unusable_checksum_file_also_puts_the_file_aside(tmp_path, text):
+    account, file_path = _account(tmp_path), _file(tmp_path)
+    _sidecar(file_path, text)
+    session = FakeSession([])
+
+    assert process_one(session, _config(), account, file_path) is False
+    assert session.calls == [] and (tmp_path / ".rejected").is_dir()
+
+
+def test_the_checksum_file_itself_is_never_sent_as_data(tmp_path):
+    account, file_path = _account(tmp_path), _file(tmp_path)
+    side = _sidecar(file_path, _sha())
+    session = FakeSession([])
+
+    assert process_one(session, _config(), account, side) is False
+    assert session.calls == [] and side.exists()
+
+
+def test_a_file_without_a_checksum_file_is_sent_as_before(tmp_path):
+    account, file_path = _account(tmp_path), _file(tmp_path)
+    session = FakeSession([FakeResponse(200)])
+
+    assert process_one(session, _config(), account, file_path) is True
+
+
+def test_the_checksum_is_accepted_in_capitals_and_with_a_byte_order_mark(tmp_path):
+    from ftp_forwarder.sender import read_sidecar
+
+    path = tmp_path / "x.sha256"
+    path.write_bytes(b"\xef\xbb\xbf" + _sha().upper().encode() + b"  x\r\n")
+    assert read_sidecar(path) == _sha()
+
+
+def test_a_stale_checksum_file_from_an_earlier_upload_does_not_reject_a_good_file(tmp_path):
+    import os
+    import time
+
+    account, file_path = _account(tmp_path), _file(tmp_path)
+    side = _sidecar(file_path, "%s  data.csv\n" % ("b" * 64))  # describes some earlier version of the file
+    old = time.time() - 7200
+    os.utime(side, (old, old))
+    session = FakeSession([FakeResponse(200)])
+
+    assert process_one(session, _config(), account, file_path) is True
+    assert not (tmp_path / ".rejected").exists() and side.exists()  # left alone, not archived with this file

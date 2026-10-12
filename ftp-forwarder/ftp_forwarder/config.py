@@ -21,6 +21,8 @@ class ForwarderConfig:
     # server-side (see that module's docstring).
     sync_key: str
     archive_subdir: str = ".forwarded"
+    # Where a file whose provider-sent checksum does not match is put aside (see sender.process_one).
+    rejected_subdir: str = ".rejected"
     max_retries: int = 5
     retry_backoff_s: float = 1.0
     worker_count: int = 8
