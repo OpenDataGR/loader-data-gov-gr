@@ -259,5 +259,5 @@ def test_the_login_page_has_no_menu_but_every_other_page_does(client_logged_in=N
     login = browser.get("/admin/login").text
     assert "Transform Box</a>" not in login and "Log out" not in login
     browser.post("/admin/login", data={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD, "next": "/"})
-    page = browser.get("/transform").text
+    page = browser.get("/provider/sources").text
     assert "Transform Box</a>" in page and "Load Box</a>" in page and "Log out" in page
