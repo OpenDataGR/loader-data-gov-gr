@@ -170,10 +170,6 @@
         <label for="items_path">Records path in the response (optional)</label>
         <input type="text" id="items_path" name="items_path" value="{{ data.get('items_path', 'results') }}">
 
-        <label for="max_requests_per_minute">Rate limit -- max requests per minute to the provider</label>
-        <input type="number" class="small" id="max_requests_per_minute" name="max_requests_per_minute" value="{{ data.get('max_requests_per_minute', '60') }}">
-        {% if errors.max_requests_per_minute %}<div class="error">{{ errors.max_requests_per_minute }}</div>{% endif %}
-
         <label for="proxy_method">How the live proxy calls this API</label>
         <select id="proxy_method" name="proxy_method" style="max-width:30rem;">
           <option value="GET"{% if data.get('proxy_method', 'GET') != 'POST' %} selected{% endif %}>GET -- the caller's query parameters are passed on (the usual case)</option>
@@ -187,9 +183,22 @@
           <label for="proxy_enabled">Also expose this as a live proxy (<code>/proxy/{name}</code>) for consumers who need real-time access, not just a scheduled pull</label>
         </div>
 
-        <label for="proxy_rate_limit_per_ip">Per-caller limit -- max requests per minute, per calling IP, through the proxy</label>
-        <input type="number" class="small" id="proxy_rate_limit_per_ip" name="proxy_rate_limit_per_ip" value="{{ data.get('proxy_rate_limit_per_ip', '30') }}">
-        {% if errors.proxy_rate_limit_per_ip %}<div class="error">{{ errors.proxy_rate_limit_per_ip }}</div>{% endif %}
+        <div class="limits-block" style="border:1px solid var(--color-border); border-radius:var(--radius); padding:0.8rem 1rem 0.5rem; margin:0.9rem 0; max-width:46rem;">
+          <div style="font-weight:600;">Rate limits</div>
+          <p class="muted" style="margin:0.15rem 0 0.7rem;">How often this API may be called, per minute. The provider limit is shared by everything that calls it (scheduled pulls and the live proxy); the per-caller limit stops one address from using it all.</p>
+          <div style="display:flex; gap:1.6rem; flex-wrap:wrap;">
+            <div>
+              <label for="max_requests_per_minute">To the provider -- all callers together</label>
+              <input type="number" class="small" id="max_requests_per_minute" name="max_requests_per_minute" min="1" value="{{ data.get('max_requests_per_minute', '60') }}">
+              {% if errors.max_requests_per_minute %}<div class="error">{{ errors.max_requests_per_minute }}</div>{% endif %}
+            </div>
+            <div>
+              <label for="proxy_rate_limit_per_ip">Through the live proxy -- per calling address</label>
+              <input type="number" class="small" id="proxy_rate_limit_per_ip" name="proxy_rate_limit_per_ip" min="1" value="{{ data.get('proxy_rate_limit_per_ip', '30') }}">
+              {% if errors.proxy_rate_limit_per_ip %}<div class="error">{{ errors.proxy_rate_limit_per_ip }}</div>{% endif %}
+            </div>
+          </div>
+        </div>
 
         <label for="request_timeout_s">Request timeout (seconds)</label>
         <input type="number" class="small" id="request_timeout_s" name="request_timeout_s" value="{{ data.get('request_timeout_s', '30') }}">
