@@ -229,6 +229,13 @@ provider's own credential is added as usual and wins over anything a caller supp
 (`GET /proxy/registry?plate=...`, "sent to the provider as POST"). It works together with the response transform above. Mind that a GET
 puts the value in the URL, so it appears in access logs.
 
+**Test request** (`ProviderSource.test_request`, the *Test request* field of an API source's form): the request to use when testing this API --
+the JSON body a POST API expects, or the query string of a GET one -- with a test case in it. When it is filled, *Test connection* makes **one
+real call** with it (the strongest check: address, credential and request; for a POST that may create a record at the provider, so the button asks
+first) and reports by status: 2xx reachable, 401/403 credential refused, 404 address not found, other 4xx the test request refused, 5xx a server
+error; nothing the provider sent back is repeated. When it is empty, a POST API is checked with one harmless GET and any other API the usual way.
+The same request is what the Transform page's *Fetch a sample* sends (see above), so it is only ever written once, on the source.
+
 **Login** (`/admin/login`): the site sits behind a session; the session is started either by the shared username/password (the original placeholder) or, once configured, by the data.gov.gr Keycloak (`oidc_login.py`: authorization code + PKCE, signature/issuer/audience/nonce checks, role `loader-admin` required) -- setup in `deploy/README.md`; with `LOADER_OIDC_ACCESS=ckan-org-admin` the rule is CKAN's (a sysadmin or an administrator of an organization, asked of CKAN with the loader's sysadmin key). The Data boxes and Security box are for super admins only (a CKAN sysadmin, the Keycloak role `loader-superadmin`, or the shared break-glass account). The person's own Keycloak user name then appears everywhere the shared name did.
 
 **Integrity of what arrives** (FTP/SFTP push): the box's catch-up sweep skips a file that is still being written; the box sends a SHA-256 and the loader refuses a mismatch and answers with the hash of what it stored (a transfer counts as done only when both agree); a provider may also send `<file>.sha256` before each file for an end-to-end check, and a file that does not match it is put aside on the box instead of sent; each run's detail page shows the stored file's SHA-256. Details and a ready-to-send provider note: `ftp-forwarder/README.md`.

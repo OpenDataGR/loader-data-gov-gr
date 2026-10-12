@@ -44,6 +44,7 @@ from providerharvest_service.models import FtpAccount, FtpAllowedIp, ProviderSou
 
 TRANSPORT_TYPES = ("http", "sftp", "scp", "ftp", "push")
 PROXY_METHODS = ("GET", "POST")
+TEST_REQUEST_MAX_BYTES = 64 * 1024
 _KEY_PREFIX = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,19}$")  # the word before an API key: Token, Bearer, ...
 SSH_TRANSPORT_TYPES = ("sftp", "scp")
 # How a push-mode source receives its data: "https" (the provider calls
@@ -234,6 +235,19 @@ def _http_fields(form: dict, errors: dict) -> tuple[str, dict, dict]:
         errors["proxy_method"] = "must be one of %s" % (PROXY_METHODS,)
         proxy_method = "GET"
 
+    test_request = (form.get("test_request") or "").strip()
+    if test_request:
+        if proxy_method == "POST":
+            if len(test_request.encode("utf-8")) > TEST_REQUEST_MAX_BYTES:
+                errors["test_request"] = "larger than %d kB" % (TEST_REQUEST_MAX_BYTES // 1000)
+            else:
+                try:
+                    json.loads(test_request)
+                except ValueError:
+                    errors["test_request"] = "must be valid JSON -- the body this API expects"
+        elif len(test_request) > 2000 or any(ord(c) < 32 for c in test_request):
+            errors["test_request"] = "must be a query string on one line (name=value&name2=value2), at most 2000 characters"
+
     config_extra = {
         "proxy_method": proxy_method,
         "auth_opts": auth_opts,
@@ -266,6 +280,8 @@ def _http_fields(form: dict, errors: dict) -> tuple[str, dict, dict]:
         "max_pages": _parse_positive_int(form.get("max_pages"), 1000, "max_pages", errors),
         "max_retries": _parse_positive_int(form.get("max_retries"), 5, "max_retries", errors),
     }
+    if test_request and "test_request" not in errors:
+        config_extra["test_request"] = test_request
     return auth_type, credential_fields, config_extra
 
 
@@ -600,6 +616,7 @@ def config_to_form_fields(source: ProviderSource) -> dict:
         data["proxy_rate_limit_per_ip"] = str(config.get("proxy_rate_limit_per_ip", 30))
         data["request_timeout_s"] = str(config.get("request_timeout_s", 30))
         data["proxy_method"] = "POST" if config.get("proxy_method") == "POST" else "GET"
+        data["test_request"] = config.get("test_request") or ""
         data["max_pages"] = str(config.get("max_pages", 1000))
         data["max_retries"] = str(config.get("max_retries", 5))
     elif source.transport_type in SSH_TRANSPORT_TYPES:

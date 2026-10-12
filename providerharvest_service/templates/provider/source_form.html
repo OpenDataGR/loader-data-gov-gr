@@ -200,6 +200,25 @@
           </div>
         </div>
 
+        <div class="test-request-block" style="max-width:46rem; margin:0.9rem 0;">
+          <label for="test_request">Test request (optional)</label>
+          <textarea id="test_request" name="test_request" rows="4" maxlength="65536" style="font-family:monospace; font-size:0.8rem;" placeholder="">{{ data.get('test_request', '') }}</textarea>
+          <p class="muted js-hint-post" style="margin:0.2rem 0 0.2rem;">The JSON body this API expects, with a <strong>test case</strong> in it. <em>Test connection</em> then makes <strong>one real POST</strong> with it (it may create a record at the provider) and the Transform page can fetch a sample answer with it. Leave empty and <em>Test connection</em> sends only a harmless GET.</p>
+          <p class="muted js-hint-get" style="margin:0.2rem 0 0.2rem; display:none;">Query parameters to send when testing, e.g. <code>plate=AB1234&amp;kind=car</code>. <em>Test connection</em> then makes one real GET with them and the Transform page can fetch a sample answer with them. Leave empty for the usual check.</p>
+          {% if errors.test_request %}<div class="error">{{ errors.test_request }}</div>{% endif %}
+          <script>
+            document.addEventListener('DOMContentLoaded', function () {
+              var method = document.getElementById('proxy_method'), post = document.querySelector('.js-hint-post'), get = document.querySelector('.js-hint-get'), box = document.getElementById('test_request');
+              function sync() {
+                var isPost = method.value === 'POST';
+                post.style.display = isPost ? '' : 'none'; get.style.display = isPost ? 'none' : '';
+                box.placeholder = isPost ? '{"document": {"statements": {"platenumber": "TEST123"}}}' : 'plate=AB1234';
+              }
+              method.addEventListener('change', sync); sync();
+            });
+          </script>
+        </div>
+
         <label for="request_timeout_s">Request timeout (seconds)</label>
         <input type="number" class="small" id="request_timeout_s" name="request_timeout_s" value="{{ data.get('request_timeout_s', '30') }}">
         {% if errors.request_timeout_s %}<div class="error">{{ errors.request_timeout_s }}</div>{% endif %}

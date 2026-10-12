@@ -203,7 +203,7 @@ def _editor_context(session: Session, hsession: Session, source: ProviderSource,
                                                    failed_only=request.query_params.get("show") == "failed") if transform else [], "counts": transform_runner.output_counts(hsession, source.id) if transform else None,
         "formats": te.OUTPUTS, "delimiters": te.CSV_DELIMITERS, "choices": transform_runner.REPROCESS_CHOICES, "has_sample": transform_runner.sample_for(session, hsession, source.id) is not None,
         "is_http": source.transport_type == "http", "provider_method": source.proxy_method,
-        "fetch_params": (request_template.placeholders(transform.request_template) if transform and transform.request_swap and source.proxy_method == "POST" else []),
+        "test_request": source.test_request, "source_edit_url": "/provider/sources/%s/edit" % source.id,
         "request_swap": bool(transform and transform.request_swap), "request_template": (transform.request_template if transform else "") or "",
         "proxy_name": source.name, "pasted_sample": bool(transform and transform.sample),
         "pasted_sample_kb": round(len(transform.sample.encode("utf-8")) / 1000, 1) if transform and transform.sample else 0,
@@ -268,42 +268,27 @@ async def set_request(source_id: str, request: Request, session: Session = Depen
 
 @router.post("/sources/{source_id}/fetch-sample")
 async def fetch_sample(source_id: str, request: Request, session: Session = Depends(get_session)):
-    """Make ONE real call to the provider, with a test request the admin gives, and keep its answer as the sample -- so the steps can
-    be built without pasting anything. Admin-only (the whole page is), confirmed in the browser, and rate-limited like any call."""
+    """Make ONE real call to the provider with the source's test request (set on the source, in the Extract Box) and keep its answer as the
+    sample -- so the steps can be built without pasting anything. Admin-only (the whole page is), confirmed in the browser, and rate-limited
+    like any call."""
     source, transform = _with(session, source_id)
     back = "/transform/sources/%s" % source_id
     if source is None or transform is None:
         return _go("/transform", "No such transform.", "error")
     if source.transport_type != "http":
         return _go(back, "Only an API source has answers to fetch.", "error")
-    form = await request.form()
-    provider = source.proxy_method
+    test_request = source.test_request
+    if not test_request:
+        return _go(back, "This source has no test request yet: give one on the source (Extract Box, Edit), then fetch.", "error")
     try:
-        if provider == "POST":
-            if transform.request_swap and (transform.request_template or "").strip():
-                values = {k[len("param_"):]: str(v) for k, v in form.items() if k.startswith("param_")}
-                body = request_template.build_json_body(transform.request_template, values)
-            else:
-                text = str(form.get("body") or "").strip()
-                if not text:
-                    raise te.TransformError("Give the request to send to the provider (JSON).")
-                if len(text.encode("utf-8")) > proxy.MAX_BODY_BYTES:
-                    raise te.TransformError("The request is larger than %d kB." % (proxy.MAX_BODY_BYTES // 1000))
-                try:
-                    json.loads(text)
-                except ValueError:
-                    raise te.TransformError("The request is not valid JSON.") from None
-                body = text.encode("utf-8")
-            params: dict = {}
+        if source.proxy_method == "POST":
+            params, body = {}, test_request.encode("utf-8")
         else:
-            body = None
-            params = dict(parse_qsl(str(form.get("query") or "").lstrip("?"), keep_blank_values=True))
+            params, body = dict(parse_qsl(test_request.lstrip("?"), keep_blank_values=True)), None
         upstream = await run_in_threadpool(proxy.call_provider, session, source, params, body)
         if not 200 <= upstream.status_code < 300:
             raise te.TransformError("The provider answered HTTP %d, so there is no sample to keep." % upstream.status_code)
         transform_runner.set_sample(transform, upstream.content.decode("utf-8", errors="replace"))
-    except request_template.RequestTemplateError as exc:
-        return _go(back, str(exc), "error")
     except te.TransformError as exc:
         session.rollback()
         return _go(back, str(exc), "error")

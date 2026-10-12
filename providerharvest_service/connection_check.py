@@ -108,6 +108,39 @@ def _check_post_provider(source: ProviderSource, secret: SecretBundle) -> tuple[
     return "ok", "Reachable -- the endpoint answered HTTP %d to a harmless GET; nothing was created. %s" % (code, full_test)
 
 
+def _check_with_test_request(session: Session, source: ProviderSource) -> tuple[str, str]:
+    """(status, message): the admin gave a test request for this API, so the check is one real call with it -- the strongest test there
+    is (it proves the address, the credential and the request). For a POST API that is a real POST, which may create a record at the
+    provider; that is why the request has to be given on purpose, and why "Test connection" asks first. Nothing the provider sent back is
+    repeated in the message."""
+    from urllib.parse import parse_qsl
+
+    from fastapi import HTTPException
+
+    from providerharvest_service import proxy
+
+    provider = source.proxy_method
+    try:
+        if provider == "POST":
+            params, body = {}, source.test_request.encode("utf-8")
+        else:
+            params, body = dict(parse_qsl(source.test_request.lstrip("?"), keep_blank_values=True)), None
+        response = proxy.call_provider(session, source, params, body)
+    except HTTPException as exc:
+        return "error", "Not reachable: %s" % exc.detail
+    code = response.status_code
+    real = "a real POST: it may have created a record there" if provider == "POST" else "a real GET"
+    if 200 <= code < 300:
+        return "ok", "Reachable -- the provider answered the test request with HTTP %d (%s)." % (code, real)
+    if code in (401, 403):
+        return "error", "The provider refused the credential (HTTP %d)." % code
+    if code == 404:
+        return "error", "The provider answered HTTP 404 (not found): check the endpoint address."
+    if code >= 500:
+        return "error", "The provider answered HTTP %d (a server error)." % code
+    return "error", "The provider refused the test request (HTTP %d): check the test request on the source." % code
+
+
 def check_connection(
     session: Session,
     source_id: str,
@@ -127,10 +160,14 @@ def check_connection(
     """
     source = provider_sources.get_or_404(session, source_id)
 
-    if source.proxy_only and transport is None:
-        # A real POST can create something at the provider (a declaration, a record), so a POST API is checked with a harmless GET.
+    if source.transport_type == "http" and transport is None and (source.test_request or source.proxy_only):
+        # With a test request given on the source: one real call with it. Without one, a POST API is checked with a harmless GET (a real
+        # POST can create something at the provider), and any other API the usual way below.
         try:
-            status, message = _check_post_provider(source, provider_sources.credentials(session, source_id))
+            if source.test_request:
+                status, message = _check_with_test_request(session, source)
+            else:
+                status, message = _check_post_provider(source, provider_sources.credentials(session, source_id))
         except Exception as exc:  # noqa: BLE001 -- shown verbatim, this IS the diagnostic
             status, message = "error", str(exc)
         source.last_check_at = _utcnow()

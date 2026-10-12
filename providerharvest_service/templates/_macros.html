@@ -130,7 +130,7 @@
     <div class="actions-menu-list">
       <a href="/provider/sources/{{ s.id }}/edit">{{ icon("edit", 14) }} Edit</a>
       {% if s.transport_type != "push" %}
-        <form method="post" action="{{ action_prefix }}/{{ s.id }}/check-connection">
+        <form method="post" action="{{ action_prefix }}/{{ s.id }}/check-connection"{% if s.proxy_only and s.test_request %} onsubmit="return confirm('This makes one real call to the provider with the test request, which may create a record there. Continue?');"{% endif %}>
           <button type="submit">{{ icon("pulse", 14) }} Test connection</button>
         </form>
       {% endif %}

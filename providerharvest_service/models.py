@@ -216,6 +216,17 @@ class ProviderSource(Base):
         return "POST" if isinstance(config, dict) and config.get("proxy_method") == "POST" else "GET"
 
     @property
+    def test_request(self) -> str:
+        """The request an admin gave for testing this API: the JSON body for a POST API, the query string for a GET one. Used by "Test
+        connection" (a real call) and by "Fetch a sample". Empty when none was given."""
+        try:
+            config = json.loads(self.config or "{}")
+        except ValueError:
+            return ""
+        value = config.get("test_request") if isinstance(config, dict) else ""
+        return value if isinstance(value, str) else ""
+
+    @property
     def proxy_only(self) -> bool:
         """An HTTP source whose API is called with POST: it can only be reached through the proxy -- there is nothing to
         pull on a schedule (each call asks one question, and may create something at the provider)."""
