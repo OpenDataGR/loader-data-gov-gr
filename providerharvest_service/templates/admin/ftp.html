@@ -292,24 +292,41 @@
     (function () {
       var root = document.getElementById('live-boxes');
       if (!root) return;
-      root.addEventListener('mousemove', function (e) {
+      // A chart carries up to a week of readings. Each chart is read once (the first time it is hovered) into
+      // lookups, and a burst of mouse moves is answered once per screen refresh -- parsing and searching on every
+      // single move made the page stutter on a long range.
+      function prepare(wrap) {
+        var data = JSON.parse(wrap.getAttribute('data-points') || '{}'), names = Object.keys(data), seen = {}, times = [], byName = {};
+        names.forEach(function (n) {
+          byName[n] = {};
+          data[n].forEach(function (p) { byName[n][p[0]] = p[1]; if (!seen[p[0]]) { seen[p[0]] = true; times.push(p[0]); } });
+        });
+        times.sort();
+        wrap._chart = { names: names, times: times, byName: byName };
+        return wrap._chart;
+      }
+      function show(e) {
         var wrap = e.target.closest ? e.target.closest('.spark-wrap') : null;
         if (!wrap) return;
+        var chart = wrap._chart || prepare(wrap);
+        if (!chart.times.length) return;
         var tip = wrap.querySelector('.spark-tip'), cursor = wrap.querySelector('.spark-cursor'), svg = wrap.querySelector('svg');
-        var data = JSON.parse(wrap.getAttribute('data-points') || '{}'), rect = svg.getBoundingClientRect();
-        var names = Object.keys(data), all = [];
-        names.forEach(function (n) { data[n].forEach(function (p) { all.push(p[0]); }); });
-        if (!all.length) return;
-        var times = all.filter(function (t, i) { return all.indexOf(t) === i; }).sort();
-        var frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)), t = times[Math.round(frac * (times.length - 1))];
-        var unit = wrap.getAttribute('data-unit') || '';
+        var rect = svg.getBoundingClientRect();
+        var frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)), t = chart.times[Math.round(frac * (chart.times.length - 1))];
+        var unit = wrap.getAttribute('data-unit') || '', names = chart.names;
         var text = t + (names.length > 1 ? '' : '  ');
         names.forEach(function (n) {
-          var hit = data[n].filter(function (p) { return p[0] === t; })[0];
-          if (hit) text += (names.length > 1 ? '  ' + n + ' ' : '') + (unit === 'B/s' ? Math.round(hit[1]) + ' B/s' : hit[1] + (unit === '%' ? '%' : ''));
+          var v = chart.byName[n][t];
+          if (v !== undefined) text += (names.length > 1 ? '  ' + n + ' ' : '') + (unit === 'B/s' ? Math.round(v) + ' B/s' : v + (unit === '%' ? '%' : ''));
         });
         tip.textContent = text; tip.hidden = false; tip.style.left = Math.min(Math.max(e.clientX - rect.left, 60), rect.width - 60) + 'px';
         cursor.style.display = ''; cursor.setAttribute('x1', frac * 240); cursor.setAttribute('x2', frac * 240);
+      }
+      var pending = null;
+      root.addEventListener('mousemove', function (e) {
+        var first = !pending;
+        pending = { target: e.target, clientX: e.clientX };
+        if (first) requestAnimationFrame(function () { var ev = pending; pending = null; show(ev); });
       });
       root.addEventListener('mouseleave', function () {
         root.querySelectorAll('.spark-tip').forEach(function (t) { t.hidden = true; });
