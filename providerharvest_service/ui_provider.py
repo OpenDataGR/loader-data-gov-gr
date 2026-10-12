@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from providerharvest_service import build_info, connection_check, harvest_db, harvest_runner, nav, provider_sources
+from providerharvest_service import build_info, connection_check, harvest_db, harvest_runner, nav, provider_sources, push_check
 from providerharvest_service.db import get_session
 
 router = APIRouter(prefix="/provider", tags=["provider-ui"])
@@ -314,6 +314,20 @@ def _page_links(query: dict, pages: int) -> list[tuple[str, str, bool]]:
         links.append((str(number), _link(query, number), number == current))
         previous = number
     return links
+
+
+@router.get("/sources/{source_id}/readiness", response_class=HTMLResponse)
+def source_readiness(source_id: str, request: Request, session: Session = Depends(get_session)):
+    """The "test connection" of a push source: whether an upload would arrive, from what the loader knows (see push_check.py)."""
+    try:
+        source = provider_sources.get_or_404(session, source_id)
+    except provider_sources.NotFound:
+        return RedirectResponse(_redirect_with_flash("No such source.", kind="error"), status_code=303)
+    if source.transport_type != "push":
+        return RedirectResponse(_redirect_with_flash("Only a push source has a readiness check; test this one with Test connection.", kind="error"), status_code=303)
+    checks = push_check.check(session, source)
+    level, line = push_check.summary(checks)
+    return templates.TemplateResponse(request, "provider/source_readiness.html", {"source": source, "checks": checks, "level": level, "summary": line})
 
 
 @router.get("/sources/{source_id}/runs", response_class=HTMLResponse)

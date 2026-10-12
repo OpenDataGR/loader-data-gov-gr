@@ -133,6 +133,8 @@
         <form method="post" action="{{ action_prefix }}/{{ s.id }}/check-connection"{% if s.proxy_only and s.test_request %} onsubmit="return confirm('This makes one real call to the provider with the test request, which may create a record there. Continue?');"{% endif %}>
           <button type="submit">{{ icon("pulse", 14) }} Test connection</button>
         </form>
+      {% else %}
+        <a href="/provider/sources/{{ s.id }}/readiness">{{ icon("pulse", 14) }} Check readiness</a>
       {% endif %}
       <a href="/provider/sources/{{ s.id }}/runs">{{ icon("history", 14) }} View runs</a>
       {% if is_admin %}<a href="{{ action_prefix }}/{{ s.id }}/retention">{{ icon("queue", 14) }} Data retention</a>{% endif %}

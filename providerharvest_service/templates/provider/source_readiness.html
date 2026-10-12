@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% import "_macros.html" as macros %}
+{% block title %}Readiness -- {{ source.title }} -- loader.data.gov.gr{% endblock %}
+{% block content %}
+  <style>
+    .check-list { list-style: none; margin: 1rem 0 0; padding: 0; }
+    .check-list li { display: flex; gap: 0.8rem; padding: 0.7rem 0; border-top: 1px solid var(--color-border); align-items: flex-start; }
+    .check-mark { flex: 0 0 1.6rem; height: 1.6rem; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 0.9rem; }
+    .check-mark.ok { background: #1f9d55; }
+    .check-mark.warn { background: #e0a100; color: #1d1d1d; }
+    .check-mark.fail { background: #d64545; }
+    .check-label { font-weight: 600; }
+    .readiness-summary { padding: 0.7rem 1rem; border-radius: var(--radius); margin: 0.9rem 0 0; font-weight: 600; }
+    .readiness-summary.ok { background: #e6f5ec; border: 1px solid #b9e0c8; color: #14532d; }
+    .readiness-summary.warn { background: #fff6dd; border: 1px solid #f0dca0; color: #5c4400; }
+    .readiness-summary.fail { background: #fdecea; border: 1px solid #f3c2c2; color: #7a1f1f; }
+  </style>
+  <div class="panel">
+    <h1>Readiness -- {{ source.title }}</h1>
+    <p class="subtitle"><a href="/provider/sources">&larr; back to the sources</a> &middot; <span class="name-slug">{{ source.name }}</span> &middot; {{ "FTP / SFTP push" if source.push_method == "ftp" else "HTTPS push" }}</p>
+    <p class="muted" style="margin:0;">A push source has nothing the loader can connect to: the provider sends to us. This lists what has to be true for an upload to arrive, from what the loader knows. It cannot prove a login from outside works -- only a file arriving does.</p>
+    <div class="readiness-summary {{ level }}" role="status">{{ summary }}</div>
+    <ul class="check-list">
+      {% for c in checks %}
+        <li>
+          <span class="check-mark {{ c.level }}" aria-label="{{ {'ok': 'ok', 'warn': 'warning', 'fail': 'problem'}[c.level] }}">{{ {'ok': '&#10003;', 'warn': '!', 'fail': '&#10005;'}[c.level]|safe }}</span>
+          <div><div class="check-label">{{ c.label }}</div>{% if c.detail %}<div class="muted">{{ c.detail }}</div>{% endif %}</div>
+        </li>
+      {% endfor %}
+    </ul>
+    <div style="margin-top:1.2rem; display:flex; gap:0.6rem;">
+      <a class="btn" href="/provider/sources/{{ source.id }}/readiness">{{ macros.icon("pulse", 14) }} Check again</a>
+      <a class="btn btn-secondary" href="/provider/sources/{{ source.id }}/credentials">Login and sender settings</a>
+    </div>
+  </div>
+{% endblock %}
