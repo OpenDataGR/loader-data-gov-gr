@@ -188,8 +188,8 @@ def _roles(*claim_sets: dict) -> set[str]:
     return roles
 
 
-def finish(request_base_url: str, tx_cookie: str, params: dict) -> tuple[str, str, str]:
-    """Completes a login: (the user name to start a session for, where to send them afterwards, the ID token).
+def finish(request_base_url: str, tx_cookie: str, params: dict) -> tuple[str, str, str, dict]:
+    """Completes a login: (the user name to start a session for, where to send them afterwards, the ID token, what to show about them).
     Raises ``OidcError`` (``NotAllowed`` for a person who lacks the role)."""
     if params.get("error"):
         raise OidcError("The login server declined the sign-in (%s)." % str(params.get("error_description") or params["error"])[:200])
@@ -225,6 +225,8 @@ def finish(request_base_url: str, tx_cookie: str, params: dict) -> tuple[str, st
     username = str(ident.get("preferred_username") or access.get("preferred_username") or "").strip()
     if not username or len(username) > 100 or any(ord(c) < 32 for c in username):
         raise OidcError("The login server did not say who you are (no user name).")
+    full_name = str(ident.get("name") or " ".join(filter(None, [ident.get("given_name"), ident.get("family_name")]))).strip()
+    profile = {"u": username, "n": full_name[:100], "e": str(ident.get("email") or "")[:120], "via": "Keycloak (data.gov.gr)"}
     if access_rule() == "ckan-org-admin":
         try:
             verdict = ckan_access.check(str(ident.get("sub") or ""))
@@ -232,9 +234,12 @@ def finish(request_base_url: str, tx_cookie: str, params: dict) -> tuple[str, st
             raise OidcError(str(exc)) from exc  # fails closed: CKAN could not be asked, so nobody gets in this way
         if not verdict.allowed:
             raise NotAllowed(username, verdict.reason)
+        profile.update({"sys": verdict.sysadmin, "orgs": list(verdict.organizations[:4]), "norg": len(verdict.organizations)})
     elif required_role() not in _roles(access, ident):
         raise NotAllowed(username, "it needs the role %s. Ask an administrator." % required_role())
-    return username, str(tx.get("next") or ""), tokens["id_token"]
+    else:
+        profile["role"] = required_role()
+    return username, str(tx.get("next") or ""), tokens["id_token"], profile
 
 
 def logout_url(request_base_url: str, id_token_hint: str = "") -> str | None:

@@ -144,6 +144,19 @@
     .flash.flash-error { background: #fdecea; border-color: #f3c2c2; color: #7a1f1f; }
 
     /* The message after an action (?flash=...): a toast, top right, that goes by itself. */
+    .nav-account { margin-left: auto; display: flex; align-items: center; gap: 0.7rem; }
+    .user-menu { position: relative; }
+    .user-menu summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 0.45rem; color: #fff; font-size: 0.85rem; padding: 0.2rem 0.4rem; border-radius: 999px; }
+    .user-menu summary::-webkit-details-marker { display: none; }
+    .user-menu summary:hover, .user-menu[open] summary { background: rgba(255, 255, 255, 0.16); }
+    .user-avatar { width: 1.7rem; height: 1.7rem; border-radius: 50%; background: #fff; color: var(--color-primary, #0b3d91); display: grid; place-items: center; font-weight: 700; font-size: 0.85rem; }
+    .user-name { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .user-card { position: absolute; right: 0; top: calc(100% + 0.5rem); z-index: 50; min-width: 17rem; max-width: 22rem; background: #fff; color: var(--color-text, #1c2733); border: 1px solid var(--color-border, #d8e0ea); border-radius: var(--radius, 8px); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18); padding: 0.9rem 1rem; font-size: 0.85rem; }
+    .user-card-name { font-weight: 700; font-size: 0.95rem; margin-bottom: 0.4rem; }
+    .user-card dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 0.8rem; }
+    .user-card dt { color: var(--color-gray-700, #5c6b7a); }
+    .user-card dd { margin: 0; word-break: break-word; }
+    @media (max-width: 720px) { .user-name { display: none; } }
     .toast-stack { position: fixed; top: 1rem; right: 1rem; z-index: 1000; display: flex; flex-direction: column; gap: 0.5rem; width: min(26rem, calc(100vw - 2rem)); pointer-events: none; }
     .toast {
       pointer-events: auto; display: flex; align-items: flex-start; gap: 0.6rem;
@@ -384,9 +397,29 @@
       <a href="/admin/sources" class="{{ 'active' if request.url.path == '/admin/sources' else '' }}">{{ macros.icon("admin", 16) }} Admin dashboard{% if pending_n %}<span class="nav-count" title="{{ pending_n }} source{{ '' if pending_n == 1 else 's' }} awaiting approval" aria-label="{{ pending_n }} awaiting approval">{{ pending_n }}</span>{% endif %}</a>
       <a href="/admin/ftp" class="{{ 'active' if request.url.path == '/admin/ftp' else '' }}">{{ macros.icon("push", 16) }} Data boxes</a>
       <a href="/admin/security/failed-logins" class="{{ 'active' if request.url.path.startswith('/admin/security') else '' }}">{{ macros.icon("rejected", 16) }} Security box</a>
-        <form method="post" action="/admin/logout" style="margin-left:auto; display:flex;">
-          <button type="submit" class="btn-secondary btn-sm" style="align-self:center;">{{ macros.icon("x", 14) }} Log out</button>
-        </form>
+        <div class="nav-account">
+          {% set who = request.state.user if (request.state is defined and request.state.user is defined) else none %}
+          {% if who %}
+            <details class="user-menu">
+              <summary title="Signed in as {{ who.username }}">
+                <span class="user-avatar" aria-hidden="true">{{ (who.name or who.username)[:1]|upper }}</span>
+                <span class="user-name">{{ who.name or who.username }}</span>
+              </summary>
+              <div class="user-card">
+                {% if who.name %}<div class="user-card-name">{{ who.name }}</div>{% endif %}
+                <dl>
+                  <dt>User</dt><dd>{{ who.username }}</dd>
+                  {% if who.email %}<dt>Email</dt><dd>{{ who.email }}</dd>{% endif %}
+                  <dt>Signed in with</dt><dd>{{ who.via }}</dd>
+                  {% if who.access %}<dt>Access</dt><dd>{{ who.access }}</dd>{% endif %}
+                </dl>
+              </div>
+            </details>
+          {% endif %}
+          <form method="post" action="/admin/logout" style="display:flex; margin:0;">
+            <button type="submit" class="btn-secondary btn-sm" style="align-self:center;">{{ macros.icon("x", 14) }} Log out</button>
+          </form>
+        </div>
       {% endif %}
     </nav>
   </div>

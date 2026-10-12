@@ -28,6 +28,7 @@ import base64
 import binascii
 import hashlib
 import hmac
+import json
 import os
 import time
 from urllib.parse import quote
@@ -96,6 +97,47 @@ def _sign(payload: bytes, secret: str) -> str:
     return hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
 
 
+PROFILE_COOKIE = "loader_profile"  # who the person is, for showing in the menu: signed, never trusted for access
+
+
+def seal(purpose: str, data: dict, *, ttl_s: int = DEFAULT_TTL_S) -> str:
+    """``data`` as a signed, expiring cookie value (``purpose`` keeps one kind of cookie from standing in for another)."""
+    payload = base64.urlsafe_b64encode(json.dumps({**data, "exp": int(time.time()) + ttl_s}).encode("utf-8")).decode("ascii")
+    return "%s.%s" % (payload, _sign(("%s:%s" % (purpose, payload)).encode("ascii"), _secret()))
+
+
+def unseal(purpose: str, value: str) -> dict | None:
+    try:
+        payload, signature = value.rsplit(".", 1)
+        if not hmac.compare_digest(signature, _sign(("%s:%s" % (purpose, payload)).encode("ascii"), _secret())):
+            return None
+        data = json.loads(base64.urlsafe_b64decode(payload.encode("ascii")))
+    except (ValueError, SessionConfigError, UnicodeError, binascii.Error):
+        return None
+    return data if isinstance(data, dict) and time.time() <= data.get("exp", 0) else None
+
+
+def user_info(username: str, profile_cookie: str) -> dict:
+    """What the menu shows about the signed-in person. The profile cookie only adds detail; it counts only when it is
+    validly signed and is about the same user name as the session itself."""
+    profile = unseal("profile", profile_cookie or "") or {}
+    if profile.get("u") != username:
+        profile = {}
+    if profile.get("sys"):
+        access = "CKAN sysadmin"
+    elif profile.get("norg"):
+        shown = profile.get("orgs") or []
+        access = "Administrator of %d organization%s" % (profile["norg"], "" if profile["norg"] == 1 else "s")
+        if shown:
+            access += " (%s%s)" % (", ".join(shown), ", ..." if profile["norg"] > len(shown) else "")
+    elif profile.get("role"):
+        access = "Role %s" % profile["role"]
+    else:
+        access = ""
+    return {"username": username, "name": profile.get("n") or "", "email": profile.get("e") or "",
+            "via": profile.get("via") or "Shared account", "access": access}
+
+
 def create_session_cookie(username: str, *, ttl_s: int = DEFAULT_TTL_S) -> str:
     expiry = int(time.time()) + ttl_s
     payload = ("%s:%d" % (username, expiry)).encode("utf-8")
@@ -144,7 +186,10 @@ class AdminSessionMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if _is_gated(request.url.path):
             token = request.cookies.get(COOKIE_NAME, "")
-            if not token or verify_session_cookie(token) is None:
+            username = verify_session_cookie(token) if token else None
+            if username is not None:
+                request.state.user = user_info(username, request.cookies.get(PROFILE_COOKIE, ""))
+            if not token or username is None:
                 next_path = request.url.path
                 if request.url.query:
                     next_path += "?" + request.url.query
