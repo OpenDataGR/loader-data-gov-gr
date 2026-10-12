@@ -223,3 +223,28 @@ def test_a_relayed_file_records_arrival_but_not_the_relay_address_as_sender(clie
         source = provider_sources.get_or_404(session, source_id)
         assert source.last_received_at is not None
         assert source.last_sender is None  # the provider address comes from the box report instead
+
+
+def test_relay_upload_checks_the_boxs_checksum_and_answers_with_its_own(client, _isolated_db):
+    import hashlib
+
+    source_id = _register_and_activate_push_source(_isolated_db)
+    _create_ftp_account(_isolated_db, push_target_source_name="acme-push")
+    content = b"a,b\n1,2\n"
+    good = hashlib.sha256(content).hexdigest()
+
+    ok = client.post("/admin/ftp-relay/acme-box-account/upload", files={"file": ("data.csv", content, "text/csv")},
+                     headers={**SYNC_HEADERS, "X-Content-SHA256": good.upper()})
+    assert ok.status_code == 200 and ok.json()["sha256"] == good
+
+    bad = client.post("/admin/ftp-relay/acme-box-account/upload", files={"file": ("data2.csv", content, "text/csv")},
+                      headers={**SYNC_HEADERS, "X-Content-SHA256": "0" * 64})
+    assert bad.status_code == 502 and "checksum mismatch" in bad.text
+    assert "data2.csv" not in client.get("/provider/sources/%s/runs" % source_id).text  # nothing was stored for it
+
+
+def test_relay_upload_without_a_checksum_still_works_for_an_older_box(client, _isolated_db):
+    _register_and_activate_push_source(_isolated_db)
+    _create_ftp_account(_isolated_db, push_target_source_name="acme-push")
+    resp = client.post("/admin/ftp-relay/acme-box-account/upload", files={"file": ("data.csv", b"x\n1\n", "text/csv")}, headers=SYNC_HEADERS)
+    assert resp.status_code == 200 and len(resp.json()["sha256"]) == 64

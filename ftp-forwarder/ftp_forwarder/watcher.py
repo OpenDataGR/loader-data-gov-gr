@@ -105,7 +105,7 @@ def watch_forever(pool: ForwarderPool, config: ForwarderConfig, accounts_db_path
     def _periodic_sweep() -> None:
         while not stop_sweep.wait(config.catch_up_interval_s):
             watches.refresh(load_accounts(accounts_db_path))
-            submitted = catch_up_sweep(pool, watches.current_accounts())
+            submitted = catch_up_sweep(pool, watches.current_accounts(), settle_s=config.settle_s)
             if submitted:
                 logger.info("catch-up sweep submitted %d file(s)", submitted)
 
@@ -114,7 +114,7 @@ def watch_forever(pool: ForwarderPool, config: ForwarderConfig, accounts_db_path
 
     # Pick up anything that arrived (or failed to send) before this
     # process started, rather than waiting for the first periodic tick.
-    catch_up_sweep(pool, watches.current_accounts())
+    catch_up_sweep(pool, watches.current_accounts(), settle_s=config.settle_s)
 
     try:
         while True:

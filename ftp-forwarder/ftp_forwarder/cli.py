@@ -38,6 +38,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--retry-backoff-s", type=float, default=ForwarderConfig.retry_backoff_s)
     parser.add_argument("--worker-count", type=int, default=ForwarderConfig.worker_count)
     parser.add_argument("--catch-up-interval-s", type=int, default=ForwarderConfig.catch_up_interval_s)
+    parser.add_argument("--settle-s", type=int, default=ForwarderConfig.settle_s,
+                        help="The catch-up sweep leaves a file alone until nothing has written to it for this many seconds")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args(argv)
 
@@ -54,6 +56,7 @@ def main(argv: list[str] | None = None) -> int:
         retry_backoff_s=args.retry_backoff_s,
         worker_count=args.worker_count,
         catch_up_interval_s=args.catch_up_interval_s,
+        settle_s=args.settle_s,
     )
     pool = ForwarderPool(config)
     try:

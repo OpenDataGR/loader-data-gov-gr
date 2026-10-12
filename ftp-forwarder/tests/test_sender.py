@@ -166,3 +166,54 @@ def test_process_one_leaves_the_file_in_place_on_failure(tmp_path):
         process_one(session, config, account, file_path)
 
     assert file_path.exists()  # never archived -- the next catch-up sweep must find it again
+
+
+# -- checksums: the box says what it holds, the loader says what it stored -----------------------------------------------------
+
+import hashlib
+import json
+
+
+def _sha(content=b"a,b\n1,2\n"):
+    return hashlib.sha256(content).hexdigest()
+
+
+def test_send_file_sends_its_checksum_and_accepts_a_matching_answer(tmp_path):
+    account, file_path = _account(tmp_path), _file(tmp_path)
+    session = FakeSession([FakeResponse(200, json.dumps({"status": "success", "sha256": _sha()}))])
+
+    send_file(session, "https://loader.data.gov.gr", "the-sync-key", account, file_path, sleep=lambda s: None)
+
+    assert session.calls[0]["headers"]["X-Content-SHA256"] == _sha()
+    assert len(session.calls) == 1
+
+
+def test_a_loader_that_stored_something_else_is_retried_and_never_counted_as_sent(tmp_path):
+    account, file_path = _account(tmp_path), _file(tmp_path)
+    session = FakeSession([FakeResponse(200, json.dumps({"sha256": "0" * 64}))] * 3)
+    sleeps = []
+
+    with pytest.raises(SendError, match="checksum mismatch"):
+        send_file(session, "https://loader.data.gov.gr", "the-sync-key", account, file_path, max_retries=3, sleep=sleeps.append)
+
+    assert len(session.calls) == 3 and len(sleeps) == 2
+
+
+def test_a_mismatch_that_heals_on_the_next_try_succeeds(tmp_path):
+    account, file_path = _account(tmp_path), _file(tmp_path)
+    session = FakeSession([FakeResponse(200, json.dumps({"sha256": "0" * 64})), FakeResponse(200, json.dumps({"sha256": _sha()}))])
+
+    send_file(session, "https://loader.data.gov.gr", "the-sync-key", account, file_path, sleep=lambda s: None)
+
+    assert len(session.calls) == 2
+
+
+def test_a_file_whose_send_is_not_confirmed_stays_where_it_was(tmp_path):
+    account, file_path = _account(tmp_path), _file(tmp_path)
+    config = _config(max_retries=2, retry_backoff_s=0)
+    session = FakeSession([FakeResponse(200, json.dumps({"sha256": "f" * 64}))] * 2)
+
+    with pytest.raises(SendError):
+        process_one(session, config, account, file_path)
+
+    assert file_path.exists()  # not archived: the sweep will find it again

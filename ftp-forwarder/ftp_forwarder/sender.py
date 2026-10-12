@@ -13,6 +13,8 @@ to its own harvest runs.
 from __future__ import annotations
 
 import datetime
+import hashlib
+import json
 import logging
 import pathlib
 import time
@@ -27,6 +29,14 @@ logger = logging.getLogger(__name__)
 
 class SendError(RuntimeError):
     pass
+
+
+def file_sha256(file_path: pathlib.Path) -> str:
+    digest = hashlib.sha256()
+    with file_path.open("rb") as fh:
+        for block in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def send_file(
@@ -51,6 +61,10 @@ def send_file(
     transient and retried with exponential backoff.
     """
     url = "%s/admin/ftp-relay/%s/upload" % (base_url.rstrip("/"), account.username)
+    # What this box holds, as a fingerprint: loader checks what it received against it, and answers with the
+    # fingerprint of what it stored; only when both agree is the file counted as sent (and archived). An old
+    # loader that does not answer with one is trusted as before.
+    checksum = file_sha256(file_path)
     last_error: SendError | None = None
     for attempt in range(1, max_retries + 1):
         try:
@@ -58,14 +72,23 @@ def send_file(
                 resp = session.post(
                     url,
                     files={"file": (file_path.name, fh)},
-                    headers={"X-Ftp-Sync-Key": sync_key},
+                    headers={"X-Ftp-Sync-Key": sync_key, "X-Content-SHA256": checksum},
                     timeout=timeout_s,
                 )
         except requests.RequestException as exc:
             last_error = SendError("%s: %s" % (url, exc))
         else:
             if resp.status_code == 200:
-                return
+                try:
+                    stored = json.loads(resp.text).get("sha256")
+                except (ValueError, AttributeError):
+                    stored = None
+                if stored is None or stored == checksum:
+                    return
+                last_error = SendError("%s: loader stored different content for %s (checksum mismatch)" % (url, file_path.name))
+                if attempt < max_retries:
+                    sleep(backoff_s * (2 ** (attempt - 1)))
+                continue
             if 400 <= resp.status_code < 500:
                 raise SendError(
                     "%s rejected %s: %d %s" % (url, file_path.name, resp.status_code, resp.text[:200])

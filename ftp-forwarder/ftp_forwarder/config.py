@@ -25,3 +25,5 @@ class ForwarderConfig:
     retry_backoff_s: float = 1.0
     worker_count: int = 8
     catch_up_interval_s: int = 60
+    # The catch-up sweep leaves a file alone until nothing has written to it for this long (see sweep.py).
+    settle_s: int = 120

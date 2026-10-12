@@ -17,7 +17,10 @@ box already has, plus a mapping loader already owns."
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+import hashlib
+import logging
+
+from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
@@ -26,6 +29,8 @@ from providerharvest_service import harvest_db, harvest_runner, transform_runner
 from providerharvest_service.admin_auth import require_ftp_sync_key
 from providerharvest_service.db import get_session
 from providerharvest_service.models import FtpAccount, ProviderSource, _utcnow
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/admin/ftp-relay", tags=["ftp-relay-ingest"], dependencies=[Depends(require_ftp_sync_key)]
@@ -78,6 +83,7 @@ async def _read_capped(upload: UploadFile, max_bytes: int) -> bytes:
 async def relay_upload(
     username: str,
     file: UploadFile = File(...),
+    x_content_sha256: str | None = Header(default=None),
     session: Session = Depends(get_session),
     hsession: Session = Depends(harvest_db.get_session),
 ) -> dict:
@@ -88,6 +94,12 @@ async def relay_upload(
     except harvest_runner.FileTooLargeError as exc:
         raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, str(exc)) from exc
 
+    checksum = hashlib.sha256(content).hexdigest()
+    if x_content_sha256 and x_content_sha256.strip().lower() != checksum:
+        # Damaged on the way here: nothing is stored (no run), and a 5xx makes the box send it again.
+        logger.warning("relay upload for %s: checksum mismatch (box says %s, received %s, %d bytes)", username, x_content_sha256, checksum, len(content))
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "checksum mismatch -- the file was damaged on the way, send it again")
+
     run = harvest_runner.record_pushed_file(hsession, source, file.filename or "upload.bin", content)
     await run_in_threadpool(transform_runner.on_new_file, session, hsession, source, run, file.filename or "upload.bin", content)
     # Only when it arrived -- not who from: the request here comes from
@@ -95,4 +107,4 @@ async def relay_upload(
     # separately by that box (see admin_ftp.report_ftp_box_status).
     source.last_received_at = _utcnow()
     session.commit()
-    return {"status": run.status, "run_id": run.id, "size": len(content)}
+    return {"status": run.status, "run_id": run.id, "size": len(content), "sha256": checksum}
