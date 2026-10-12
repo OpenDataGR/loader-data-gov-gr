@@ -444,6 +444,17 @@ LOADER_PUBLIC_BASE_URL=https://loader.data.gov.gr
 # later, once the Keycloak login has worked for real: LOADER_ADMIN_PASSWORD_LOGIN=off  (removes the shared password)
 ```
 
-then restart the service. `LOADER_PUBLIC_BASE_URL` matters because behind the gateway a request looks like plain
+then restart the service.
+
+**Who is let in.** By default (`LOADER_OIDC_ACCESS` unset, or `role`) a person needs the Keycloak realm role
+`loader-admin`. With `LOADER_OIDC_ACCESS=ckan-org-admin` the rule is CKAN's instead (`ckan_access.py`): a CKAN sysadmin,
+or an administrator of at least one CKAN organization; the Keycloak role is then not needed. It uses the loader's CKAN
+sysadmin key (`CKAN_BASE_URL=https://data.gov.gr`, `CKAN_SYSADMIN_API_TOKEN=<a token of a CKAN sysadmin, created under
+that user's *API Tokens* and shown only once>`), finds the person's CKAN user as `user_<their Keycloak user id>` and
+asks `organization_list_for_user(permission=admin)` -- checked on the real CKAN: administrators get their organizations,
+editors and members get none (`manage_group`, `create_dataset` and `read` would let editors in too). It fails closed: when
+CKAN cannot be asked the login is refused, and a person with no CKAN account yet is told to sign in to data.gov.gr once.
+
+`LOADER_PUBLIC_BASE_URL` matters because behind the gateway a request looks like plain
 `http`. A session started this way is the same signed cookie as the shared login's, so every page and every "who did
 this" line shows the person's own Keycloak user name. Logging out also ends the Keycloak session.

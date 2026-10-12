@@ -36,7 +36,7 @@ import jwt
 import requests
 from jwt import PyJWKClient
 
-from providerharvest_service import admin_session
+from providerharvest_service import admin_session, ckan_access
 
 logger = logging.getLogger(__name__)
 
@@ -56,9 +56,10 @@ class OidcError(Exception):
 class NotAllowed(OidcError):
     """Keycloak knows the person, but this account may not use the loader."""
 
-    def __init__(self, username: str, role: str):
-        super().__init__("You signed in as %s, but this account is not allowed to use the loader (it needs the role %s). Ask an administrator." % (username, role))
+    def __init__(self, username: str, reason: str):
+        super().__init__("You signed in as %s, but this account is not allowed to use the loader: %s" % (username, reason))
         self.username = username
+        self.reason = reason
 
 
 # -- configuration -----------------------------------------------------------------------------------------------------------
@@ -77,6 +78,12 @@ def client_id() -> str:
 
 def required_role() -> str:
     return _env("LOADER_OIDC_REQUIRED_ROLE") or DEFAULT_ROLE
+
+
+def access_rule() -> str:
+    """Who is let in once Keycloak has said who they are: ``role`` (the realm role, the default) or
+    ``ckan-org-admin`` (a CKAN sysadmin or an administrator of at least one CKAN organization -- see ckan_access.py)."""
+    return "ckan-org-admin" if _env("LOADER_OIDC_ACCESS").lower() in ("ckan-org-admin", "ckan") else "role"
 
 
 def enabled() -> bool:
@@ -218,8 +225,15 @@ def finish(request_base_url: str, tx_cookie: str, params: dict) -> tuple[str, st
     username = str(ident.get("preferred_username") or access.get("preferred_username") or "").strip()
     if not username or len(username) > 100 or any(ord(c) < 32 for c in username):
         raise OidcError("The login server did not say who you are (no user name).")
-    if required_role() not in _roles(access, ident):
-        raise NotAllowed(username, required_role())
+    if access_rule() == "ckan-org-admin":
+        try:
+            verdict = ckan_access.check(str(ident.get("sub") or ""))
+        except ckan_access.CkanAccessError as exc:
+            raise OidcError(str(exc)) from exc  # fails closed: CKAN could not be asked, so nobody gets in this way
+        if not verdict.allowed:
+            raise NotAllowed(username, verdict.reason)
+    elif required_role() not in _roles(access, ident):
+        raise NotAllowed(username, "it needs the role %s. Ask an administrator." % required_role())
     return username, str(tx.get("next") or ""), tokens["id_token"]
 
 

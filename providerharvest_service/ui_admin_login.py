@@ -143,7 +143,7 @@ async def oidc_callback(request: Request):
         )
     except oidc_login.NotAllowed as exc:
         await run_in_threadpool(failed_auth.record, request, failed_auth.WEB_LOGIN, exc.username, 403)
-        logger.warning("oidc: %s signed in at Keycloak but lacks the role %s", exc.username, oidc_login.required_role())
+        logger.warning("oidc: %s signed in at Keycloak but is not allowed: %s", exc.username, exc.reason)
         response = _back_to_login(str(exc))
     except oidc_login.OidcError as exc:
         logger.warning("oidc: sign-in failed: %s", exc)
