@@ -90,7 +90,8 @@ def test_the_steps_are_built_and_tried_on_the_sample_and_show_only_what_is_kept(
     assert "pasted sample.json" in chooser or "data/document/statements" in chooser
     page = client.post("/transform/sources/%s/preview" % registry_id).text
     shown = page[page.index('id="preview-body"'):]  # the result window (the sample card, which shows the whole sample, is above it)
-    assert "FIAT AUTO SPA PUNTO" in shown and "records read" in shown
+    assert "FIAT AUTO SPA PUNTO" in shown and "1</strong> record read" in shown  # singular for one record
+    assert "pasted sample</strong>" in shown and "received" not in shown.split("</p>")[0]  # a pasted sample was not "received"
     assert "ZFA18800000629998" not in shown and "123477" not in shown  # the fields not kept are not in the result
 
 

@@ -108,10 +108,10 @@
                 {% if preview.error %}
                   <div class="problems"><strong>It did not work:</strong> {{ preview.error }}</div>
                 {% endif %}
-                {% if preview.filename %}<p class="muted" style="margin:0 0 0.4rem;">On <strong>{{ preview.filename }}</strong>, received {{ preview.at|utc }} UTC.</p>{% endif %}
+                {% if preview.filename %}<p class="muted" style="margin:0 0 0.4rem;">{% if preview.filename == "pasted sample.json" %}On the <strong>pasted sample</strong>.{% else %}On <strong>{{ preview.filename }}</strong>, received {{ preview.at|utc }} UTC.{% endif %}</p>{% endif %}
                 {% if preview.result %}
                   <div class="stat-row">
-                    <span><strong>{{ "{:,}".format(preview.result.records_in) }}</strong> records read</span>
+                    <span><strong>{{ "{:,}".format(preview.result.records_in) }}</strong> record{{ "" if preview.result.records_in == 1 else "s" }} read</span>
                     <span><strong>{{ "{:,}".format(preview.result.records_out) }}</strong> written</span>
                     <span>{{ size(preview.size) }} output</span>
                     {% if preview.result.stats.dropped_by_filter %}<span>{{ preview.result.stats.dropped_by_filter }} dropped by a filter</span>{% endif %}
@@ -125,7 +125,7 @@
                     <div class="problems">Values that could not be converted (left empty):
                       {% for field, n in preview.result.stats.conversion_errors.items() %}{{ field }}: {{ n }}{% if preview.result.stats.conversion_examples.get(field) %} (for example {{ preview.result.stats.conversion_examples[field] }}){% endif %}{% if not loop.last %}; {% endif %}{% endfor %}</div>
                   {% endif %}
-                  <p class="muted" style="margin:0.6rem 0 0.3rem;">The first {{ preview.rows|length }} records:</p>
+                  <p class="muted" style="margin:0.6rem 0 0.3rem;">{% if preview.rows|length == 1 %}The record:{% else %}The first {{ preview.rows|length }} records:{% endif %}</p>
                   <div class="scroll"><table>
                     <thead><tr>{% for c in preview.columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
                     <tbody>{% for r in preview.rows %}<tr>{% for c in preview.columns %}<td class="muted">{{ r.get(c) if r.get(c) is not none else "" }}</td>{% endfor %}</tr>{% endfor %}</tbody>
