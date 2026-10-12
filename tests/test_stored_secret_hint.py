@@ -64,3 +64,13 @@ def test_both_rate_limits_are_in_one_block_after_the_proxy_settings(client):
     assert 'id="max_requests_per_minute"' in block and 'id="proxy_rate_limit_per_ip"' in block and "Rate limits" in block
     assert page.index('id="proxy_enabled"') < start < page.index('id="request_timeout_s"')
     assert page.count('id="max_requests_per_minute"') == 1 and page.count('id="proxy_rate_limit_per_ip"') == 1  # moved, not copied
+
+
+def test_a_source_that_is_only_reached_through_the_proxy_is_not_labelled_pull(client):
+    client.post("/provider/sources/new", data=_valid_form(name="postsrc", proxy_method="POST"))
+    client.post("/provider/sources/new", data=_valid_form(name="plainsrc"))
+    page = client.get("/provider/sources").text
+    post_row = re.search(r"<tr>(?:(?!</tr>).)*?>postsrc<.*?</tr>", page, re.S).group(0)
+    plain_row = re.search(r"<tr>(?:(?!</tr>).)*?>plainsrc<.*?</tr>", page, re.S).group(0)
+    assert "live proxy" in post_row and "<span>pull</span>" not in post_row
+    assert "<span>pull</span>" in plain_row and "live proxy" not in plain_row

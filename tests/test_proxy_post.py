@@ -97,8 +97,8 @@ def test_upstream_trouble_with_a_post_is_a_502_and_a_providers_error_is_passed_o
     assert client.post("/proxy/registry-vehicle", content="{}", headers=JSON).status_code == 502
 
 
-def test_a_post_source_is_proxy_only_never_pulled_never_checked_by_calling_it(_isolated_db, monkeypatch):
-    from providerharvest_service import connection_check, harvest_runner, scheduler
+def test_a_post_source_is_proxy_only_never_pulled(_isolated_db):
+    from providerharvest_service import harvest_runner, scheduler
 
     source_id = _register_post_source(_isolated_db)
     with _isolated_db() as session:
@@ -108,12 +108,96 @@ def test_a_post_source_is_proxy_only_never_pulled_never_checked_by_calling_it(_i
         with pytest.raises(harvest_runner.UnsupportedTransportType, match="live proxy"):
             harvest_runner.run_harvest(session, None, source_id)
 
-        def must_not_run(*args, **kwargs):
-            raise AssertionError("a check must not call a POST provider")
 
-        monkeypatch.setattr(connection_check, "_build_transport", must_not_run)
+@pytest.fixture
+def checking(monkeypatch):
+    """Records what a connection check sends: it must be one harmless GET, never a POST."""
+    from providerharvest_service import connection_check
+
+    state = {"get": [], "post": [], "response": FakeUpstreamResponse(status_code=405), "error": None}
+
+    def fake_get(url, **kw):
+        state["get"].append((url, kw))
+        if state["error"]:
+            raise state["error"]
+        return state["response"]
+
+    def never_post(*args, **kwargs):
+        raise AssertionError("a connection check must never POST to a POST provider")
+
+    monkeypatch.setattr(connection_check.requests, "get", fake_get)
+    monkeypatch.setattr(connection_check.requests, "post", never_post)
+    monkeypatch.setattr(connection_check, "assert_safe_http_url", lambda url: None)
+    return state
+
+
+def test_a_post_source_is_checked_with_one_harmless_get_with_the_credential_and_nothing_is_created(_isolated_db, checking):
+    from providerharvest_service import connection_check
+
+    source_id = _register_post_source(_isolated_db, api_key_prefix="Token", api_key="abc")
+    with _isolated_db() as session:
         checked = connection_check.check_connection(session, source_id)
-        assert checked.last_check_status is None and "live POST proxy" in checked.last_check_message
+        assert checked.last_check_status == "ok" and "405" in checked.last_check_message and "nothing was created" in checked.last_check_message
+        assert "Fetch a sample" in checked.last_check_message  # where the credential is really proven
+    (url, kwargs), = checking["get"]
+    assert url == "https://registry.example.gr/api/gates/USER/gate/documents/" and checking["post"] == []
+    assert kwargs["headers"]["Authorization"] == "Token abc" and kwargs["allow_redirects"] is False and kwargs["timeout"] <= 15
+    assert not kwargs.get("params") and "data" not in kwargs
+
+
+@pytest.mark.parametrize("status_code,expected,fragment", [
+    (200, "ok", "HTTP 200"), (204, "ok", "HTTP 204"), (302, "ok", "HTTP 302"), (405, "ok", "405"),
+    (401, "error", "credential may be refused"), (403, "error", "HTTP 403"), (404, "error", "404 (not found)"), (500, "error", "server error"), (503, "error", "HTTP 503"),
+])
+def test_how_the_endpoint_answers_decides_the_result(_isolated_db, checking, status_code, expected, fragment):
+    from providerharvest_service import connection_check
+
+    source_id = _register_post_source(_isolated_db)
+    checking["response"] = FakeUpstreamResponse(status_code=status_code)
+    with _isolated_db() as session:
+        checked = connection_check.check_connection(session, source_id)
+        assert checked.last_check_status == expected and fragment in checked.last_check_message
+
+
+def test_an_unreachable_provider_or_a_target_that_is_not_allowed_is_an_error_with_the_reason(_isolated_db, checking, monkeypatch):
+    from providerharvest_service import connection_check
+
+    source_id = _register_post_source(_isolated_db)
+    checking["error"] = connection_check.requests.ConnectionError("name resolution failed")
+    with _isolated_db() as session:
+        checked = connection_check.check_connection(session, source_id)
+        assert checked.last_check_status == "error" and "Not reachable" in checked.last_check_message and "name resolution" in checked.last_check_message
+
+    def refuse(url):
+        raise connection_check.UnsafeNetworkTargetError("private address")
+
+    monkeypatch.setattr(connection_check, "assert_safe_http_url", refuse)
+    with _isolated_db() as session:
+        checked = connection_check.check_connection(session, source_id)
+        assert checked.last_check_status == "error" and "not allowed" in checked.last_check_message and "private address" in checked.last_check_message
+
+
+def test_an_ordinary_get_source_is_still_checked_the_usual_way(_isolated_db, monkeypatch):
+    from providerharvest_service import connection_check
+
+    source_id = _register_active_http_source(_isolated_db)
+
+    class Fake:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def list_entries(self, cursor=None):
+            class Page:
+                entries = [1, 2]
+            return Page()
+
+    monkeypatch.setattr(connection_check, "_build_transport", lambda *a, **k: Fake())
+    with _isolated_db() as session:
+        checked = connection_check.check_connection(session, source_id)
+        assert checked.last_check_status == "ok" and "found 2 records" in checked.last_check_message
 
 
 def test_the_method_survives_an_edit_and_a_wrong_one_is_refused(_isolated_db):

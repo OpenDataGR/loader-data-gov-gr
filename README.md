@@ -193,8 +193,11 @@ before this a lost key meant deleting and re-registering the source).
 (`POST /proxy/{name}`) then passes the caller's JSON body (application/json only, valid JSON, at most 64 kB) to the provider's
 endpoint, with the provider's credential added by the loader (a caller's own `Authorization` or other headers are never sent), and
 relays the answer. One method per source: a POST source answers `405` to GET and an ordinary source answers `405` to POST. Such a
-source is **proxy-only**: it is registered with frequency MANUAL, never pulled on a schedule, "Harvest now" is refused and the connection
-check does not call it (each call to a question-per-call API is a real request and may create something at the provider). The per-source
+source is **proxy-only**: it is registered with frequency MANUAL, never pulled on a schedule and "Harvest now" is refused. Its connection
+check never POSTs (each call to a question-per-call API is a real request and may create something at the provider): it sends one harmless GET
+with the credential and reads the answer -- any answer shows the address, the network path and the certificate work (a POST-only API
+answers 405, as expected), 401/403 means the credential may be refused, 404 or 5xx and connection errors are errors; nothing is created.
+The credential and the request are only proven by a real call, which the Transform page's "Fetch a sample" makes on purpose. The per-source
 request timeout (`request_timeout_s`) should fit a slow API, and any gateway in front of the loader needs a timeout at least as long
 (an Azure Application Gateway's backend setting defaults to 20 s). The proxy is public by design, like every `/proxy/*`: put nothing
 behind it that must not be reachable by whoever knows the source name.

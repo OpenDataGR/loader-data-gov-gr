@@ -18,6 +18,7 @@ from __future__ import annotations
 import datetime
 import json
 
+import requests
 from sqlalchemy.orm import Session
 
 from providerharvest_service import provider_sources
@@ -28,6 +29,7 @@ from providerharvest_service.engine.transport.direct_https import DirectHTTPSTra
 from providerharvest_service.engine.transport.ftp import FTPTransport
 from providerharvest_service.engine.transport.scp import ScpTransport
 from providerharvest_service.engine.transport.sftp import SFTPTransport
+from providerharvest_service.engine.validators import UnsafeNetworkTargetError, assert_safe_http_url
 from providerharvest_service.models import ProviderSource
 
 
@@ -78,6 +80,34 @@ def _build_transport(source: ProviderSource, secret: SecretBundle) -> Transport:
     raise ValueError("Unsupported transport_type %r" % source.transport_type)
 
 
+def _check_post_provider(source: ProviderSource, secret: SecretBundle) -> tuple[str, str]:
+    """(status, message) for an API that is called with POST. A real POST can create something at the provider, so this sends one harmless
+    GET (never a POST) with the credential and reads how the endpoint answers -- enough to show the address, the network path and the
+    certificate work, and whether the credential is refused outright. It never follows a redirect and creates nothing."""
+    config = json.loads(source.config or "{}")
+    try:
+        assert_safe_http_url(source.endpoint_url)
+    except UnsafeNetworkTargetError as exc:
+        return "error", "The target is not allowed: %s" % exc
+    try:
+        kwargs = build_auth_strategy(source.auth_type).apply({"params": {}}, secret, config.get("auth_opts") or {})
+        kwargs.setdefault("timeout", min(int(config.get("request_timeout_s", 30)), 15))
+        response = requests.get(source.endpoint_url, allow_redirects=False, **kwargs)
+    except requests.RequestException as exc:
+        return "error", "Not reachable: %s" % exc
+    code = response.status_code
+    full_test = "The credential and the request are only proven by a real call: use \"Fetch a sample\" on the source's Transform page."
+    if code in (401, 403):
+        return "error", "Reachable, but the provider answered HTTP %d to a harmless GET: the credential may be refused (some APIs also refuse a GET for other reasons). %s" % (code, full_test)
+    if code == 404:
+        return "error", "The provider answered HTTP 404 (not found): check the endpoint address."
+    if code >= 500:
+        return "error", "The provider answered HTTP %d (a server error)." % code
+    if code == 405:
+        return "ok", "Reachable -- the endpoint answered HTTP 405 to a harmless GET, as a POST-only API does; nothing was created. %s" % full_test
+    return "ok", "Reachable -- the endpoint answered HTTP %d to a harmless GET; nothing was created. %s" % (code, full_test)
+
+
 def check_connection(
     session: Session,
     source_id: str,
@@ -97,11 +127,15 @@ def check_connection(
     """
     source = provider_sources.get_or_404(session, source_id)
 
-    if source.proxy_only:
-        # Asking a POST API "are you there" means making a real call, which can create something at the provider.
+    if source.proxy_only and transport is None:
+        # A real POST can create something at the provider (a declaration, a record), so a POST API is checked with a harmless GET.
+        try:
+            status, message = _check_post_provider(source, provider_sources.credentials(session, source_id))
+        except Exception as exc:  # noqa: BLE001 -- shown verbatim, this IS the diagnostic
+            status, message = "error", str(exc)
         source.last_check_at = _utcnow()
-        source.last_check_status = None
-        source.last_check_message = "Not checked: this is a live POST proxy, and a check would make a real call to the provider."
+        source.last_check_status = status
+        source.last_check_message = message
         session.commit()
         return source
 
