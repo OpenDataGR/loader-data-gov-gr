@@ -169,7 +169,7 @@ class ProviderSource(Base):
     # fetches or stores any harvested data itself -- see README's
     # roadmap for the scheduled-harvest slice that will.
     last_check_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
-    last_check_status: Mapped[str | None] = mapped_column(String, nullable=True)  # "ok" | "error"
+    last_check_status: Mapped[str | None] = mapped_column(String, nullable=True)  # "ok" | "warn" | "error"
     last_check_message: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # Whether an active transport_type="http" source is also reachable

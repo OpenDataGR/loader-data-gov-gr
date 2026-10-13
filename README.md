@@ -245,6 +245,8 @@ exists, is enabled and forwards to this source; the FTP box reported within the 
 runs, its last account sync worked and it holds as many accounts as the loader has enabled; (HTTPS) an API key is set; the sender list; and
 whether a file has ever arrived. The summary names the worst problem first. It cannot prove that a login from outside works -- only a file
 arriving does, and the last item says so.
+The result is also the source's **health** (like Test connection's, with the date): every check green -> *reachable*, any cross -> *unreachable* (the tooltip names
+the worst problem), only warnings (for example no file has arrived yet) -> an amber *warning*.
 
 **Integrity of what arrives** (FTP/SFTP push): the box's catch-up sweep skips a file that is still being written; the box sends a SHA-256 and the loader refuses a mismatch and answers with the hash of what it stored (a transfer counts as done only when both agree); a provider may also send `<file>.sha256` before each file for an end-to-end check, and a file that does not match it is put aside on the box instead of sent; each run's detail page shows the stored file's SHA-256. Details and a ready-to-send provider note: `ftp-forwarder/README.md`.
 

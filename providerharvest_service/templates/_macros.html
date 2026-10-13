@@ -98,6 +98,8 @@
 {% macro health_badge(source) -%}
   {% if source.last_check_status == "ok" %}
     <span class="badge badge-ok" title="{{ source.last_check_message }}">{{ icon("active", 13) }}<span>reachable</span></span>
+  {% elif source.last_check_status == "warn" %}
+    <span class="badge badge-pending" title="{{ source.last_check_message }}">{{ icon("pending", 13) }}<span>warning</span></span>
   {% elif source.last_check_status == "error" %}
     <span class="badge badge-error" title="{{ source.last_check_message }}">{{ icon("rejected", 13) }}<span>unreachable</span></span>
   {% else %}

@@ -219,3 +219,78 @@ def test_the_page_needs_the_login():
 
     anonymous = TestClient(app, base_url="https://testserver")
     assert anonymous.get("/provider/sources/x/readiness", follow_redirects=False).headers["location"].startswith("/admin/login")
+
+
+# -- the result is the source's health ------------------------------------------------------------------------------------------------------------
+
+def _health(_isolated_db, source_id):
+    with _isolated_db() as session:
+        source = provider_sources.get_or_404(session, source_id)
+        return source.last_check_status, source.last_check_message, source.last_check_at
+
+
+def _now():
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def _arrived(_isolated_db, source_id):
+    with _isolated_db() as session:
+        source = provider_sources.get_or_404(session, source_id)
+        source.last_received_at = (_now() - datetime.timedelta(minutes=3)).replace(tzinfo=None)
+        source.last_sender = "203.0.113.9"
+        session.commit()
+
+
+def test_all_green_makes_the_source_reachable_with_the_date_of_the_check(client, _isolated_db):
+    source_id = _register_ftp_push_source(_isolated_db, "push-one", activate=True)
+    _box(_isolated_db, base=_now(), seconds_ago=5)
+    _arrived(_isolated_db, source_id)
+    assert _health(_isolated_db, source_id)[0] is None  # not checked yet
+    before = _now()
+    client.get("/provider/sources/%s/readiness" % source_id)
+    status, message, at = _health(_isolated_db, source_id)
+    assert status == "ok" and message == "Ready and working." and before - datetime.timedelta(seconds=2) <= at.replace(tzinfo=datetime.timezone.utc) <= _now() + datetime.timedelta(seconds=2)
+    row = re.search(r"<tr>(?:(?!</tr>).)*?>push-one<.*?</tr>", client.get("/provider/sources").text, re.S).group(0)
+    assert "reachable" in row and "unreachable" not in row and "%s UTC" % at.strftime("%Y-%m-%d %H:%M") in row
+
+
+def test_a_problem_makes_it_unreachable_and_the_tooltip_names_the_problem(client, _isolated_db):
+    source_id = _register_ftp_push_source(_isolated_db, "push-one", activate=True)  # no box has ever reported
+    client.get("/provider/sources/%s/readiness" % source_id)
+    status, message, at = _health(_isolated_db, source_id)
+    assert status == "error" and message == "Not ready: No FTP box has reported yet." and at is not None
+    row = re.search(r"<tr>(?:(?!</tr>).)*?>push-one<.*?</tr>", client.get("/provider/sources").text, re.S).group(0)
+    assert "unreachable" in row and "No FTP box has reported yet" in row
+
+
+def test_only_warnings_give_a_warning_not_reachable_even_when_waiting_for_the_first_file(client, _isolated_db):
+    source_id = _register_ftp_push_source(_isolated_db, "push-one", activate=True)
+    _box(_isolated_db, base=_now(), seconds_ago=5)  # healthy, but no file has ever arrived
+    client.get("/provider/sources/%s/readiness" % source_id)
+    status, message, _ = _health(_isolated_db, source_id)
+    assert status == "warn" and message == "Ready -- waiting for the first file."
+    row = re.search(r"<tr>(?:(?!</tr>).)*?>push-one<.*?</tr>", client.get("/provider/sources").text, re.S).group(0)
+    assert "<span>warning</span>" in row and "reachable" not in row
+    _arrived(_isolated_db, source_id)
+    client.get("/provider/sources/%s/readiness" % source_id)  # a file has arrived: now every check is green
+    assert _health(_isolated_db, source_id)[0] == "ok"
+
+
+def test_checking_again_updates_the_result_when_things_change(client, _isolated_db):
+    source_id = _register_ftp_push_source(_isolated_db, "push-one", activate=True)
+    _box(_isolated_db, base=_now(), seconds_ago=5)
+    _arrived(_isolated_db, source_id)
+    client.get("/provider/sources/%s/readiness" % source_id)
+    assert _health(_isolated_db, source_id)[0] == "ok"
+    _box(_isolated_db, base=_now(), seconds_ago=5, relay=False)
+    client.get("/provider/sources/%s/readiness" % source_id)
+    status, message, _ = _health(_isolated_db, source_id)
+    assert status == "error" and "relay service is not running" in message
+
+
+def test_looking_at_an_unknown_or_pull_source_changes_no_health(client, _isolated_db):
+    with _isolated_db() as session:
+        pull_id = provider_sources.register(session, {"name": "pull-one", "title": "pull-one", "transport_type": "http", "endpoint_url": "https://x.example.gr/",
+                                                      "auth_type": "api_key", "api_key": "k"}).id
+    client.get("/provider/sources/%s/readiness" % pull_id)
+    assert _health(_isolated_db, pull_id) == (None, None, None)

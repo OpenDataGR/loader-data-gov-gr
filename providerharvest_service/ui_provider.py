@@ -327,6 +327,16 @@ def source_readiness(source_id: str, request: Request, session: Session = Depend
         return RedirectResponse(_redirect_with_flash("Only a push source has a readiness check; test this one with Test connection.", kind="error"), status_code=303)
     checks = push_check.check(session, source)
     level, line = push_check.summary(checks)
+    # The result is the source's health, like Test connection's: all green is "reachable", a problem "unreachable", warnings only a warning.
+    source.last_check_at = datetime.datetime.now(datetime.timezone.utc)
+    if level == "fail":
+        source.last_check_status = "error"
+    elif all(c.level == "ok" for c in checks):
+        source.last_check_status = "ok"  # every check is green, "waiting for the first file" included: it is not proven until a file arrives
+    else:
+        source.last_check_status = "warn"
+    source.last_check_message = line
+    session.commit()
     return templates.TemplateResponse(request, "provider/source_readiness.html", {"source": source, "checks": checks, "level": level, "summary": line})
 
 
