@@ -189,6 +189,13 @@ provider's uploads until they switch), and for an HTTPS push source **Rotate API
 key** (`/provider/sources/{id}/rotate-key`: the old key stops working immediately;
 before this a lost key meant deleting and re-registering the source).
 
+**Input and Output are steps** (Transform Box): a transform's list reads **IN** -> the processing steps (the first is *Read XML/JSON/CSV/Excel*) -> **OUT**.
+The two ends are fixed (not removable or movable, not offered under "Add a step") and each has its own page, opened by its Edit button:
+*Input* (`/transform/sources/{id}/steps/input`) says where the data comes from -- for a source that stores data, the newest file the steps are built
+on; for an API source, its sample answer (paste one, or fetch one with the source's test request); *Output* (`.../steps/output`) holds the format and
+its settings (JSON incl. "one object when there is one record", JSON Lines, XML names, CSV separator and Excel mark). Their cards show a one-line summary
+in words. The settings still live in the `Transform` row, so nothing was migrated.
+
 **Publishing: the one switch** (`publishing.py`, `load_api.py`, the Load Box): every source is exposed the same way -- an admin switches **Publish** on, and
 it answers at `/data/<name>`, public and without a login, only while it is active. A source that stores data answers with its newest good output
 (GET). An **API source** (HTTP) stores nothing: the provider is asked *at the moment someone calls* -- with the source's credential, request

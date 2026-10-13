@@ -86,6 +86,20 @@ def summarize(step: dict) -> str:
     return str(kind)
 
 
+def output_summary(transform) -> str:
+    """The Output step, in words: what the transform writes and with which settings."""
+    fmt = transform.output_format or "json"
+    label = te.OUTPUTS.get(fmt, (None, None, fmt))[2]
+    if fmt == "json":
+        return "Write %s%s." % (label, " -- one object when there is exactly one record" if transform.output_single else "")
+    if fmt == "xml":
+        return "Write %s: <%s> holding one <%s> per record." % (label, transform.root_name, transform.record_name)
+    if fmt == "csv":
+        delimiter = te.CSV_DELIMITERS.get(transform.csv_delimiter or ",", transform.csv_delimiter or ",").split(" --")[0]  # "semicolon ( ; )", without the explanation
+        return "Write %s, separated by %s%s." % (label, delimiter, "" if transform.csv_bom is False else ", marked as UTF-8 for Excel")
+    return "Write %s." % label
+
+
 # -- building steps from forms ---------------------------------------------------------------------------------------------
 
 _GREEK = {

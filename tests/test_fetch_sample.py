@@ -105,14 +105,14 @@ def test_without_a_test_request_there_is_nothing_to_send_and_the_page_says_where
     registry_id = _http_source(_isolated_db, "registry", post=True)
     _transform_for(client, registry_id)
     assert "no test request" in _flash(_fetch(client, registry_id)) and provider["calls"] == []
-    page = client.get("/transform/sources/%s" % registry_id).text
+    page = client.get("/transform/sources/%s/steps/input" % registry_id).text
     assert "Give this source a" in page and "/provider/sources/%s/edit" % registry_id in page and "Fetch a sample</button>" not in page
 
 
 def test_the_page_shows_the_test_request_that_will_be_sent_and_asks_for_confirmation(client, source, _isolated_db):
     registry_id = _post_source(_isolated_db)
     _transform_for(client, registry_id)
-    page = client.get("/transform/sources/%s" % registry_id).text
+    page = client.get("/transform/sources/%s/steps/input" % registry_id).text
     assert "TEST123" in page and "one real call" in page and "may create a record" in page and "return confirm(" in page
     assert "Fetch a sample</button>" in page
 
@@ -149,7 +149,8 @@ def test_only_an_api_source_with_a_transform_has_this_and_only_a_signed_in_admin
     assert "No such transform" in _flash(_fetch(client, source["id"]))  # a push source with no transform
     client.post("/transform/sources/%s/create" % source["id"], follow_redirects=False)
     assert "Only an API source" in _flash(_fetch(client, source["id"]))
-    assert "Or fetch one from the provider" not in client.get("/transform/sources/%s" % source["id"]).text
+    page = client.get("/transform/sources/%s/steps/input" % source["id"]).text  # a push source's Input page: no sample, no fetch -- the newest file
+    assert "Or fetch one from the provider" not in page and "newest stored file" in page
     registry_id = _post_source(_isolated_db)
     _transform_for(client, registry_id)
     anonymous = TestClient(app, base_url="https://testserver")

@@ -292,13 +292,14 @@ def test_try_it_shows_the_result_counts_and_what_found_no_match(client, source, 
     assert "found no match in an index table" in page and "MS810" in page
 
 
-def test_try_it_comes_before_output_and_shows_its_result_in_a_modal(client, source, _isolated_db):
+def test_try_it_follows_the_steps_with_input_and_output_as_their_ends_and_shows_its_result_in_a_modal(client, source, _isolated_db):
     _upload_data(client, source)
     _upload_table(client, content="id,name,lat,lon\nMS812,Kifisias,38.03,23.80\n")
     _build(client, source, READER_FORM, LOOKUP_FORM)
     url = "/transform/sources/%s" % source["id"]
     plain = client.get(url).text
-    assert plain.index("Try it") < plain.index('id="output-form"')
+    assert plain.index(">IN<") < plain.index("Read XML") < plain.index(">OUT<") < plain.index("Try it")  # the list: input, the steps, output -- then Try it
+    assert 'id="output-form"' not in plain  # the output settings are on the Output step's own page
     assert 'id="try-form"' in plain and 'id="preview-modal"' in plain and "closePreview" in plain
     assert 'id="preview-modal"' in plain and not re.search(r'class="modal-overlay open"', plain)
     after = client.post(url + "/preview").text
@@ -486,7 +487,7 @@ def test_leaving_a_name_as_the_suggestion_or_using_greek_ones_both_work(client, 
 
 def test_the_csv_settings_are_offered_with_excel_friendly_defaults_and_saved(client, source, _isolated_db):
     _go(client, source, "create")
-    page = client.get("/transform/sources/%s" % source["id"]).text
+    page = client.get("/transform/sources/%s/steps/output" % source["id"]).text
     assert "Separator" in page and "semicolon" in page and "Mark the file as UTF-8" in page
     assert re.search(r'name="bom" value="1"[^>]*checked', page)  # on by default
     resp = _go(client, source, "output", data={"format": "csv", "root": "records", "record": "record", "delimiter": ";", "bom": "1"})
@@ -565,7 +566,7 @@ def test_only_the_settings_of_the_chosen_format_are_shown_and_sent(client, sourc
     _go(client, source, "create")
     resp = _go(client, source, "output", data={"format": fmt, **({"root": "records", "record": "record"} if fmt == "xml" else {}), **({"delimiter": ","} if fmt == "csv" else {})})
     assert "flash_kind=error" not in resp.headers["location"], _flash(resp)
-    page = client.get("/transform/sources/%s" % source["id"]).text
+    page = client.get("/transform/sources/%s/steps/output" % source["id"]).text
     fields = {"xml": ("root", "record"), "csv": ("delimiter", "bom")}
     for block, names in fields.items():
         assert _block_is_hidden(page, block) == (block != shown), (fmt, block)  # shown only for its own format
@@ -575,7 +576,7 @@ def test_only_the_settings_of_the_chosen_format_are_shown_and_sent(client, sourc
 
 def test_there_is_one_output_form_with_one_save_button_and_a_script_that_follows_the_format_choice(client, source):
     _go(client, source, "create")
-    page = client.get("/transform/sources/%s" % source["id"]).text
+    page = client.get("/transform/sources/%s/steps/output" % source["id"]).text
     assert page.count('action="/transform/sources/%s/output"' % source["id"]) == 1 and page.count("Save output settings") == 1
     assert "Save CSV settings" not in page and "getAttribute('data-for') === select.value" in page
     assert "[hidden] { display: none !important; }" in page  # (the rows are display:flex, which would otherwise show a hidden block)

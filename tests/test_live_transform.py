@@ -66,8 +66,10 @@ def test_a_transform_is_created_with_a_pasted_sample_that_is_validated(client, s
     assert "no transform yet" in client.get("/transform/sources/%s" % registry_id).text or "This source has no transform yet" in client.get("/transform/sources/%s" % registry_id).text
     ok = client.post("/transform/sources/%s/create" % registry_id, data={"sample": SAMPLE}, follow_redirects=False)
     assert "Transform created" in _flash(ok) and "read the answer" in _flash(ok)
-    page = client.get("/transform/sources/%s" % registry_id).text
-    assert "Sample answer" in page and "kept," in page and "ZMM3707" in page
+    main = client.get("/transform/sources/%s" % registry_id).text
+    assert ">IN<" in main and "sample answer (" in main and "kB kept" in main  # the Input step says a sample is kept
+    page = client.get("/transform/sources/%s/steps/input" % registry_id).text  # and its own page holds the sample
+    assert "one sample answer" in page and "kept," in page and "ZMM3707" in page
 
 
 def test_the_sample_can_be_replaced_removed_and_is_checked(client, source, _isolated_db):
@@ -77,9 +79,10 @@ def test_the_sample_can_be_replaced_removed_and_is_checked(client, source, _isol
     assert "not valid JSON" in _flash(client.post(url, data={"sample": "{oops"}, follow_redirects=False))
     assert "larger than" in _flash(client.post(url, data={"sample": '{"x": "%s"}' % ("a" * 210000)}, follow_redirects=False))
     assert "saved" in _flash(client.post(url, data={"sample": '{"data": {"document": {"statements": {"make": "SEAT"}}}}'}, follow_redirects=False))
-    assert "SEAT" in client.get("/transform/sources/%s" % registry_id).text
+    assert "SEAT" in client.get("/transform/sources/%s/steps/input" % registry_id).text
     assert "removed" in _flash(client.post(url, data={"sample": ""}, follow_redirects=False))
-    assert "none yet" in client.get("/transform/sources/%s" % registry_id).text
+    assert "none yet" in client.get("/transform/sources/%s/steps/input" % registry_id).text
+    assert "No sample answer yet" in client.get("/transform/sources/%s" % registry_id).text
     assert "No such transform" in _flash(client.post("/transform/sources/nope/sample", data={"sample": "{}"}, follow_redirects=False))
 
 

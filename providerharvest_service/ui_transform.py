@@ -16,6 +16,7 @@ import datetime
 import json
 import logging
 import re
+import types
 from urllib.parse import parse_qsl, urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -203,6 +204,7 @@ def _editor_context(session: Session, hsession: Session, source: ProviderSource,
                                                    failed_only=request.query_params.get("show") == "failed") if transform else [], "counts": transform_runner.output_counts(hsession, source.id) if transform else None,
         "formats": te.OUTPUTS, "delimiters": te.CSV_DELIMITERS, "choices": transform_runner.REPROCESS_CHOICES, "has_sample": transform_runner.sample_for(session, hsession, source.id) is not None,
         "is_http": source.transport_type == "http", "provider_method": source.proxy_method,
+        "input_summary": _input_summary(source, transform, hsession), "output_summary": tf.output_summary(transform) if transform else "",
         "test_request": source.test_request, "source_edit_url": "/provider/sources/%s/edit" % source.id,
         "request_swap": bool(transform and transform.request_swap), "request_template": (transform.request_template if transform else "") or "",
         "proxy_name": source.name, "pasted_sample": bool(transform and transform.sample),
@@ -210,6 +212,57 @@ def _editor_context(session: Session, hsession: Session, source: ProviderSource,
         "add_types": [(k, v) for k, v in _SECTIONS.items() if k != "read"], "preview": None,
         "flash": request.query_params.get("flash"), "flash_kind": request.query_params.get("flash_kind", "success"), "size": _size, **extra,
     }
+
+
+def _newest_file(hsession: Session, source_id: str):
+    """(filename, size, fetched_at) of the newest stored file of a source, without its contents, or None."""
+    from sqlalchemy import func as sql_func
+
+    from providerharvest_service.harvest_models import HarvestedFile, HarvestRun
+
+    row = hsession.execute(
+        select(HarvestedFile.filename, sql_func.length(HarvestedFile.content), HarvestedFile.fetched_at)
+        .join(HarvestRun, HarvestRun.id == HarvestedFile.run_id)
+        .where(HarvestRun.source_id == source_id, sql_func.length(HarvestedFile.content) > 0)
+        .order_by(HarvestedFile.fetched_at.desc()).limit(1)
+    ).first()
+    return row
+
+
+def _input_summary(source: ProviderSource, transform: Transform | None, hsession: Session) -> str:
+    """The Input step, in words: where the data comes from."""
+    if source.transport_type == "http":
+        if transform is not None and transform.sample:
+            return "An answer of the provider, asked on demand. Steps are built on a sample answer (%s kB kept)." % round(len(transform.sample.encode("utf-8")) / 1000, 1)
+        return "An answer of the provider, asked on demand. No sample answer yet: paste or fetch one to build the steps on."
+    newest = _newest_file(hsession, source.id)
+    if newest is None:
+        return "Each file this source sends. None has arrived yet (or retention removed the stored ones)."
+    return "Each file this source sends. Newest: %s, %.1f kB, received %s UTC." % (newest[0], (newest[1] or 0) / 1000, newest[2].strftime("%Y-%m-%d %H:%M"))
+
+
+@router.get("/sources/{source_id}/steps/input", response_class=HTMLResponse)
+def input_step(source_id: str, request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)):
+    """The Input step's page: for an API source its sample answer (paste, or fetch with the source's test request); for a source that
+    stores data, the newest file the steps are built on."""
+    source, transform = _with(session, source_id)
+    if source is None or transform is None:
+        return _go("/transform", "No such transform.", "error")
+    newest = _newest_file(hsession, source.id)
+    return _step_page(request, session, hsession, source, transform, "input", None, None, title="Input", is_http=source.transport_type == "http",
+                      pasted_sample=bool(transform.sample), pasted_sample_kb=round(len(transform.sample.encode("utf-8")) / 1000, 1) if transform.sample else 0,
+                      test_request=source.test_request, source_edit_url="/provider/sources/%s/edit" % source.id,
+                      newest=types.SimpleNamespace(filename=newest[0], size=newest[1] or 0, fetched_at=newest[2]) if newest else None)
+
+
+@router.get("/sources/{source_id}/steps/output", response_class=HTMLResponse)
+def output_step(source_id: str, request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)):
+    """The Output step's page: the format and its settings."""
+    source, transform = _with(session, source_id)
+    if source is None or transform is None:
+        return _go("/transform", "No such transform.", "error")
+    return _step_page(request, session, hsession, source, transform, "output", None, None, title="Output", is_http=source.transport_type == "http",
+                      formats=te.OUTPUTS, delimiters=te.CSV_DELIMITERS)
 
 
 @router.get("/sources/{source_id}", response_class=HTMLResponse)
