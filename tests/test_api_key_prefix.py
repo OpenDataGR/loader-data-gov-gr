@@ -54,7 +54,7 @@ def test_the_word_is_kept_on_the_source_validated_and_shown_again_when_editing(_
 
 def test_the_proxy_sends_the_word_and_the_key_together(client, _isolated_db, monkeypatch):
     with _isolated_db() as session:
-        source = provider_sources.register(session, _form(proxy_method="POST", api_key_prefix="Token"))
+        source = provider_sources.register(session, _form(proxy_method="POST", api_key_prefix="Token", proxy_enabled="on"))
         provider_sources.activate(session, source.id)
     sent = []
     monkeypatch.setattr(proxy.requests, "post", lambda url, **kw: (sent.append(kw), FakeUpstreamResponse())[-1])

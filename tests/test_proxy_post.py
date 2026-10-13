@@ -15,7 +15,7 @@ def _register_post_source(session_factory, **overrides):
         "name": "registry-vehicle", "title": "Vehicle registry", "transport_type": "http", "proxy_method": "POST",
         "endpoint_url": "https://registry.example.gr/api/gates/USER/gate/documents/",
         "auth_type": "api_key", "api_key": "Token the-registry-token", "api_key_location": "header", "api_key_name": "Authorization",
-        "request_timeout_s": "60",
+        "request_timeout_s": "60", "proxy_enabled": "on",  # as the form submits the ticked box
     }
     form.update(overrides)
     with session_factory() as session:
@@ -103,7 +103,7 @@ def test_a_post_source_is_proxy_only_never_pulled(_isolated_db):
     source_id = _register_post_source(_isolated_db)
     with _isolated_db() as session:
         source = provider_sources.get_or_404(session, source_id)
-        assert source.proxy_method == "POST" and source.proxy_only and source.frequency == "MANUAL" and source.proxy_enabled is True
+        assert source.proxy_method == "POST" and source.proxy_only and source.frequency == "MANUAL" and source.proxy_enabled is True  # as ticked on the form
         assert scheduler.due_sources(session, None) == []
         with pytest.raises(harvest_runner.UnsupportedTransportType, match="live proxy"):
             harvest_runner.run_harvest(session, None, source_id)
@@ -219,3 +219,20 @@ def test_an_ordinary_source_defaults_to_get_and_keeps_its_schedule(_isolated_db)
     with _isolated_db() as session:
         source = provider_sources.get_or_404(session, source_id)
         assert source.proxy_method == "GET" and not source.proxy_only and source.frequency == "DAILY"
+
+
+def test_unticking_the_live_proxy_switches_a_post_source_off_and_ticking_it_again_brings_it_back(client, _isolated_db, upstream):
+    source_id = _register_post_source(_isolated_db)
+    assert client.post("/proxy/registry-vehicle", content="{}", headers=JSON).status_code == 200
+    form = {"name": "registry-vehicle", "title": "Vehicle registry", "transport_type": "http", "proxy_method": "POST",
+            "endpoint_url": "https://registry.example.gr/api/gates/USER/gate/documents/", "auth_type": "api_key", "api_key": "Token the-registry-token",
+            "api_key_location": "header", "api_key_name": "Authorization", "frequency": "DAILY"}  # no proxy_enabled: the box is unticked
+    with _isolated_db() as session:
+        provider_sources.update(session, source_id, form)
+        source = provider_sources.get_or_404(session, source_id)
+        assert source.proxy_enabled is False and source.frequency == "MANUAL"  # still never pulled
+    assert client.post("/proxy/registry-vehicle", content="{}", headers=JSON).status_code == 404  # nobody can call it
+    with _isolated_db() as session:
+        provider_sources.update(session, source_id, {**form, "proxy_enabled": "on"})
+        assert provider_sources.get_or_404(session, source_id).proxy_enabled is True
+    assert client.post("/proxy/registry-vehicle", content="{}", headers=JSON).status_code == 200

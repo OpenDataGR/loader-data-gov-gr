@@ -193,7 +193,8 @@ before this a lost key meant deleting and re-registering the source).
 (`POST /proxy/{name}`) then passes the caller's JSON body (application/json only, valid JSON, at most 64 kB) to the provider's
 endpoint, with the provider's credential added by the loader (a caller's own `Authorization` or other headers are never sent), and
 relays the answer. One method per source: a POST source answers `405` to GET and an ordinary source answers `405` to POST. Such a
-source is **proxy-only**: it is registered with frequency MANUAL, never pulled on a schedule and "Harvest now" is refused. Its connection
+source is **proxy-only**: it is registered with frequency MANUAL, never pulled on a schedule and "Harvest now" is refused. Whether it is exposed
+is the form's "also expose this as a live proxy" box, like any source's: unticked, nobody can call it. Its connection
 check never POSTs (each call to a question-per-call API is a real request and may create something at the provider): it sends one harmless GET
 with the credential and reads the answer -- any answer shows the address, the network path and the certificate work (a POST-only API
 answers 405, as expected), 401/403 means the credential may be refused, 404 or 5xx and connection errors are errors; nothing is created.

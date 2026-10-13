@@ -518,7 +518,7 @@ def register(session: Session, form: dict) -> ProviderSource:
         auth_type, credential_fields, config = _http_fields(form, errors)
         if config.get("proxy_method") == "POST":
             # A POST API is only reachable through the live proxy: it is never pulled on a schedule.
-            frequency, proxy_enabled = "MANUAL", True
+            frequency = "MANUAL"  # nothing to pull on a schedule; whether it is exposed is the checkbox's own choice
 
     if errors:
         raise ValidationError(errors)
@@ -770,7 +770,7 @@ def update(session: Session, source_id: str, form: dict) -> ProviderSource:
     else:
         auth_type, credential_fields, config = _http_fields(working_form, errors)
         if config.get("proxy_method") == "POST":
-            frequency, proxy_enabled = "MANUAL", True
+            frequency = "MANUAL"  # nothing to pull on a schedule; whether it is exposed is the checkbox's own choice
 
     if errors:
         raise ValidationError(errors)
