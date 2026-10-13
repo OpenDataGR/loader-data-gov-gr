@@ -34,7 +34,7 @@
 
   <div class="panel">
     <h1>{% if kind in ("input", "output") %}{{ title }}{% else %}{{ "Edit" if number else "Add" }}: {{ title }}{% endif %}</h1>
-    <p class="subtitle"><a href="/transform/sources/{{ source.id }}">&larr; back to the transform</a> &middot; {{ source.title }}{% if number %} &middot; step {{ number }}{% endif %}</p>
+    <p class="subtitle"><a href="{{ tbase }}">&larr; back to the transform</a> &middot; {{ source.title }}{% if number %} &middot; step {{ number }}{% endif %}</p>
     {% if error %}<div class="problems">{{ error }}</div>{% endif %}
 
     {% if kind == "read" %}
@@ -117,7 +117,7 @@
             </div>
             </div>
             <p class="muted" style="margin:0.4rem 0 0;">&#8635; marks a field that occurs more than once in one record. Leave "Call it" empty for an automatic name.</p>
-            <div style="display:flex; gap:0.6rem; margin-top:1rem;"><button type="submit">Save step</button><a class="btn btn-secondary" href="/transform/sources/{{ source.id }}">Cancel</a></div>
+            <div style="display:flex; gap:0.6rem; margin-top:1rem;"><button type="submit">Save step</button><a class="btn btn-secondary" href="{{ tbase }}">Cancel</a></div>
           </form>
         {% endif %}
       {% endif %}
@@ -126,7 +126,7 @@
       {% if is_http %}
         <p class="muted" style="margin:0 0 0.6rem;">The input of this transform is an answer of the provider. A source's answers are not stored, so the steps are built and tried on <strong>one sample answer</strong>: paste one, or have the loader fetch one.{% if pasted_sample %} <span class="badge badge-ok"><span>a sample is kept, {{ pasted_sample_kb }} kB</span></span>{% else %} <span class="badge badge-pending"><span>none yet</span></span>{% endif %}</p>
       <p class="muted" style="margin:0.4rem 0;">This source's answers are not stored, so the steps are built and tried on one answer you paste here (JSON, up to 200 kB). It is only used inside this page. Use a test case, not real personal data, where you can.</p>
-      <form method="post" action="/transform/sources/{{ source.id }}/sample">
+      <form method="post" action="{{ tbase }}/sample">
         <textarea name="sample" rows="8" aria-label="Sample answer" style="font-family:monospace; font-size:0.8rem;">{{ transform.sample or "" }}</textarea>
         <div style="display:flex; gap:0.6rem; margin-top:0.4rem;"><button type="submit">Save sample</button>{% if pasted_sample %}<button type="submit" class="btn-secondary" onclick="this.form.sample.value=''">Remove</button>{% endif %}</div>
       </form>
@@ -135,7 +135,7 @@
         {% if test_request %}
           <p class="muted" style="margin:0.3rem 0 0.5rem;">Makes <strong>one real call</strong> to the provider with this source's <em>test request</em> (set on the source: <a href="{{ source_edit_url }}">change it</a>), using its own credential, and keeps the answer as the sample. It may create a record at the provider.</p>
           <pre style="background:var(--color-bg, #f4f7fb); border:1px solid var(--color-border); border-radius:var(--radius); padding:0.5rem 0.7rem; font-size:0.78rem; max-height:7rem; overflow:auto; margin:0 0 0.6rem; white-space:pre-wrap; word-break:break-all;">{{ test_request }}</pre>
-          <form method="post" action="/transform/sources/{{ source.id }}/fetch-sample" onsubmit="return confirm('This makes one real call to the provider, which may create a record there. Continue?');">
+          <form method="post" action="{{ tbase }}/fetch-sample" onsubmit="return confirm('This makes one real call to the provider, which may create a record there. Continue?');">
             <button type="submit" class="btn-secondary">Fetch a sample</button>
           </form>
         {% else %}
@@ -150,9 +150,9 @@
           <p class="muted" style="margin:0;">No file has arrived yet (or the stored ones were removed by retention), so there is nothing to build the steps on. <a href="/provider/sources/{{ source.id }}/readiness">Check readiness</a></p>
         {% endif %}
       {% endif %}
-      <div style="margin-top:1.1rem;"><a class="btn btn-secondary" href="/transform/sources/{{ source.id }}">Back to the transform</a></div>
+      <div style="margin-top:1.1rem;"><a class="btn btn-secondary" href="{{ tbase }}">Back to the transform</a></div>
     {% elif kind == "output" %}
-    <form method="post" action="/transform/sources/{{ source.id }}/output" id="output-form">
+    <form method="post" action="{{ tbase }}/output" id="output-form">
       <div class="inline-form">
         <div><label for="fmt">Format</label>
           <select id="fmt" name="format">{% for key, meta in formats.items() %}<option value="{{ key }}"{% if key == transform.output_format %} selected{% endif %}>{{ meta[2] }}</option>{% endfor %}</select></div>
@@ -192,7 +192,7 @@
         show();
       })();
     </script>
-      <div style="margin-top:0.8rem;"><a class="btn btn-secondary" href="/transform/sources/{{ source.id }}">Back to the transform</a></div>
+      <div style="margin-top:0.8rem;"><a class="btn btn-secondary" href="{{ tbase }}">Back to the transform</a></div>
     {% else %}
       <form method="post" action="{{ '/transform/sources/%s/steps/%d/edit' % (source.id, number) if number else '/transform/sources/%s/steps/new' % source.id }}">
         <input type="hidden" name="kind" value="{{ kind }}">
@@ -313,7 +313,7 @@
           {% if available %}<p class="muted" style="margin:0.2rem 0 0;">Fields you can use: {{ available|join(", ") }}</p>{% endif %}
         {% endif %}
 
-        <div style="display:flex; gap:0.6rem; margin-top:1.1rem;"><button type="submit">Save step</button><a class="btn btn-secondary" href="/transform/sources/{{ source.id }}">Cancel</a></div>
+        <div style="display:flex; gap:0.6rem; margin-top:1.1rem;"><button type="submit">Save step</button><a class="btn btn-secondary" href="{{ tbase }}">Cancel</a></div>
       </form>
     {% endif %}
   </div>

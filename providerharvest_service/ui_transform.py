@@ -69,6 +69,21 @@ def _size(count: int) -> str:
         value /= 1000
 
 
+def _pipeline_name(request: Request) -> str:
+    """The pipeline an address is about: the ``{pipeline}`` of /transform/sources/<id>/pipelines/<name>/..., else the default one."""
+    return request.path_params.get("pipeline") or transform_runner.DEFAULT_PIPELINE
+
+
+def _base(request: Request, source_id: str) -> str:
+    """The address of this pipeline's page: every link and redirect on a pipeline's pages starts from it."""
+    name = _pipeline_name(request)
+    base = "/transform/sources/%s" % source_id
+    return base if name == transform_runner.DEFAULT_PIPELINE else "%s/pipelines/%s" % (base, name)
+
+
+_PIPELINE_NAME = re.compile(r"^[a-z][a-z0-9-]{0,29}$")
+
+
 def _source_or_none(session: Session, source_id: str) -> ProviderSource | None:
     return session.get(ProviderSource, source_id)
 
@@ -155,13 +170,13 @@ async def replace_table(table_id: str, request: Request, session: Session = Depe
         columns, rows, note = te.parse_lookup_ex(content, filename, str(form.get("sheet") or "").strip() or None)
         # Transforms that use this table keep working only if the columns they need are still there.
         for source_id in transform_runner.lookups_in_use(session, table.name):
-            transform = transform_runner.get_transform(session, source_id)
-            for step in transform_runner.steps_of(transform):
-                if step.get("type") == "lookup" and step.get("table") == table.name:
-                    needed = [step.get("table_key")] + [a.get("column") for a in step.get("add") or []]
-                    missing = [c for c in needed if c not in columns]
-                    if missing:
-                        raise te.TransformError("A transform uses column(s) %s, which the new file does not have. Nothing was changed." % ", ".join(map(repr, missing)))
+            for transform in transform_runner.list_pipelines(session, source_id):
+                for step in transform_runner.steps_of(transform):
+                    if step.get("type") == "lookup" and step.get("table") == table.name:
+                        needed = [step.get("table_key")] + [a.get("column") for a in step.get("add") or []]
+                        missing = [c for c in needed if c not in columns]
+                        if missing:
+                            raise te.TransformError("A transform uses column(s) %s, which the new file does not have. Nothing was changed." % ", ".join(map(repr, missing)))
     except te.TransformError as exc:
         return _go(back, str(exc), "error")
     table.columns, table.rows, table.row_count = json.dumps(columns), json.dumps(rows), len(rows)
@@ -197,11 +212,12 @@ def download_table(table_id: str, session: Session = Depends(get_session)):
 def _editor_context(session: Session, hsession: Session, source: ProviderSource, transform: Transform | None, request: Request, **extra) -> dict:
     steps = transform_runner.steps_of(transform) if transform else []
     return {
+        "tbase": _base(request, source.id), "pipeline_name": _pipeline_name(request), "pipelines": [t.name for t in transform_runner.list_pipelines(session, source.id)],
         "source": source, "transform": transform, "steps": list(enumerate(steps, 1)), "problems": transform_runner.check(session, transform) if transform else [],
         "keep_label": retention.label(retention.loader_days(source)),
         "failed_only": request.query_params.get("show") == "failed",
         "outputs": transform_runner.recent_outputs(hsession, source.id, 50 if request.query_params.get("show") == "failed" else 10,
-                                                   failed_only=request.query_params.get("show") == "failed") if transform else [], "counts": transform_runner.output_counts(hsession, source.id) if transform else None,
+                                                   failed_only=request.query_params.get("show") == "failed", transform_id=transform.id) if transform else [], "counts": transform_runner.output_counts(hsession, source.id, transform.id) if transform else None,
         "formats": te.OUTPUTS, "delimiters": te.CSV_DELIMITERS, "choices": transform_runner.REPROCESS_CHOICES, "has_sample": transform_runner.sample_for(session, hsession, source.id) is not None,
         "is_http": source.transport_type == "http", "provider_method": source.proxy_method,
         "input_summary": _input_summary(source, transform, hsession), "output_summary": tf.output_summary(transform) if transform else "",
@@ -244,7 +260,7 @@ def _input_summary(source: ProviderSource, transform: Transform | None, hsession
 def input_step(source_id: str, request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)):
     """The Input step's page: for an API source its sample answer (paste, or fetch with the source's test request); for a source that
     stores data, the newest file the steps are built on."""
-    source, transform = _with(session, source_id)
+    source, transform = _with(session, source_id, request)
     if source is None or transform is None:
         return _go("/transform", "No such transform.", "error")
     newest = _newest_file(hsession, source.id)
@@ -257,7 +273,7 @@ def input_step(source_id: str, request: Request, session: Session = Depends(get_
 @router.get("/sources/{source_id}/steps/output", response_class=HTMLResponse)
 def output_step(source_id: str, request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)):
     """The Output step's page: the format and its settings."""
-    source, transform = _with(session, source_id)
+    source, transform = _with(session, source_id, request)
     if source is None or transform is None:
         return _go("/transform", "No such transform.", "error")
     return _step_page(request, session, hsession, source, transform, "output", None, None, title="Output", is_http=source.transport_type == "http",
@@ -269,7 +285,10 @@ def source_page(source_id: str, request: Request, session: Session = Depends(get
     source = _source_or_none(session, source_id)
     if source is None:
         return _go("/transform", "No such source.", "error")
-    return templates.TemplateResponse(request, "transform/source.html", _editor_context(session, hsession, source, transform_runner.get_transform(session, source_id), request))
+    transform = transform_runner.get_pipeline(session, source_id, _pipeline_name(request))
+    if transform is None and _pipeline_name(request) != transform_runner.DEFAULT_PIPELINE:
+        return _go("/transform/sources/%s" % source_id, "No such pipeline.", "error")
+    return templates.TemplateResponse(request, "transform/source.html", _editor_context(session, hsession, source, transform, request))
 
 
 @router.post("/sources/{source_id}/create")
@@ -285,10 +304,10 @@ async def create_transform(source_id: str, request: Request, session: Session = 
                 transform.output_single = True  # an API answers one question: one object back, not a list of one
                 transform_runner.set_sample(transform, sample)
         except te.TransformError as exc:
-            return _go("/transform/sources/%s" % source_id, str(exc), "error")
+            return _go(_base(request, source_id), str(exc), "error")
         session.add(transform)
         session.commit()
-    return _go("/transform/sources/%s" % source_id, "Transform created. Add the first step: read the %s." % ("answer" if source.transport_type == "http" else "file"))
+    return _go(_base(request, source_id), "Transform created. Add the first step: read the %s." % ("answer" if source.transport_type == "http" else "file"))
 
 
 @router.post("/sources/{source_id}/fetch-sample")
@@ -296,8 +315,8 @@ async def fetch_sample(source_id: str, request: Request, session: Session = Depe
     """Make ONE real call to the provider with the source's test request (set on the source, in the Extract Box) and keep its answer as the
     sample -- so the steps can be built without pasting anything. Admin-only (the whole page is), confirmed in the browser, and rate-limited
     like any call."""
-    source, transform = _with(session, source_id)
-    back = "/transform/sources/%s" % source_id
+    source, transform = _with(session, source_id, request)
+    back = _base(request, source_id)
     if source is None or transform is None:
         return _go("/transform", "No such transform.", "error")
     if source.transport_type != "http":
@@ -333,8 +352,8 @@ async def fetch_sample(source_id: str, request: Request, session: Session = Depe
 
 @router.post("/sources/{source_id}/sample")
 async def set_sample(source_id: str, request: Request, session: Session = Depends(get_session)):
-    source, transform = _with(session, source_id)
-    back = "/transform/sources/%s" % source_id
+    source, transform = _with(session, source_id, request)
+    back = _base(request, source_id)
     if source is None or transform is None:
         return _go("/transform", "No such transform.", "error")
     try:
@@ -348,9 +367,8 @@ async def set_sample(source_id: str, request: Request, session: Session = Depend
     return _go(back, "Sample answer saved." if kept else "Sample answer removed.")
 
 
-def _with(session: Session, source_id: str):
-    source, transform = _source_or_none(session, source_id), transform_runner.get_transform(session, source_id)
-    return source, transform
+def _with(session: Session, source_id: str, request: Request):
+    return _source_or_none(session, source_id), transform_runner.get_pipeline(session, source_id, _pipeline_name(request))
 
 
 def _save_steps(session: Session, transform: Transform, steps: list[dict], request: Request) -> None:
@@ -363,8 +381,8 @@ def _save_steps(session: Session, transform: Transform, steps: list[dict], reque
 
 @router.post("/sources/{source_id}/enabled")
 async def set_enabled(source_id: str, request: Request, session: Session = Depends(get_session)):
-    source, transform = _with(session, source_id)
-    back = "/transform/sources/%s" % source_id
+    source, transform = _with(session, source_id, request)
+    back = _base(request, source_id)
     if source is None or transform is None:
         return _go("/transform", "No such transform.", "error")
     want = str((await request.form()).get("enabled") or "") == "1"
@@ -379,8 +397,8 @@ async def set_enabled(source_id: str, request: Request, session: Session = Depen
 
 @router.post("/sources/{source_id}/output")
 async def set_output(source_id: str, request: Request, session: Session = Depends(get_session)):
-    source, transform = _with(session, source_id)
-    back = "/transform/sources/%s" % source_id
+    source, transform = _with(session, source_id, request)
+    back = _base(request, source_id)
     if source is None or transform is None:
         return _go("/transform", "No such transform.", "error")
     form = await request.form()
@@ -463,7 +481,7 @@ def _reader_context(session: Session, hsession: Session, source_id: str, request
 def _step_page(request: Request, session: Session, hsession: Session, source: ProviderSource, transform: Transform, kind: str, number: int | None, existing: dict | None, **extra):
     steps = transform_runner.steps_of(transform)
     before = steps[:(number - 1) if number else len(steps)]
-    ctx = {"source": source, "transform": transform, "kind": kind, "number": number, "existing": existing or {}, "available": tf.fields_after(before),
+    ctx = {"tbase": _base(request, source.id), "pipeline_name": _pipeline_name(request), "source": source, "transform": transform, "kind": kind, "number": number, "existing": existing or {}, "available": tf.fields_after(before),
            "tables": _table_columns(session), "types": te.CONVERT_TYPES, "ops": tf.OP_LABELS, "title": _SECTIONS.get(kind, kind), "rename_rows": range(tf.RENAME_ROWS),
            "convert_rows": range(tf.CONVERT_ROWS), "error": extra.pop("error", None), "flash": request.query_params.get("flash"), "flash_kind": request.query_params.get("flash_kind", "success")}
     if kind == "read":
@@ -481,40 +499,40 @@ def _kind_from(request: Request, existing: dict | None) -> str | None:
 
 @router.get("/sources/{source_id}/steps/new", response_class=HTMLResponse)
 def new_step(source_id: str, request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)):
-    source, transform = _with(session, source_id)
+    source, transform = _with(session, source_id, request)
     if source is None or transform is None:
         return _go("/transform", "No such transform.", "error")
     kind = _kind_from(request, None)
     if kind is None:
-        return _go("/transform/sources/%s" % source_id, "Choose which step to add.", "error")
+        return _go(_base(request, source_id), "Choose which step to add.", "error")
     steps = transform_runner.steps_of(transform)
     if kind == "read" and steps:
-        return _go("/transform/sources/%s" % source_id, "The file is already being read (step 1). Edit that step instead.", "error")
+        return _go(_base(request, source_id), "The file is already being read (step 1). Edit that step instead.", "error")
     if kind != "read" and not steps:
-        return _go("/transform/sources/%s" % source_id, "The first step must read the file.", "error")
+        return _go(_base(request, source_id), "The first step must read the file.", "error")
     return _step_page(request, session, hsession, source, transform, kind, None, None)
 
 
 @router.get("/sources/{source_id}/steps/{number}/edit", response_class=HTMLResponse)
 def edit_step(source_id: str, number: int, request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)):
-    source, transform = _with(session, source_id)
+    source, transform = _with(session, source_id, request)
     steps = transform_runner.steps_of(transform) if transform else []
     if source is None or not 1 <= number <= len(steps):
-        return _go("/transform/sources/%s" % source_id if source else "/transform", "No such step.", "error")
+        return _go(_base(request, source_id) if source else "/transform", "No such step.", "error")
     existing = steps[number - 1]
     return _step_page(request, session, hsession, source, transform, _kind_from(request, existing), number, existing)
 
 
 async def _submit_step(source_id: str, number: int | None, request: Request, session: Session, hsession: Session):
-    source, transform = _with(session, source_id)
+    source, transform = _with(session, source_id, request)
     if source is None or transform is None:
         return _go("/transform", "No such transform.", "error")
     steps = transform_runner.steps_of(transform)
     if number is not None and not 1 <= number <= len(steps):
-        return _go("/transform/sources/%s" % source_id, "No such step.", "error")
+        return _go(_base(request, source_id), "No such step.", "error")
     form = await request.form()
     kind = str(form.get("kind") or "")
-    back = "/transform/sources/%s" % source_id
+    back = _base(request, source_id)
     try:
         if kind == "read":
             step = tf.build_reader(str(form.get("format") or ""), form)
@@ -550,9 +568,9 @@ async def save_step(source_id: str, number: int, request: Request, session: Sess
 
 @router.post("/sources/{source_id}/steps/{number}/remove")
 def remove_step(source_id: str, number: int, request: Request, session: Session = Depends(get_session)):
-    source, transform = _with(session, source_id)
+    source, transform = _with(session, source_id, request)
     steps = transform_runner.steps_of(transform) if transform else []
-    back = "/transform/sources/%s" % source_id
+    back = _base(request, source_id)
     if source is None or not 1 <= number <= len(steps):
         return _go(back if source else "/transform", "No such step.", "error")
     if number == 1 and len(steps) > 1:
@@ -565,9 +583,9 @@ def remove_step(source_id: str, number: int, request: Request, session: Session 
 
 @router.post("/sources/{source_id}/steps/{number}/move")
 async def move_step(source_id: str, number: int, request: Request, session: Session = Depends(get_session)):
-    source, transform = _with(session, source_id)
+    source, transform = _with(session, source_id, request)
     steps = transform_runner.steps_of(transform) if transform else []
-    back = "/transform/sources/%s" % source_id
+    back = _base(request, source_id)
     if source is None or not 1 <= number <= len(steps):
         return _go(back if source else "/transform", "No such step.", "error")
     direction = str((await request.form()).get("direction") or "")
@@ -586,7 +604,7 @@ async def move_step(source_id: str, number: int, request: Request, session: Sess
 
 @router.post("/sources/{source_id}/preview", response_class=HTMLResponse)
 def preview(source_id: str, request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)):
-    source, transform = _with(session, source_id)
+    source, transform = _with(session, source_id, request)
     if source is None or transform is None:
         return _go("/transform", "No such transform.", "error")
     problems = transform_runner.check(session, transform)
@@ -606,8 +624,8 @@ def preview(source_id: str, request: Request, session: Session = Depends(get_ses
 
 @router.post("/sources/{source_id}/reprocess")
 async def reprocess(source_id: str, request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)):
-    source, transform = _with(session, source_id)
-    back = "/transform/sources/%s" % source_id
+    source, transform = _with(session, source_id, request)
+    back = _base(request, source_id)
     if source is None or transform is None:
         return _go("/transform", "No such transform.", "error")
     try:
@@ -619,7 +637,7 @@ async def reprocess(source_id: str, request: Request, session: Session = Depends
     problems = transform_runner.check(session, transform)
     if problems:
         return _go(back, "It is not ready: %s" % problems[0], "error")
-    summary = transform_runner.reprocess(session, hsession, source_id, limit=limit)
+    summary = transform_runner.reprocess(session, hsession, source_id, limit=limit, transform=transform)
     note = "Processed %d run%s: %d ok, %d failed." % (summary["done"], "" if summary["done"] == 1 else "s", summary["ok"], summary["failed"])
     if summary["skipped_removed"]:
         note += " %d skipped (their files were removed by retention)." % summary["skipped_removed"]
@@ -631,7 +649,7 @@ async def reprocess(source_id: str, request: Request, session: Session = Depends
 @router.post("/sources/{source_id}/outputs/{output_id}/delete")
 def delete_output(source_id: str, output_id: str, request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)):
     """Delete one stored output. The original file and its run stay; the run can be transformed again."""
-    back = "/transform/sources/%s" % source_id
+    back = _base(request, source_id)
     if _source_or_none(session, source_id) is None:
         return _go("/transform", "No such source.", "error")
     if not transform_runner.delete_output(hsession, source_id, output_id):
@@ -643,21 +661,82 @@ def delete_output(source_id: str, output_id: str, request: Request, session: Ses
 @router.post("/sources/{source_id}/outputs/delete-all")
 def delete_all_outputs(source_id: str, request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)):
     """Delete every stored output of this source (the originals stay)."""
-    back = "/transform/sources/%s" % source_id
+    back = _base(request, source_id)
     if _source_or_none(session, source_id) is None:
         return _go("/transform", "No such source.", "error")
-    count = transform_runner.delete_all_outputs(hsession, source_id)
+    pipeline = transform_runner.get_pipeline(session, source_id, _pipeline_name(request))
+    count = transform_runner.delete_all_outputs(hsession, source_id, pipeline.id if pipeline else None)
     logger.info("all %d transform outputs of source %s deleted by %s", count, source_id, _who(request) or "?")
     return _go(back, "%d output%s deleted. The original files are untouched." % (count, "" if count == 1 else "s") if count else "There were no outputs to delete.")
 
 
 @router.get("/sources/{source_id}/outputs/{output_id}/download")
-def download_output(source_id: str, output_id: str, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)):
+def download_output(source_id: str, output_id: str, request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)):
     row = hsession.get(TransformedFile, output_id)
     if row is None or row.source_id != source_id:
-        return _go("/transform/sources/%s" % source_id, "No such output.", "error")
+        return _go(_base(request, source_id), "No such output.", "error")
     if row.size and not row.content:
         return Response("This output's contents were removed when it passed its retention period.", status_code=410)
     if row.status != "ok":
-        return _go("/transform/sources/%s" % source_id, "That run failed, so there is no output: %s" % (row.error_message or ""), "error")
+        return _go(_base(request, source_id), "That run failed, so there is no output: %s" % (row.error_message or ""), "error")
     return Response(content=row.content, media_type=row.content_type, headers={"Content-Disposition": 'attachment; filename="%s"' % row.filename.replace('"', "")})
+
+
+# -- several pipelines on one source --------------------------------------------------------------------------------------------------------
+
+def _mirror_routes_for_pipelines() -> None:
+    """Every route of one source's transform page is also served under /sources/<id>/pipelines/<name>/..., where it acts on that pipeline
+    (see _pipeline_name). The routes without the pipeline in the address keep acting on the ``default`` one."""
+    from fastapi.routing import APIRoute
+
+    head = "/transform/sources/{source_id}"
+    for route in list(router.routes):
+        if not isinstance(route, APIRoute) or not route.path.startswith(head) or route.path.endswith("/create"):
+            continue
+        router.add_api_route("%s/pipelines/{pipeline}%s" % (head[len(router.prefix):], route.path[len(head):]), route.endpoint, methods=list(route.methods),
+                             response_class=route.response_class, name="%s_pipeline" % route.name)
+
+
+_mirror_routes_for_pipelines()
+
+
+@router.post("/sources/{source_id}/pipelines")
+async def add_pipeline(source_id: str, request: Request, session: Session = Depends(get_session)):
+    """A new pipeline on a source, started as a copy of the one the form was sent from (its steps, output settings, sample and request
+    settings), switched off so nothing changes until it is tried and switched on."""
+    source = _source_or_none(session, source_id)
+    if source is None:
+        return _go("/transform", "No such source.", "error")
+    form = await request.form()
+    name = str(form.get("name") or "").strip().lower()
+    origin = transform_runner.get_pipeline(session, source_id, str(form.get("from") or transform_runner.DEFAULT_PIPELINE))
+    base = "/transform/sources/%s" % source_id
+    if origin is None:
+        return _go(base, "Create the first transform of this source before adding another pipeline.", "error")
+    if not _PIPELINE_NAME.match(name):
+        return _go(base, "Name the pipeline with lowercase letters, digits and hyphens, starting with a letter (for example lookup).", "error")
+    if transform_runner.get_pipeline(session, source_id, name) is not None:
+        return _go(base, "There is already a pipeline called %r on this source." % name, "error")
+    session.add(Transform(
+        source_id=source_id, name=name, steps=origin.steps, output_format=origin.output_format, root_name=origin.root_name, record_name=origin.record_name,
+        csv_delimiter=origin.csv_delimiter, csv_bom=origin.csv_bom, output_single=origin.output_single, request_swap=origin.request_swap,
+        request_template=origin.request_template, sample=origin.sample, enabled=False, updated_by=_who(request)))
+    session.commit()
+    logger.info("transform box: %s added the pipeline %s to source %s", _who(request) or "?", name, source.name)
+    return _go("%s/pipelines/%s" % (base, name), "Pipeline %s added, as a copy of %s. It is switched off until you switch it on." % (name, origin.name))
+
+
+@router.post("/sources/{source_id}/pipelines/{pipeline}/delete")
+def delete_pipeline(source_id: str, pipeline: str, request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)):
+    """Remove a pipeline and the outputs it stored. The ``default`` one is the source's first transform and stays."""
+    base = "/transform/sources/%s" % source_id
+    found = transform_runner.get_pipeline(session, source_id, pipeline)
+    if found is None:
+        return _go(base, "No such pipeline.", "error")
+    if pipeline == transform_runner.DEFAULT_PIPELINE:
+        return _go(base, "The default pipeline cannot be removed.", "error")
+    count = transform_runner.delete_all_outputs(hsession, source_id, found.id)
+    session.delete(found)
+    session.commit()
+    logger.info("transform box: %s removed the pipeline %s of source %s (%d outputs)", _who(request) or "?", pipeline, source_id, count)
+    return _go(base, "Pipeline %s removed." % pipeline)

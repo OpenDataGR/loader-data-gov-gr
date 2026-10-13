@@ -20,14 +20,33 @@
   </style>
 
   <div class="panel">
-    <h1>Transform -- {{ source.title }}</h1>
+    <h1>Transform -- {{ source.title }}{% if pipeline_name != "default" %} <span class="muted" style="font-weight:400;">/ {{ pipeline_name }}</span>{% endif %}</h1>
     <p class="subtitle"><a href="/transform">&larr; back to the Transform Box</a> &middot; <span class="name-slug">{{ source.name }}</span></p>
+    {% if transform %}
+    <div style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center; margin:0.2rem 0 0.6rem;">
+      <span class="muted" style="font-size:0.85rem;">Pipelines:</span>
+      {% for name in pipelines %}
+        <a class="btn {{ '' if name == pipeline_name else 'btn-secondary' }} btn-sm" href="/transform/sources/{{ source.id }}{{ '' if name == 'default' else '/pipelines/' ~ name }}">{{ name }}</a>
+      {% endfor %}
+      <details style="display:inline-block;">
+        <summary class="btn btn-secondary btn-sm" style="list-style:none; cursor:pointer;">+ Add a pipeline</summary>
+        <form method="post" action="/transform/sources/{{ source.id }}/pipelines" class="inline-form" style="margin-top:0.4rem;">
+          <input type="hidden" name="from" value="{{ pipeline_name }}">
+          <div><label for="pipeline-name">Name (starts as a copy of {{ pipeline_name }})</label><input id="pipeline-name" name="name" maxlength="30" placeholder="lookup" required pattern="[a-z][a-z0-9\-]{0,29}"></div>
+          <button type="submit">Add</button>
+        </form>
+      </details>
+      {% if pipeline_name != "default" %}
+        <form method="post" action="{{ tbase }}/delete" style="margin:0;" onsubmit="return confirm('Remove the pipeline {{ pipeline_name }} and the outputs it stored?');"><button type="submit" class="btn-secondary btn-sm">Remove this pipeline</button></form>
+      {% endif %}
+    </div>
+    {% endif %}
 
     {% if not transform %}
       <div class="empty-state">
         {{ macros.icon("inbox", 40) }}
         <p>This source has no transform yet.</p>
-        <form method="post" action="/transform/sources/{{ source.id }}/create" style="max-width:46rem; text-align:left;">
+        <form method="post" action="{{ tbase }}/create" style="max-width:46rem; text-align:left;">
           {% if is_http %}
             <label for="sample">A sample answer of the API (JSON)</label>
             <textarea id="sample" name="sample" rows="6" placeholder='Paste one answer of the provider. It is only used to build and try the steps -- it is never sent to anyone.' style="font-family:monospace; font-size:0.8rem;"></textarea>
@@ -43,7 +62,7 @@
           {% if transform.enabled %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>on</span></span> <span class="muted">{% if is_http %}every answer of the API through its published address is reshaped{% else %}new files are transformed as they arrive{% endif %}</span>
           {% else %}<span class="badge badge-pending"><span>off</span></span> <span class="muted">{% if is_http %}answers pass through as they are{% else %}files arrive as they are{% endif %}</span>{% endif %}
         </div>
-        <form method="post" action="/transform/sources/{{ source.id }}/enabled" style="margin:0;">
+        <form method="post" action="{{ tbase }}/enabled" style="margin:0;">
           <input type="hidden" name="enabled" value="{{ '0' if transform.enabled else '1' }}">
           <button type="submit" class="{{ 'btn-secondary' if transform.enabled else '' }}">{{ "Switch off" if transform.enabled else "Switch on" }}</button>
         </form>
@@ -56,34 +75,34 @@
       <div class="step-card">
         <div class="step-no step-io" title="Where the data comes from">IN</div>
         <div class="step-body"><div class="what">Input</div><div class="muted">{{ input_summary }}</div></div>
-        <div class="step-actions"><a class="btn btn-secondary btn-sm" href="/transform/sources/{{ source.id }}/steps/input">Edit</a></div>
+        <div class="step-actions"><a class="btn btn-secondary btn-sm" href="{{ tbase }}/steps/input">Edit</a></div>
       </div>
       {% for n, step in steps %}
         <div class="step-card">
           <div class="step-no">{{ n }}</div>
           <div class="step-body"><div class="what">{{ step|step_label }}</div><div class="muted">{{ step|step_summary }}</div></div>
           <div class="step-actions">
-            <a class="btn btn-secondary btn-sm" href="/transform/sources/{{ source.id }}/steps/{{ n }}/edit">Edit</a>
-            {% if n > 2 %}<form method="post" action="/transform/sources/{{ source.id }}/steps/{{ n }}/move"><input type="hidden" name="direction" value="up"><button class="btn-secondary btn-sm" aria-label="Move up" title="Move up">&uarr;</button></form>{% endif %}
-            {% if n > 1 and n < steps|length %}<form method="post" action="/transform/sources/{{ source.id }}/steps/{{ n }}/move"><input type="hidden" name="direction" value="down"><button class="btn-secondary btn-sm" aria-label="Move down" title="Move down">&darr;</button></form>{% endif %}
-            <form method="post" action="/transform/sources/{{ source.id }}/steps/{{ n }}/remove" onsubmit="return confirm('Remove step {{ n }}?');"><button class="btn-secondary btn-sm">Remove</button></form>
+            <a class="btn btn-secondary btn-sm" href="{{ tbase }}/steps/{{ n }}/edit">Edit</a>
+            {% if n > 2 %}<form method="post" action="{{ tbase }}/steps/{{ n }}/move"><input type="hidden" name="direction" value="up"><button class="btn-secondary btn-sm" aria-label="Move up" title="Move up">&uarr;</button></form>{% endif %}
+            {% if n > 1 and n < steps|length %}<form method="post" action="{{ tbase }}/steps/{{ n }}/move"><input type="hidden" name="direction" value="down"><button class="btn-secondary btn-sm" aria-label="Move down" title="Move down">&darr;</button></form>{% endif %}
+            <form method="post" action="{{ tbase }}/steps/{{ n }}/remove" onsubmit="return confirm('Remove step {{ n }}?');"><button class="btn-secondary btn-sm">Remove</button></form>
           </div>
         </div>
       {% endfor %}
       <div class="step-card">
         <div class="step-no step-io" title="What the transform produces">OUT</div>
         <div class="step-body"><div class="what">Output</div><div class="muted">{{ output_summary }}{% if is_http and not transform.enabled %} <strong>The transform is switched off, so callers still get the provider's own answer, not this.</strong>{% endif %}</div></div>
-        <div class="step-actions"><a class="btn btn-secondary btn-sm" href="/transform/sources/{{ source.id }}/steps/output">Edit</a></div>
+        <div class="step-actions"><a class="btn btn-secondary btn-sm" href="{{ tbase }}/steps/output">Edit</a></div>
       </div>
       <div style="border-top:1px solid var(--color-border); padding-top:0.8rem;">
         {% if not steps %}
           {% if has_sample %}
-            <a class="btn" href="/transform/sources/{{ source.id }}/steps/new?type=read">Add the first step: read the file</a>
+            <a class="btn" href="{{ tbase }}/steps/new?type=read">Add the first step: read the file</a>
           {% else %}
             <p class="muted" style="margin:0;">{% if is_http %}The first step reads the answer, and it is chosen by looking at a sample: give the Input step one first (its Edit button, above).{% else %}The first step reads the file, and it is chosen by looking at a real one. There is no stored file from this source yet -- once one arrives, come back here.{% endif %}</p>
           {% endif %}
         {% else %}
-          <form class="inline-form" method="get" action="/transform/sources/{{ source.id }}/steps/new">
+          <form class="inline-form" method="get" action="{{ tbase }}/steps/new">
             <div><label for="addtype">Add a step</label>
               <select id="addtype" name="type">{% for key, text in add_types %}<option value="{{ key }}">{{ text }}</option>{% endfor %}</select></div>
             <button type="submit" class="btn-secondary">Add</button>
@@ -93,7 +112,7 @@
 
       <h2 style="font-size:1.05rem; margin:1.6rem 0 0.2rem;">Try it</h2>
       <p class="muted" style="margin:0 0 0.4rem;">Runs the steps on {% if is_http %}the sample answer{% else %}this source's newest stored file{% endif %} and shows the result in a window. Nothing is stored.</p>
-      <form method="post" action="/transform/sources/{{ source.id }}/preview" id="try-form"><button type="submit"{% if not has_sample %} disabled{% endif %}>Try on {% if is_http %}the sample{% else %}the latest file{% endif %}</button></form>
+      <form method="post" action="{{ tbase }}/preview" id="try-form"><button type="submit"{% if not has_sample %} disabled{% endif %}>Try on {% if is_http %}the sample{% else %}the latest file{% endif %}</button></form>
 
       {# The result opens in a window. With scripts the window is filled by a background request (the page stays as it is);
          without them the same page comes back from the server with the window already open. #}
@@ -163,7 +182,7 @@
       {% if not is_http %}
       <h2 style="font-size:1.05rem; margin:1.6rem 0 0.2rem;">Run it again on earlier files</h2>
       <p class="muted" style="margin:0 0 0.4rem;">After changing the steps, or for files that arrived before the transform was on. Replaces the stored output of each run.</p>
-      <form class="inline-form" method="post" action="/transform/sources/{{ source.id }}/reprocess">
+      <form class="inline-form" method="post" action="{{ tbase }}/reprocess">
         <div><label for="lim">Newest</label>
           <select id="lim" name="limit">{% for n in choices %}<option value="{{ n }}">{{ n }} runs</option>{% endfor %}</select></div>
         <button type="submit" class="btn-secondary"{% if problems %} disabled{% endif %}>Run now</button>
@@ -175,7 +194,7 @@
         <p class="muted" style="margin:0;">None yet. {% if not transform.enabled %}Switch the transform on, or run it on earlier files above.{% else %}The next file that arrives will produce one.{% endif %}</p>
       {% else %}
         <p class="muted" style="margin:0 0 0.4rem;">{{ counts.ok }} ok{% if counts.failed %}, {{ counts.failed }} failed{% endif %} in all. {% if failed_only %}The newest {{ outputs|length }} failed ones{% else %}Newest {{ outputs|length }}{% endif %}:
-          {% if counts.failed and not failed_only %}<a href="/transform/sources/{{ source.id }}?show=failed#outputs">Show the failed ones</a>{% elif failed_only %}<a href="/transform/sources/{{ source.id }}#outputs">Show the newest of all</a>{% endif %}</p>
+          {% if counts.failed and not failed_only %}<a href="{{ tbase }}?show=failed#outputs">Show the failed ones</a>{% elif failed_only %}<a href="{{ tbase }}#outputs">Show the newest of all</a>{% endif %}</p>
         <div class="scroll"><table>
           <thead><tr><th>When</th><th>Result</th><th>File</th><th>Records</th><th>Size</th><th></th></tr></thead>
           <tbody>
@@ -190,8 +209,8 @@
               <td>{% if o.status == "ok" %}{{ "{:,}".format(o.records_in) }} &rarr; {{ "{:,}".format(o.records_out) }}{% endif %}</td>
               <td class="muted">{% if o.status == "ok" %}{{ size(o.size) }}{% endif %}</td>
               <td style="white-space:nowrap;">
-                {% if o.status == "ok" and o.has_content %}<a class="btn btn-secondary btn-sm" href="/transform/sources/{{ source.id }}/outputs/{{ o.id }}/download">{{ macros.icon("download", 14) }} Download</a>{% endif %}
-                <form method="post" action="/transform/sources/{{ source.id }}/outputs/{{ o.id }}/delete" style="display:inline; margin:0;"
+                {% if o.status == "ok" and o.has_content %}<a class="btn btn-secondary btn-sm" href="{{ tbase }}/outputs/{{ o.id }}/download">{{ macros.icon("download", 14) }} Download</a>{% endif %}
+                <form method="post" action="{{ tbase }}/outputs/{{ o.id }}/delete" style="display:inline; margin:0;"
                       onsubmit="return confirm('Delete this output? The original file is not affected.');">
                   <button type="submit" class="btn-secondary btn-sm" title="Delete this output">{{ macros.icon("trash", 14) }} Delete</button>
                 </form>
@@ -200,7 +219,7 @@
             {% endfor %}
           </tbody>
         </table></div>
-        <form method="post" action="/transform/sources/{{ source.id }}/outputs/delete-all" style="margin-top:0.8rem;"
+        <form method="post" action="{{ tbase }}/outputs/delete-all" style="margin-top:0.8rem;"
               onsubmit="return confirm('Delete all {{ counts.ok + counts.failed }} stored outputs of this source? The original files are not affected, and you can run the transform again.');">
           <button type="submit" class="btn-secondary btn-sm">{{ macros.icon("trash", 14) }} Delete all {{ counts.ok + counts.failed }} outputs</button>
         </form>
