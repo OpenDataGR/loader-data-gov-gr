@@ -275,3 +275,79 @@ def test_the_chosen_separator_and_mark_are_used(client, source, _isolated_db, _i
     _upload(client, source)
     (out,) = _outputs(_isolated_harvest_db)
     assert out.content[:3] != b"\xef\xbb\xbf" and out.content.decode("utf-8").split("\n")[0].startswith("id;time;state;")
+
+
+# -- several pipelines on one source ---------------------------------------------------------------------------
+
+def _pipeline(session_factory, source_id, name, steps, output="json", enabled=True):
+    with session_factory() as s:
+        t = Transform(source_id=source_id, name=name, steps=json.dumps(steps), output_format=output, enabled=enabled)
+        s.add(t)
+        s.commit()
+        return t.id
+
+
+def test_every_enabled_pipeline_gets_the_arriving_file_and_stores_its_own_output(client, source, _isolated_db, _isolated_harvest_db):
+    _add_table(_isolated_db)
+    default_id = _transform(_isolated_db, source["id"])  # json, with the lookup
+    csv_id = _pipeline(_isolated_db, source["id"], "table", [XML_STEP], output="csv")
+    _pipeline(_isolated_db, source["id"], "off", [XML_STEP], enabled=False)
+    assert _upload(client, source).status_code == 200
+    outputs = {o.transform_id: o for o in _outputs(_isolated_harvest_db)}
+    assert set(outputs) == {default_id, csv_id}  # the switched-off pipeline stored nothing
+    assert outputs[default_id].filename == "Detector.json" and outputs[csv_id].filename == "Detector.csv"
+    assert outputs[default_id].run_id == outputs[csv_id].run_id and all(o.status == "ok" for o in outputs.values())
+
+
+def test_a_failing_pipeline_fails_alone(client, source, _isolated_db, _isolated_harvest_db):
+    default_id = _transform(_isolated_db, source["id"], steps=[XML_STEP, LOOKUP_STEP])  # its index table does not exist
+    good_id = _pipeline(_isolated_db, source["id"], "plain", [XML_STEP])
+    assert _upload(client, source).status_code == 200
+    outputs = {o.transform_id: o for o in _outputs(_isolated_harvest_db)}
+    assert outputs[default_id].status == "error" and outputs[good_id].status == "ok"
+
+
+def test_reprocessing_one_pipeline_replaces_only_its_own_outputs(client, source, _isolated_db, _isolated_harvest_db):
+    default_id = _transform(_isolated_db, source["id"], steps=[XML_STEP])
+    other_id = _pipeline(_isolated_db, source["id"], "other", [XML_STEP], output="csv")
+    _upload(client, source)
+    before = {o.transform_id: o.id for o in _outputs(_isolated_harvest_db)}
+    with _isolated_db() as config, _isolated_harvest_db() as hs:
+        other = transform_runner.get_pipeline(config, source["id"], "other")
+        assert transform_runner.reprocess(config, hs, source["id"], limit=5, transform=other)["ok"] == 1
+    after = {o.transform_id: o.id for o in _outputs(_isolated_harvest_db)}
+    assert after[default_id] == before[default_id] and after[other_id] != before[other_id]
+
+
+def test_outputs_can_be_told_apart_by_pipeline(client, source, _isolated_db, _isolated_harvest_db):
+    from providerharvest_service import load_api
+
+    default_id = _transform(_isolated_db, source["id"], steps=[XML_STEP])
+    csv_id = _pipeline(_isolated_db, source["id"], "table", [XML_STEP], output="csv")
+    _upload(client, source)
+    with _isolated_harvest_db() as h:
+        assert load_api.latest_output(h, source["id"], csv_id).filename.endswith(".csv")
+        assert load_api.latest_output(h, source["id"], default_id).filename.endswith(".json")
+        assert len(transform_runner.recent_outputs(h, source["id"])) == 2
+        assert len(transform_runner.recent_outputs(h, source["id"], transform_id=csv_id)) == 1
+        assert transform_runner.output_counts(h, source["id"], default_id)["ok"] == 1 and transform_runner.output_counts(h, source["id"])["ok"] == 2
+        assert transform_runner.delete_all_outputs(h, source["id"], csv_id) == 1 and len(transform_runner.recent_outputs(h, source["id"])) == 1
+
+
+def test_an_existing_harvest_database_lets_one_run_have_one_output_per_pipeline(tmp_path):
+    from sqlalchemy import create_engine, inspect, text
+
+    from providerharvest_service import harvest_db
+
+    engine = create_engine("sqlite:///%s" % (tmp_path / "old-harvest.db"))
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE transformed_file (id VARCHAR PRIMARY KEY, run_id VARCHAR NOT NULL, source_id VARCHAR NOT NULL, "
+                          "transform_id VARCHAR NOT NULL, filename VARCHAR NOT NULL)"))
+        conn.execute(text("CREATE UNIQUE INDEX ix_transformed_file_run_id ON transformed_file (run_id)"))
+    harvest_db._migrate_transformed_file(engine)
+    harvest_db._migrate_transformed_file(engine)  # idempotent
+    indexes = {ix["name"]: ix["unique"] for ix in inspect(engine).get_indexes("transformed_file")}
+    assert indexes == {"ix_transformed_file_run_id": False, "ix_transformed_file_run_transform": True}
+    with engine.begin() as conn:  # two pipelines, one run: fine now
+        for n, transform_id in enumerate(("t1", "t2")):
+            conn.execute(text("INSERT INTO transformed_file VALUES (:id, 'r1', 's1', :t, 'x')"), {"id": "o%d" % n, "t": transform_id})

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, LargeBinary, String
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, JSON, LargeBinary, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from providerharvest_service.models import _new_id, _utcnow
@@ -70,14 +70,15 @@ class HarvestedRecord(HarvestBase):
 
 class TransformedFile(HarvestBase):
     """The output of a source's transform for one run (see transform_runner.py): the transformed bytes
-    plus how it went. One per run (a re-run replaces it). ``status`` is "ok" or "error"; an error keeps
+    plus how it went. One per run and pipeline (a re-run replaces it). ``status`` is "ok" or "error"; an error keeps
     the message and no content, and never touches the original ``HarvestedFile``. Its contents follow the
     same retention as the file it came from (emptied, row kept)."""
 
     __tablename__ = "transformed_file"
+    __table_args__ = (Index("ix_transformed_file_run_transform", "run_id", "transform_id", unique=True),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_new_id)
-    run_id: Mapped[str] = mapped_column(ForeignKey("harvest_run.id"), nullable=False, unique=True, index=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("harvest_run.id"), nullable=False, index=True)
     source_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     transform_id: Mapped[str] = mapped_column(String, nullable=False)
     filename: Mapped[str] = mapped_column(String, nullable=False, default="")

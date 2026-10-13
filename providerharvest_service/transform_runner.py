@@ -101,7 +101,7 @@ def apply(session: Session, transform: Transform, content: bytes, filename: str 
 
 
 def _store(hsession: Session, transform: Transform, source_id: str, run_id: str, filename: str, result: engine.Result | None, error: str | None) -> TransformedFile:
-    hsession.execute(delete(TransformedFile).where(TransformedFile.run_id == run_id))
+    hsession.execute(delete(TransformedFile).where(TransformedFile.run_id == run_id, TransformedFile.transform_id == transform.id))
     stem = filename.rsplit(".", 1)[0] if "." in filename else filename
     row = TransformedFile(
         run_id=run_id, source_id=source_id, transform_id=transform.id, status="error" if error else "ok", error_message=error,
@@ -117,9 +117,10 @@ def _store(hsession: Session, transform: Transform, source_id: str, run_id: str,
 
 
 def process_run(config_session: Session, hsession: Session, source_id: str, run_id: str, filename: str, content: bytes,
-                *, only_if_enabled: bool = True) -> TransformedFile | None:
-    """Transform one run's file and store the outcome. None when the source has no (enabled) transform."""
-    transform = get_transform(config_session, source_id)
+                *, only_if_enabled: bool = True, transform: Transform | None = None) -> TransformedFile | None:
+    """Transform one run's file with one pipeline (the ``default`` one unless ``transform`` is given) and store the outcome. None when
+    the source has no such (enabled) transform."""
+    transform = transform or get_transform(config_session, source_id)
     if transform is None or (only_if_enabled and not transform.enabled):
         return None
     try:
@@ -131,15 +132,17 @@ def process_run(config_session: Session, hsession: Session, source_id: str, run_
 
 def on_new_file(config_session: Session, hsession: Session, source, run: HarvestRun, filename: str, content: bytes) -> None:
     """Called after a pushed file was recorded. Never raises: the file has arrived whatever happens here."""
-    try:
-        if run.status == "success":
-            process_run(config_session, hsession, source.id, run.id, filename, content)
-    except Exception:  # noqa: BLE001 -- ingest must not fail because of a transform
-        logger.exception("transform for source %s failed unexpectedly", getattr(source, "name", "?"))
+    if run.status != "success":
+        return
+    for pipeline in list_pipelines(config_session, source.id):  # every enabled pipeline gets the file; one failing never stops the others
         try:
-            hsession.rollback()
-        except Exception:  # noqa: BLE001
-            pass
+            process_run(config_session, hsession, source.id, run.id, filename, content, transform=pipeline)
+        except Exception:  # noqa: BLE001 -- ingest must not fail because of a transform
+            logger.exception("pipeline %s of source %s failed unexpectedly", pipeline.name, getattr(source, "name", "?"))
+            try:
+                hsession.rollback()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 # -- looking at stored files ------------------------------------------------------------------------------------------------
@@ -210,10 +213,10 @@ def preview(config_session: Session, hsession: Session, transform: Transform, ru
 
 
 def reprocess(config_session: Session, hsession: Session, source_id: str, *, limit: int,
-              budget_s: float = REPROCESS_BUDGET_S) -> dict:
-    """Run the transform again over this source's newest ``limit`` runs that still have their file.
-    Returns {"done", "ok", "failed", "skipped_removed", "stopped_early"}."""
-    transform = get_transform(config_session, source_id)
+              budget_s: float = REPROCESS_BUDGET_S, transform: Transform | None = None) -> dict:
+    """Run a pipeline (the ``default`` one unless ``transform`` is given) again over this source's newest ``limit`` runs that still
+    have their file. Returns {"done", "ok", "failed", "skipped_removed", "stopped_early"}."""
+    transform = transform or get_transform(config_session, source_id)
     if transform is None:
         return {"done": 0, "ok": 0, "failed": 0, "skipped_removed": 0, "stopped_early": False}
     started = time.monotonic()
@@ -232,13 +235,13 @@ def reprocess(config_session: Session, hsession: Session, source_id: str, *, lim
             summary["stopped_early"] = True
             break
         content = hsession.scalar(select(HarvestedFile.content).where(HarvestedFile.run_id == run_id).limit(1)) or b""
-        stored = process_run(config_session, hsession, source_id, run_id, filename, content, only_if_enabled=False)
+        stored = process_run(config_session, hsession, source_id, run_id, filename, content, only_if_enabled=False, transform=transform)
         summary["done"] += 1
         summary["ok" if stored is not None and stored.status == "ok" else "failed"] += 1
     return summary
 
 
-def recent_outputs(hsession: Session, source_id: str, limit: int = 10, *, failed_only: bool = False):
+def recent_outputs(hsession: Session, source_id: str, limit: int = 10, *, failed_only: bool = False, transform_id: str | None = None):
     """The newest outputs as rows (id, created_at, status, error_message, records_in/out, size, has_content) --
     never the contents themselves, which can be large and are only needed for a download."""
     query = select(
@@ -247,18 +250,21 @@ def recent_outputs(hsession: Session, source_id: str, limit: int = 10, *, failed
         TransformedFile.records_in, TransformedFile.records_out, TransformedFile.size,
         (func.length(TransformedFile.content) > 0).label("has_content"),
     ).where(TransformedFile.source_id == source_id)
+    if transform_id:
+        query = query.where(TransformedFile.transform_id == transform_id)
     if failed_only:
         query = query.where(TransformedFile.status == "error")
     return hsession.execute(query.order_by(TransformedFile.created_at.desc()).limit(limit)).all()
 
 
-def output_counts(hsession: Session, source_id: str) -> dict:
-    ok, failed, latest = hsession.execute(
-        select(
-            func.count().filter(TransformedFile.status == "ok"), func.count().filter(TransformedFile.status == "error"),
-            func.max(TransformedFile.created_at),
-        ).where(TransformedFile.source_id == source_id)
-    ).one()
+def output_counts(hsession: Session, source_id: str, transform_id: str | None = None) -> dict:
+    query = select(
+        func.count().filter(TransformedFile.status == "ok"), func.count().filter(TransformedFile.status == "error"),
+        func.max(TransformedFile.created_at),
+    ).where(TransformedFile.source_id == source_id)
+    if transform_id:
+        query = query.where(TransformedFile.transform_id == transform_id)
+    ok, failed, latest = hsession.execute(query).one()
     return {"ok": int(ok or 0), "failed": int(failed or 0), "latest": latest}
 
 
@@ -270,9 +276,12 @@ def delete_output(hsession: Session, source_id: str, output_id: str) -> bool:
     return bool(result.rowcount)
 
 
-def delete_all_outputs(hsession: Session, source_id: str) -> int:
-    """Delete every stored output of this source. Returns how many."""
-    result = hsession.execute(delete(TransformedFile).where(TransformedFile.source_id == source_id))
+def delete_all_outputs(hsession: Session, source_id: str, transform_id: str | None = None) -> int:
+    """Delete every stored output of this source (of one pipeline, when given). Returns how many."""
+    query = delete(TransformedFile).where(TransformedFile.source_id == source_id)
+    if transform_id:
+        query = query.where(TransformedFile.transform_id == transform_id)
+    result = hsession.execute(query)
     hsession.commit()
     return int(result.rowcount or 0)
 

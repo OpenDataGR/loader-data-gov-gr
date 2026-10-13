@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import os
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -61,7 +61,24 @@ def make_engine(url: str) -> Engine:
     # becomes worth it once a schema change needs to land against
     # tables that already hold real data, not before.
     HarvestBase.metadata.create_all(engine)
+    _migrate_transformed_file(engine)
     return engine
+
+
+def _migrate_transformed_file(engine: Engine) -> None:
+    """A source can have several pipelines, so one run now has one output per pipeline, not one in all: ``run_id`` stops being UNIQUE and
+    the pair (run_id, transform_id) is. create_all() never touches an existing table's indexes, so this does it for a database that
+    already has the table. Idempotent."""
+    inspector = inspect(engine)
+    if "transformed_file" not in inspector.get_table_names():
+        return
+    indexes = {ix["name"]: ix for ix in inspector.get_indexes("transformed_file")}
+    with engine.begin() as conn:
+        if indexes.get("ix_transformed_file_run_id", {}).get("unique"):
+            conn.execute(text("DROP INDEX ix_transformed_file_run_id"))
+            conn.execute(text("CREATE INDEX ix_transformed_file_run_id ON transformed_file (run_id)"))
+        if "ix_transformed_file_run_transform" not in indexes:
+            conn.execute(text("CREATE UNIQUE INDEX ix_transformed_file_run_transform ON transformed_file (run_id, transform_id)"))
 
 
 def make_session_factory(engine: Engine) -> sessionmaker:

@@ -40,13 +40,12 @@ def published_source(session: Session, source_name: str) -> ProviderSource | Non
     return source if publishing.is_published(session, source.id) else None
 
 
-def latest_output(hsession: Session, source_id: str):
-    """The newest good output that still has its contents (retention may have emptied older ones)."""
-    return hsession.scalar(
-        select(TransformedFile)
-        .where(TransformedFile.source_id == source_id, TransformedFile.status == "ok", func.length(TransformedFile.content) > 0)
-        .order_by(TransformedFile.created_at.desc()).limit(1)
-    )
+def latest_output(hsession: Session, source_id: str, transform_id: str | None = None):
+    """The newest good output (of one pipeline, when given) that still has its contents (retention may have emptied older ones)."""
+    query = select(TransformedFile).where(TransformedFile.source_id == source_id, TransformedFile.status == "ok", func.length(TransformedFile.content) > 0)
+    if transform_id:
+        query = query.where(TransformedFile.transform_id == transform_id)
+    return hsession.scalar(query.order_by(TransformedFile.created_at.desc()).limit(1))
 
 
 def _serve_output(source: ProviderSource, request: Request, hsession: Session) -> Response:
