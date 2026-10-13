@@ -190,7 +190,9 @@ def test_the_load_box_shows_the_call_as_callers_make_it_and_the_transform_page_t
     assert "GET" in row and "/data/registry?plate=..." in row and "sent to the provider as POST" in row
     assert 'href="https://testserver/data/registry' not in row  # not offered as a link: the address needs its parameter
     page = client.get("/transform/sources/%s" % registry_id).text
-    assert "Request: how callers ask" in page and "GET &rarr; POST" in page and "plate" in page
+    assert ">REQ<" in page and "Callers send GET with the parameters plate" in page  # the Request step's card, in the list
+    request_page = client.get("/transform/sources/%s/steps/request" % registry_id).text
+    assert "GET &rarr; POST" in request_page and "plate" in request_page and 'id="req_mode"' in request_page
 
 
 def test_an_ordinary_source_is_unchanged_by_all_this(client, source, _isolated_db, monkeypatch):

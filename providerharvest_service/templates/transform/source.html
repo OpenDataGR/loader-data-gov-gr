@@ -49,34 +49,17 @@
         </form>
       </div>
 
-      {% if is_http %}
-        <details class="request-card" style="margin:0.9rem 0 0.2rem;"{% if request_swap %} open{% endif %}>
-          <summary style="cursor:pointer; font-weight:600;">Request: how callers ask{% if request_swap %} <span class="badge badge-ok"><span>{{ "GET" if provider_method == "POST" else "POST" }} &rarr; {{ provider_method }}</span></span>{% else %} <span class="badge badge-pending"><span>same as the provider ({{ provider_method }})</span></span>{% endif %}</summary>
-          <p class="muted" style="margin:0.4rem 0;">The provider is called with <strong>{{ provider_method }}</strong> (set on the source, in the Extract Box). Here callers can use the <em>other</em> method on <code>/data/{{ proxy_name }}</code>, and a template turns their call into the provider's. Only what the template names goes on; their other parameters are dropped, and every value is escaped.</p>
-          <form method="post" action="/transform/sources/{{ source.id }}/request">
-            <label for="req_mode">Callers send</label>
-            <select id="req_mode" name="mode" style="max-width:34rem;">
-              <option value="same"{% if not request_swap %} selected{% endif %}>{{ provider_method }} -- the same as the provider (the call is passed on as it is)</option>
-              <option value="swap"{% if request_swap %} selected{% endif %}>{% if provider_method == "POST" %}GET -- query parameters, e.g. /data/{{ proxy_name }}?plate=AB1234{% else %}POST -- a JSON body, whose fields become the provider's query parameters{% endif %}</option>
-            </select>
-            <div id="req_template_box"{% if not request_swap %} style="display:none"{% endif %}>
-              <label for="req_template">{% if provider_method == "POST" %}The JSON body sent to the provider -- write <code>{name}</code> where a caller's parameter goes (inside quotes){% else %}The provider's query parameters -- <code>name={field}</code>, one per line or joined by &amp;; <code>{field}</code> is a field of the caller's JSON body (<code>{a/b}</code> for a nested one){% endif %}</label>
-              <textarea id="req_template" name="template" rows="7" style="font-family:monospace; font-size:0.8rem;" placeholder="{% if provider_method == 'POST' %}{&quot;document&quot;: {&quot;statements&quot;: {&quot;platenumber&quot;: &quot;{plate}&quot;}}}{% else %}plate={plate}{% endif %}">{{ request_template }}</textarea>
-            </div>
-            <div style="margin-top:0.4rem;"><button type="submit">Save</button></div>
-          </form>
-          <script>
-            (function () {
-              var mode = document.getElementById('req_mode'), box = document.getElementById('req_template_box');
-              mode.addEventListener('change', function () { box.style.display = mode.value === 'swap' ? '' : 'none'; });
-            })();
-          </script>
-        </details>
-      {% endif %}
       {% if problems %}<div class="problems"><strong>Not ready:</strong> {{ problems[0] }}{% if problems|length > 1 %} (and {{ problems|length - 1 }} more){% endif %}</div>{% endif %}
 
       <h2 style="font-size:1.05rem; margin:1.4rem 0 0.2rem;">Steps</h2>
       <p class="muted" style="margin:0 0 0.4rem;">Run in this order on every {% if is_http %}answer{% else %}file{% endif %}.</p>
+      {% if is_http %}
+      <div class="step-card">
+        <div class="step-no step-io" title="How a call to the published address becomes the call to the provider">REQ</div>
+        <div class="step-body"><div class="what">Request</div><div class="muted">{{ request_summary }}</div></div>
+        <div class="step-actions"><a class="btn btn-secondary btn-sm" href="/transform/sources/{{ source.id }}/steps/request">Edit</a></div>
+      </div>
+      {% endif %}
       <div class="step-card">
         <div class="step-no step-io" title="Where the data comes from">IN</div>
         <div class="step-body"><div class="what">Input</div><div class="muted">{{ input_summary }}</div></div>

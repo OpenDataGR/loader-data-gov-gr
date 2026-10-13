@@ -124,3 +124,54 @@ def test_the_summaries_in_words(client):
     assert "separated by comma" in tf.output_summary(t) and "marked as UTF-8 for Excel" in tf.output_summary(t)  # the defaults: comma, with the mark
     t.output_format = "bogus"
     assert tf.output_summary(t).startswith("Write ")
+
+
+# -- Request: the first step of an API source's pipeline -----------------------------------------------------------------------------------------
+
+def _req_card(page):
+    marker = ">REQ</div>"
+    start = page.rindex('<div class="step-card">', 0, page.index(marker))
+    return page[start:page.index('<div class="step-card">', start + 10)]
+
+
+def test_an_api_sources_list_starts_with_request_then_input_then_the_steps_then_output(client, source, _isolated_db):
+    registry_id = _registry(_isolated_db)
+    _build(client, registry_id, enable=False)
+    page = _main(client, registry_id)
+    assert page.index(">REQ<") < page.index(">IN<") < page.index("Read JSON") < page.index(">OUT<")
+    card = _req_card(page)
+    assert 'href="/transform/sources/%s/steps/request"' % registry_id in card and "Edit" in card and "Remove" not in card and "/move" not in card
+    assert 'id="req_mode"' not in page and "request-card" not in page  # the form is on the step's own page now
+
+
+def test_a_source_that_stores_data_has_no_request_step(client, source):
+    _go(client, source, "create")
+    page = _main(client, source["id"])
+    assert ">REQ<" not in page and ">IN<" in page and ">OUT<" in page
+    resp = client.get("/transform/sources/%s/steps/request" % source["id"], follow_redirects=False)
+    assert resp.status_code == 303 and "only+an+api+source" in resp.headers["location"].lower().replace("%20", "+")
+
+
+def test_the_request_card_says_in_words_how_callers_ask(client, source, _isolated_db):
+    registry_id = _registry(_isolated_db)
+    _build(client, registry_id, enable=False)
+    assert "Callers use POST, as the provider does: the call is passed on as it is." in _req_card(_main(client, registry_id))
+    client.post("/transform/sources/%s/request" % registry_id, data={"mode": "swap", "template": '{"a": "{plate}", "b": "{kind}"}'}, follow_redirects=False)
+    assert "Callers send GET with the parameters plate, kind; a template turns them into the provider&#39;s POST body." in _req_card(_main(client, registry_id))
+
+
+def test_the_request_page_holds_the_form_and_saving_returns_to_the_list(client, source, _isolated_db):
+    registry_id = _registry(_isolated_db)
+    _build(client, registry_id, enable=False)
+    page = client.get("/transform/sources/%s/steps/request" % registry_id).text
+    assert "<h1>Request</h1>" in page and 'action="/transform/sources/%s/request"' % registry_id in page and "Back to the transform" in page
+    assert "same as the provider (POST)" in page and 'id="req_template"' in page
+    resp = client.post("/transform/sources/%s/request" % registry_id, data={"mode": "swap", "template": '{"a": "{plate}"}'}, follow_redirects=False)
+    assert resp.headers["location"].startswith("/transform/sources/%s?" % registry_id) and "Callers now use GET" in _flash(resp)
+    assert "GET &rarr; POST" in client.get("/transform/sources/%s/steps/request" % registry_id).text
+
+
+def test_the_request_page_needs_a_transform(client, source, _isolated_db):
+    registry_id = _registry(_isolated_db)  # no transform created yet
+    resp = client.get("/transform/sources/%s/steps/request" % registry_id, follow_redirects=False)
+    assert resp.status_code == 303 and "No+such+transform" in resp.headers["location"]

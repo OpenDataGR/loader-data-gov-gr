@@ -204,7 +204,7 @@ def _editor_context(session: Session, hsession: Session, source: ProviderSource,
                                                    failed_only=request.query_params.get("show") == "failed") if transform else [], "counts": transform_runner.output_counts(hsession, source.id) if transform else None,
         "formats": te.OUTPUTS, "delimiters": te.CSV_DELIMITERS, "choices": transform_runner.REPROCESS_CHOICES, "has_sample": transform_runner.sample_for(session, hsession, source.id) is not None,
         "is_http": source.transport_type == "http", "provider_method": source.proxy_method,
-        "input_summary": _input_summary(source, transform, hsession), "output_summary": tf.output_summary(transform) if transform else "",
+        "input_summary": _input_summary(source, transform, hsession), "request_summary": tf.request_summary(source.proxy_method, transform) if source.transport_type == "http" else "", "output_summary": tf.output_summary(transform) if transform else "",
         "test_request": source.test_request, "source_edit_url": "/provider/sources/%s/edit" % source.id,
         "request_swap": bool(transform and transform.request_swap), "request_template": (transform.request_template if transform else "") or "",
         "proxy_name": source.name, "pasted_sample": bool(transform and transform.sample),
@@ -253,6 +253,19 @@ def input_step(source_id: str, request: Request, session: Session = Depends(get_
                       pasted_sample=bool(transform.sample), pasted_sample_kb=round(len(transform.sample.encode("utf-8")) / 1000, 1) if transform.sample else 0,
                       test_request=source.test_request, source_edit_url="/provider/sources/%s/edit" % source.id,
                       newest=types.SimpleNamespace(filename=newest[0], size=newest[1] or 0, fetched_at=newest[2]) if newest else None)
+
+
+@router.get("/sources/{source_id}/steps/request", response_class=HTMLResponse)
+def request_step(source_id: str, request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)):
+    """The Request step's page (an API source only): how callers ask the published address, and the template that turns their call into
+    the provider's."""
+    source, transform = _with(session, source_id)
+    if source is None or transform is None:
+        return _go("/transform", "No such transform.", "error")
+    if source.transport_type != "http":
+        return _go("/transform/sources/%s" % source_id, "Only an API source is asked on demand, so only it has a request step.", "error")
+    return _step_page(request, session, hsession, source, transform, "request", None, None, title="Request", is_http=True, provider_method=source.proxy_method,
+                      request_swap=bool(transform.request_swap), request_template=transform.request_template or "", proxy_name=source.name)
 
 
 @router.get("/sources/{source_id}/steps/output", response_class=HTMLResponse)

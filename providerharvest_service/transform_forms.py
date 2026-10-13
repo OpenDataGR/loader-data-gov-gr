@@ -86,6 +86,18 @@ def summarize(step: dict) -> str:
     return str(kind)
 
 
+def request_summary(provider_method: str, transform) -> str:
+    """The Request step, in words: how a caller's call becomes the provider's."""
+    from providerharvest_service import request_template
+
+    if transform is None or not transform.request_swap or not (transform.request_template or "").strip():
+        return "Callers use %s, as the provider does: the call is passed on as it is." % provider_method
+    names = ", ".join(request_template.placeholders(transform.request_template)) or "..."
+    if provider_method == "POST":
+        return "Callers send GET with the parameters %s; a template turns them into the provider's POST body." % names
+    return "Callers send a POST with a JSON body; a template turns its fields (%s) into the provider's GET query." % names
+
+
 def output_summary(transform) -> str:
     """The Output step, in words: what the transform writes and with which settings."""
     fmt = transform.output_format or "json"
