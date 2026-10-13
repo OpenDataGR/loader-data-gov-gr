@@ -37,6 +37,29 @@
         </tbody>
       </table>
     {% endif %}
+    {% if addable %}
+    <details style="margin-top:1rem;">
+      <summary class="btn btn-secondary btn-sm" style="list-style:none; cursor:pointer; display:inline-block;">+ Add a pipeline</summary>
+      <form method="post" action="/transform/pipelines" class="inline-form" style="margin-top:0.6rem;">
+        <div><label for="np-source">Reads from</label>
+          <select id="np-source" name="source_id" required>{% for source, names in addable %}<option value="{{ source.id }}">{{ source.title }}</option>{% endfor %}</select></div>
+        <div><label for="np-name">Name</label><input id="np-name" name="name" maxlength="30" placeholder="lookup" required pattern="[a-z][a-z0-9\-]{0,29}"></div>
+        <div><label for="np-from">Start as</label>
+          <select id="np-from" name="from"><option value="" data-source="">empty</option>{% for source, names in addable %}{% for n in names %}<option value="{{ n }}" data-source="{{ source.id }}">a copy of {{ n }}</option>{% endfor %}{% endfor %}</select></div>
+        <button type="submit">Add</button>
+      </form>
+      <script>
+        (function () {
+          var source = document.getElementById('np-source'), start = document.getElementById('np-from');
+          function show() {
+            Array.prototype.forEach.call(start.options, function (o) { o.hidden = o.dataset.source !== '' && o.dataset.source !== source.value; });
+            if (start.selectedOptions[0] && start.selectedOptions[0].hidden) start.value = '';
+          }
+          source.addEventListener('change', show); show();
+        })();
+      </script>
+    </details>
+    {% endif %}
   </div>
 
   <div class="panel" style="margin-top:1.5rem;">

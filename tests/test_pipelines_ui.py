@@ -18,6 +18,10 @@ def _setup(client, source):
     _go(client, source, "steps/new", data=READER_FORM)
 
 
+def _add(client, source, name, start="default"):
+    return client.post("/transform/pipelines", data={"source_id": source["id"], "name": name, "from": start}, follow_redirects=False)
+
+
 def _names(_isolated_db, source):
     with _isolated_db() as s:
         return [t.name for t in transform_runner.list_pipelines(s, source["id"])]
@@ -26,7 +30,7 @@ def _names(_isolated_db, source):
 def test_a_pipeline_is_added_as_a_switched_off_copy_of_the_one_you_are_on(client, source, _isolated_db):
     _setup(client, source)
     _go(client, source, "output", data={"format": "csv", "delimiter": ";"})
-    resp = _go(client, source, "pipelines", data={"name": "Lookup", "from": "default"})
+    resp = _add(client, source, "Lookup")
     assert resp.headers["location"].startswith("/transform/sources/%s/pipelines/lookup?" % source["id"]) and "copy of default" in _flash(resp)
     assert _names(_isolated_db, source) == ["default", "lookup"]
     with _isolated_db() as s:
@@ -36,7 +40,7 @@ def test_a_pipeline_is_added_as_a_switched_off_copy_of_the_one_you_are_on(client
 
 def test_a_pipelines_own_page_works_on_that_pipeline_only(client, source, _isolated_db):
     _setup(client, source)
-    _go(client, source, "pipelines", data={"name": "lookup", "from": "default"})
+    _add(client, source, "lookup")
     _pipeline(client, source, "lookup", "output", data={"format": "xml", "root": "stations", "record": "station"})
     _pipeline(client, source, "lookup", "enabled", data={"enabled": "1"})
     with _isolated_db() as s:
@@ -50,7 +54,7 @@ def test_a_pipelines_own_page_works_on_that_pipeline_only(client, source, _isola
 
 def test_every_page_of_a_pipeline_links_back_to_that_pipeline(client, source):
     _setup(client, source)
-    _go(client, source, "pipelines", data={"name": "lookup", "from": "default"})
+    _add(client, source, "lookup")
     base = "/transform/sources/%s/pipelines/lookup" % source["id"]
     for sub in ("steps/input", "steps/output", "steps/1/edit"):
         page = client.get("%s/%s" % (base, sub)).text
@@ -61,9 +65,9 @@ def test_every_page_of_a_pipeline_links_back_to_that_pipeline(client, source):
 
 def test_the_switcher_lists_the_pipelines_and_the_default_page_is_unchanged(client, source):
     _setup(client, source)
-    _go(client, source, "pipelines", data={"name": "lookup", "from": "default"})
+    _add(client, source, "lookup")
     page = client.get("/transform/sources/%s" % source["id"]).text
-    assert ">default</a>" in page and ">lookup</a>" in page and "Remove this pipeline" not in page and "+ Add a pipeline" in page
+    assert ">default</a>" in page and ">lookup</a>" in page and "Remove this pipeline" not in page and "+ Add a pipeline" not in page
     assert 'href="/transform/sources/%s/pipelines/lookup"' % source["id"] in page
 
 
@@ -71,18 +75,18 @@ def test_the_switcher_lists_the_pipelines_and_the_default_page_is_unchanged(clie
                                            ("x" * 31, "Name the pipeline"), ("default", "already a pipeline called")])
 def test_bad_or_taken_names_are_refused(client, source, _isolated_db, name, problem):
     _setup(client, source)
-    assert problem in _flash(_go(client, source, "pipelines", data={"name": name, "from": "default"}))
+    assert problem in _flash(_add(client, source, name))
     assert _names(_isolated_db, source) == ["default"]
 
 
 def test_a_pipeline_needs_a_first_transform_to_copy(client, source, _isolated_db):
-    assert "Create the first transform" in _flash(_go(client, source, "pipelines", data={"name": "lookup"}))
+    assert "Set up the first transform" in _flash(_add(client, source, "lookup"))
     assert _names(_isolated_db, source) == []
 
 
 def test_a_pipeline_is_removed_with_its_outputs_but_the_default_stays(client, source, _isolated_db, _isolated_harvest_db):
     _setup(client, source)
-    _go(client, source, "pipelines", data={"name": "lookup", "from": "default"})
+    _add(client, source, "lookup")
     _pipeline(client, source, "lookup", "enabled", data={"enabled": "1"})
     _pipeline(client, source, "lookup", "reprocess", data={"limit": "5"})
     with _isolated_harvest_db() as h:
@@ -98,7 +102,7 @@ def test_a_pipeline_is_removed_with_its_outputs_but_the_default_stays(client, so
 
 def test_outputs_shown_and_deleted_are_the_pipelines_own(client, source, _isolated_db, _isolated_harvest_db):
     _setup(client, source)
-    _go(client, source, "pipelines", data={"name": "lookup", "from": "default"})
+    _add(client, source, "lookup")
     _pipeline(client, source, "lookup", "enabled", data={"enabled": "1"})
     _go(client, source, "enabled", data={"enabled": "1"})
     _upload_data(client, source)  # one file: both pipelines store an output
@@ -120,8 +124,28 @@ def test_an_unknown_pipeline_is_not_a_page(client, source, _isolated_db):
 def test_the_transform_box_lists_each_pipeline_on_its_own_row_with_its_source_as_the_input(client, source):
     assert "Set up</a>" in client.get("/transform").text  # a source with no transform: one row to set it up
     _setup(client, source)
-    _go(client, source, "pipelines", data={"name": "lookup", "from": "default"})
+    _add(client, source, "lookup")
     page = client.get("/transform").text
     assert page.count('<div class="name-title">default</div>') == 1 and page.count('<div class="name-title">lookup</div>') == 1
     assert 'href="/transform/sources/%s"' % source["id"] in page and 'href="/transform/sources/%s/pipelines/lookup"' % source["id"] in page
     assert page.count("from ") >= 2 and "Set up</a>" not in page
+
+
+def test_a_pipeline_is_added_from_the_transform_box_empty_or_as_a_copy(client, source, _isolated_db):
+    assert "+ Add a pipeline" not in client.get("/transform").text  # nothing to read from until a source has its first transform
+    _setup(client, source)
+    page = client.get("/transform").text
+    assert 'action="/transform/pipelines"' in page and 'name="source_id"' in page and "a copy of default" in page and ">empty<" in page
+    assert "+ Add a pipeline" not in client.get("/transform/sources/%s" % source["id"]).text  # not from inside a pipeline
+    resp = _add(client, source, "blank", start="")
+    assert resp.headers["location"].startswith("/transform/sources/%s/pipelines/blank?" % source["id"]) and "copy" not in _flash(resp)
+    with _isolated_db() as s:
+        blank = transform_runner.get_pipeline(s, source["id"], "blank")
+        assert transform_runner.steps_of(blank) == [] and not blank.enabled
+
+
+def test_copying_a_pipeline_that_does_not_exist_or_from_no_source_is_refused(client, source, _isolated_db):
+    _setup(client, source)
+    assert "no pipeline called" in _flash(_add(client, source, "x1", start="ghost"))
+    assert "Choose the source" in _flash(client.post("/transform/pipelines", data={"source_id": "nope", "name": "x1"}, follow_redirects=False))
+    assert _names(_isolated_db, source) == ["default"]

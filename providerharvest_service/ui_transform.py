@@ -117,7 +117,7 @@ def overview(request: Request, session: Session = Depends(get_session), hsession
     for table in _tables(session):
         tables.append({"table": table, "columns": json.loads(table.columns), "used_by": len(transform_runner.lookups_in_use(session, table.name))})
     return templates.TemplateResponse(request, "transform/overview.html", {
-        "rows": rows, "tables": tables, "flash": request.query_params.get("flash"), "flash_kind": request.query_params.get("flash_kind", "success"),
+        "rows": rows, "addable": [(source, sorted(t.name for t in pipelines[source.id])) for source in sources if source.id in pipelines], "tables": tables, "flash": request.query_params.get("flash"), "flash_kind": request.query_params.get("flash_kind", "success"),
     })
 
 
@@ -706,30 +706,38 @@ def _mirror_routes_for_pipelines() -> None:
 _mirror_routes_for_pipelines()
 
 
-@router.post("/sources/{source_id}/pipelines")
-async def add_pipeline(source_id: str, request: Request, session: Session = Depends(get_session)):
-    """A new pipeline on a source, started as a copy of the one the form was sent from (its steps, output settings, sample and request
-    settings), switched off so nothing changes until it is tried and switched on."""
+@router.post("/pipelines")
+async def add_pipeline(request: Request, session: Session = Depends(get_session)):
+    """A new pipeline on a source, added from the Transform Box: empty, or a copy of one of that source's pipelines (its steps, output
+    settings, sample and request settings). Switched off, so nothing changes until it is tried and switched on."""
+    form = await request.form()
+    source_id = str(form.get("source_id") or "")
     source = _source_or_none(session, source_id)
     if source is None:
-        return _go("/transform", "No such source.", "error")
-    form = await request.form()
+        return _go("/transform", "Choose the source the pipeline reads from.", "error")
+    if not transform_runner.list_pipelines(session, source_id):
+        return _go("/transform", "Set up the first transform of %s before adding another pipeline." % source.title, "error")
     name = str(form.get("name") or "").strip().lower()
-    origin = transform_runner.get_pipeline(session, source_id, str(form.get("from") or transform_runner.DEFAULT_PIPELINE))
-    base = "/transform/sources/%s" % source_id
-    if origin is None:
-        return _go(base, "Create the first transform of this source before adding another pipeline.", "error")
+    start = str(form.get("from") or "")
+    origin = transform_runner.get_pipeline(session, source_id, start) if start else None
+    if start and origin is None:
+        return _go("/transform", "%s has no pipeline called %r to copy." % (source.title, start), "error")
     if not _PIPELINE_NAME.match(name):
-        return _go(base, "Name the pipeline with lowercase letters, digits and hyphens, starting with a letter (for example lookup).", "error")
+        return _go("/transform", "Name the pipeline with lowercase letters, digits and hyphens, starting with a letter (for example lookup).", "error")
     if transform_runner.get_pipeline(session, source_id, name) is not None:
-        return _go(base, "There is already a pipeline called %r on this source." % name, "error")
-    session.add(Transform(
-        source_id=source_id, name=name, steps=origin.steps, output_format=origin.output_format, root_name=origin.root_name, record_name=origin.record_name,
-        csv_delimiter=origin.csv_delimiter, csv_bom=origin.csv_bom, output_single=origin.output_single, request_swap=origin.request_swap,
-        request_template=origin.request_template, sample=origin.sample, enabled=False, updated_by=_who(request)))
+        return _go("/transform", "There is already a pipeline called %r on %s." % (name, source.title), "error")
+    if origin is not None:
+        pipeline = Transform(
+            source_id=source_id, name=name, steps=origin.steps, output_format=origin.output_format, root_name=origin.root_name, record_name=origin.record_name,
+            csv_delimiter=origin.csv_delimiter, csv_bom=origin.csv_bom, output_single=origin.output_single, request_swap=origin.request_swap,
+            request_template=origin.request_template, sample=origin.sample, enabled=False, updated_by=_who(request))
+    else:
+        pipeline = Transform(source_id=source_id, name=name, steps="[]", enabled=False, updated_by=_who(request), output_single=True if source.transport_type == "http" else None)
+    session.add(pipeline)
     session.commit()
     logger.info("transform box: %s added the pipeline %s to source %s", _who(request) or "?", name, source.name)
-    return _go("%s/pipelines/%s" % (base, name), "Pipeline %s added, as a copy of %s. It is switched off until you switch it on." % (name, origin.name))
+    return _go("/transform/sources/%s/pipelines/%s" % (source_id, name),
+               "Pipeline %s added%s. It is switched off until you switch it on." % (name, (", as a copy of %s" % origin.name) if origin else ""))
 
 
 @router.post("/sources/{source_id}/pipelines/{pipeline}/delete")

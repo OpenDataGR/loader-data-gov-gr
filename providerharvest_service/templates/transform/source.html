@@ -28,14 +28,6 @@
       {% for name in pipelines %}
         <a class="btn {{ '' if name == pipeline_name else 'btn-secondary' }} btn-sm" href="/transform/sources/{{ source.id }}{{ '' if name == 'default' else '/pipelines/' ~ name }}">{{ name }}</a>
       {% endfor %}
-      <details style="display:inline-block;">
-        <summary class="btn btn-secondary btn-sm" style="list-style:none; cursor:pointer;">+ Add a pipeline</summary>
-        <form method="post" action="/transform/sources/{{ source.id }}/pipelines" class="inline-form" style="margin-top:0.4rem;">
-          <input type="hidden" name="from" value="{{ pipeline_name }}">
-          <div><label for="pipeline-name">Name (starts as a copy of {{ pipeline_name }})</label><input id="pipeline-name" name="name" maxlength="30" placeholder="lookup" required pattern="[a-z][a-z0-9\-]{0,29}"></div>
-          <button type="submit">Add</button>
-        </form>
-      </details>
       {% if pipeline_name != "default" %}
         <form method="post" action="{{ tbase }}/delete" style="margin:0;" onsubmit="return confirm('Remove the pipeline {{ pipeline_name }} and the outputs it stored?');"><button type="submit" class="btn-secondary btn-sm">Remove this pipeline</button></form>
       {% endif %}
