@@ -70,7 +70,7 @@ def test_a_bad_query_template_is_refused_when_it_is_saved(template, message):
 # -- GET from callers, POST to the provider ------------------------------------------------------------------------------------------------
 
 def _swap(client, source_id, template=REGISTRY_BODY, mode="swap"):
-    return client.post("/transform/sources/%s/request" % source_id, data={"mode": mode, "template": template}, follow_redirects=False)
+    return client.post("/load/sources/%s/request" % source_id, data={"mode": mode, "template": template}, follow_redirects=False)
 
 
 def test_callers_use_a_plain_link_and_the_provider_gets_the_post_it_expects(client, source, _isolated_db, answer):
@@ -132,7 +132,7 @@ def test_a_bad_template_is_refused_and_the_setting_is_left_alone(client, source,
     for bad in ("", '{"a": {plate}}', '{"a": "b"}'):
         assert "Callers now use" not in _flash(_swap(client, registry_id, template=bad))
     assert _caller().get("/proxy/registry", params={"plate": "x"}).status_code == 405  # still the provider's own method
-    assert "No such transform" in _flash(client.post("/transform/sources/nope/request", data={"mode": "swap", "template": REGISTRY_BODY}, follow_redirects=False))
+    assert "Only an API source" in _flash(client.post("/load/sources/nope/request", data={"mode": "swap", "template": REGISTRY_BODY}, follow_redirects=False))
 
 
 # -- POST from callers, GET to the provider ---------------------------------------------------------------------------------------------------
@@ -190,8 +190,9 @@ def test_the_load_box_shows_the_call_as_callers_make_it_and_the_transform_page_t
     assert "GET" in row and "/data/registry?plate=..." in row and "sent to the provider as POST" in row
     assert 'href="https://testserver/data/registry' not in row  # not offered as a link: the address needs its parameter
     page = client.get("/transform/sources/%s" % registry_id).text
-    assert ">REQ<" in page and "Callers send GET with the parameters plate" in page  # the Request step's card, in the list
-    request_page = client.get("/transform/sources/%s/steps/request" % registry_id).text
+    assert ">REQ<" not in page and "/load/sources/%s/request" % registry_id in page  # the Transform page only points to the Load Box
+    assert "Callers send GET with the parameters plate" in client.get("/load").text
+    request_page = client.get("/load/sources/%s/request" % registry_id).text
     assert "GET &rarr; POST" in request_page and "plate" in request_page and 'id="req_mode"' in request_page
 
 

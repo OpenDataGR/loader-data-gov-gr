@@ -16,7 +16,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from providerharvest_service import admin_session, build_info, harvest_db, load_api, nav, provider_sources, publishing
+from providerharvest_service import admin_session, build_info, harvest_db, load_api, nav, provider_sources, publishing, request_template, transform_forms as tf
 from providerharvest_service.db import get_session
 from providerharvest_service.models import LoadTarget, ProviderSource, Transform
 
@@ -46,7 +46,7 @@ def _api_of(source: ProviderSource, base: str, transform=None) -> dict | None:
         config = json.loads(source.config or "{}")
     except ValueError:
         config = {}
-    from providerharvest_service import proxy as proxy_module, request_template
+    from providerharvest_service import proxy as proxy_module
 
     swapped = proxy_module.request_is_swapped(transform)
     method = proxy_module.consumer_method(source, transform)
@@ -56,6 +56,7 @@ def _api_of(source: ProviderSource, base: str, transform=None) -> dict | None:
     return {
         "url": "%s/data/%s%s" % (base, source.name, hint), "method": method, "turned": swapped, "provider_method": source.proxy_method,
         "per_caller": config.get("proxy_rate_limit_per_ip", 30), "only": source.proxy_only,
+        "request_summary": tf.request_summary(source.proxy_method, transform),
     }
 
 
@@ -96,3 +97,57 @@ async def set_api(source_id: str, request: Request, session: Session = Depends(g
     session.commit()
     logger.info("load box: %s %s the API of source %s", who or "?", "published" if enable else "unpublished", source.name)
     return _go("%s is %s at /data/%s." % (source.title, "published" if enable else "no longer published", source.name))
+
+
+def _api_source(session: Session, source_id: str):
+    source = session.get(ProviderSource, source_id)
+    return source if source is not None and source.transport_type == "http" else None
+
+
+@router.get("/sources/{source_id}/request", response_class=HTMLResponse)
+def request_page(source_id: str, request: Request, session: Session = Depends(get_session)):
+    """How callers ask an API source's published address, and the template that turns their call into the provider's."""
+    source = _api_source(session, source_id)
+    if source is None:
+        return _go("Only an API source is asked on demand, so only it has a request.", "error")
+    transform = session.scalar(select(Transform).where(Transform.source_id == source_id))
+    return templates.TemplateResponse(request, "load/request.html", {
+        "source": source, "provider_method": source.proxy_method, "proxy_name": source.name,
+        "request_swap": bool(transform and transform.request_swap), "request_template": (transform.request_template if transform else "") or "",
+        "flash": request.query_params.get("flash"), "flash_kind": request.query_params.get("flash_kind", "success"),
+    })
+
+
+@router.post("/sources/{source_id}/request")
+async def set_request(source_id: str, request: Request, session: Session = Depends(get_session)):
+    """Callers use the other method than the provider, and the template turns their call into the provider's (see request_template.py).
+    The provider's own method is the source's setting (Extract Box); this only turns it around. The setting is kept on the source's
+    transform row, which is created (empty, switched off) when there is none yet."""
+    source = _api_source(session, source_id)
+    if source is None:
+        return _go("Only an API source is asked on demand, so only it has a request.", "error")
+    back = "/load/sources/%s/request" % source_id
+
+    def refuse(message: str) -> RedirectResponse:
+        return RedirectResponse(back + "?" + urlencode({"flash": message, "flash_kind": "error"}), status_code=303)
+
+    form = await request.form()
+    swap = str(form.get("mode") or "") == "swap"
+    template = str(form.get("template") or "").strip()
+    try:
+        if swap:
+            (request_template.validate_json_template if source.proxy_method == "POST" else request_template.validate_query_template)(template)
+    except request_template.RequestTemplateError as exc:
+        return refuse(str(exc))
+    who = admin_session.verify_session_cookie(request.cookies.get(admin_session.COOKIE_NAME, "")) or ""
+    transform = session.scalar(select(Transform).where(Transform.source_id == source_id))
+    if transform is None:
+        transform = Transform(source_id=source_id, steps="[]", enabled=False, output_single=True)
+        session.add(transform)
+    transform.request_swap = swap
+    transform.request_template = template if swap else (template or transform.request_template)
+    transform.updated_at, transform.updated_by = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None), who
+    session.commit()
+    logger.info("load box: %s %s the request turn-around of source %s", who or "?", "set" if swap else "switched off", source.name)
+    return _go("Callers now use %s on /data/%s." % ("GET" if source.proxy_method == "POST" else "POST", source.name) if swap
+               else "Callers use the same method as the provider (%s)." % source.proxy_method)

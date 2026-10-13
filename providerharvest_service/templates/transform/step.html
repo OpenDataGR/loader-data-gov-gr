@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% import "_macros.html" as macros %}
-{% block title %}{{ title if kind in ("input", "output", "request") else (("Edit" if number else "Add") ~ " a step") }} -- {{ source.title }} -- loader.data.gov.gr{% endblock %}
+{% block title %}{{ title if kind in ("input", "output") else (("Edit" if number else "Add") ~ " a step") }} -- {{ source.title }} -- loader.data.gov.gr{% endblock %}
 {% block content %}
   <style>
     .field-table td, .field-table th { padding: 0.3rem 0.5rem; vertical-align: middle; }
@@ -33,7 +33,7 @@
   </script>
 
   <div class="panel">
-    <h1>{% if kind in ("input", "output", "request") %}{{ title }}{% else %}{{ "Edit" if number else "Add" }}: {{ title }}{% endif %}</h1>
+    <h1>{% if kind in ("input", "output") %}{{ title }}{% else %}{{ "Edit" if number else "Add" }}: {{ title }}{% endif %}</h1>
     <p class="subtitle"><a href="/transform/sources/{{ source.id }}">&larr; back to the transform</a> &middot; {{ source.title }}{% if number %} &middot; step {{ number }}{% endif %}</p>
     {% if error %}<div class="problems">{{ error }}</div>{% endif %}
 
@@ -151,28 +151,6 @@
         {% endif %}
       {% endif %}
       <div style="margin-top:1.1rem;"><a class="btn btn-secondary" href="/transform/sources/{{ source.id }}">Back to the transform</a></div>
-    {% elif kind == "request" %}
-      <p class="muted" style="margin:0 0 0.6rem;">This is the first thing that happens to a call: how what a caller sends to the source's published address becomes the call to the provider.{% if request_swap %} <span class="badge badge-ok"><span>{{ "GET" if provider_method == "POST" else "POST" }} &rarr; {{ provider_method }}</span></span>{% else %} <span class="badge badge-pending"><span>same as the provider ({{ provider_method }})</span></span>{% endif %}</p>
-      <p class="muted" style="margin:0.4rem 0;">The provider is called with <strong>{{ provider_method }}</strong> (set on the source, in the Extract Box). Here callers can use the <em>other</em> method on <code>/data/{{ proxy_name }}</code>, and a template turns their call into the provider's. Only what the template names goes on; their other parameters are dropped, and every value is escaped.</p>
-      <form method="post" action="/transform/sources/{{ source.id }}/request">
-        <label for="req_mode">Callers send</label>
-        <select id="req_mode" name="mode" style="max-width:34rem;">
-          <option value="same"{% if not request_swap %} selected{% endif %}>{{ provider_method }} -- the same as the provider (the call is passed on as it is)</option>
-          <option value="swap"{% if request_swap %} selected{% endif %}>{% if provider_method == "POST" %}GET -- query parameters, e.g. /data/{{ proxy_name }}?plate=AB1234{% else %}POST -- a JSON body, whose fields become the provider's query parameters{% endif %}</option>
-        </select>
-        <div id="req_template_box"{% if not request_swap %} style="display:none"{% endif %}>
-          <label for="req_template">{% if provider_method == "POST" %}The JSON body sent to the provider -- write <code>{name}</code> where a caller's parameter goes (inside quotes){% else %}The provider's query parameters -- <code>name={field}</code>, one per line or joined by &amp;; <code>{field}</code> is a field of the caller's JSON body (<code>{a/b}</code> for a nested one){% endif %}</label>
-          <textarea id="req_template" name="template" rows="7" style="font-family:monospace; font-size:0.8rem;" placeholder="{% if provider_method == 'POST' %}{&quot;document&quot;: {&quot;statements&quot;: {&quot;platenumber&quot;: &quot;{plate}&quot;}}}{% else %}plate={plate}{% endif %}">{{ request_template }}</textarea>
-        </div>
-        <div style="margin-top:0.4rem;"><button type="submit">Save</button></div>
-      </form>
-      <script>
-        (function () {
-          var mode = document.getElementById('req_mode'), box = document.getElementById('req_template_box');
-          mode.addEventListener('change', function () { box.style.display = mode.value === 'swap' ? '' : 'none'; });
-        })();
-      </script>
-      <div style="margin-top:0.8rem;"><a class="btn btn-secondary" href="/transform/sources/{{ source.id }}">Back to the transform</a></div>
     {% elif kind == "output" %}
     <form method="post" action="/transform/sources/{{ source.id }}/output" id="output-form">
       <div class="inline-form">

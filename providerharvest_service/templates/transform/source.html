@@ -52,14 +52,7 @@
       {% if problems %}<div class="problems"><strong>Not ready:</strong> {{ problems[0] }}{% if problems|length > 1 %} (and {{ problems|length - 1 }} more){% endif %}</div>{% endif %}
 
       <h2 style="font-size:1.05rem; margin:1.4rem 0 0.2rem;">Steps</h2>
-      <p class="muted" style="margin:0 0 0.4rem;">Run in this order on every {% if is_http %}answer{% else %}file{% endif %}.</p>
-      {% if is_http %}
-      <div class="step-card">
-        <div class="step-no step-io" title="How a call to the published address becomes the call to the provider">REQ</div>
-        <div class="step-body"><div class="what">Request</div><div class="muted">{{ request_summary }}</div></div>
-        <div class="step-actions"><a class="btn btn-secondary btn-sm" href="/transform/sources/{{ source.id }}/steps/request">Edit</a></div>
-      </div>
-      {% endif %}
+      <p class="muted" style="margin:0 0 0.4rem;">Run in this order on every {% if is_http %}answer{% else %}file{% endif %}.{% if is_http %} How callers ask for it is set in the <a href="/load/sources/{{ source.id }}/request">Load Box</a>.{% endif %}</p>
       <div class="step-card">
         <div class="step-no step-io" title="Where the data comes from">IN</div>
         <div class="step-body"><div class="what">Input</div><div class="muted">{{ input_summary }}</div></div>

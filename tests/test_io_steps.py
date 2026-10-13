@@ -126,52 +126,47 @@ def test_the_summaries_in_words(client):
     assert tf.output_summary(t).startswith("Write ")
 
 
-# -- Request: the first step of an API source's pipeline -----------------------------------------------------------------------------------------
+# -- Request: set in the Load Box (it is how callers ask the published address), the Transform page only points there -----------------------------------
 
-def _req_card(page):
-    marker = ">REQ</div>"
-    start = page.rindex('<div class="step-card">', 0, page.index(marker))
-    return page[start:page.index('<div class="step-card">', start + 10)]
-
-
-def test_an_api_sources_list_starts_with_request_then_input_then_the_steps_then_output(client, source, _isolated_db):
+def test_the_transform_page_has_no_request_step_but_points_to_the_load_box(client, source, _isolated_db):
     registry_id = _registry(_isolated_db)
     _build(client, registry_id, enable=False)
     page = _main(client, registry_id)
-    assert page.index(">REQ<") < page.index(">IN<") < page.index("Read JSON") < page.index(">OUT<")
-    card = _req_card(page)
-    assert 'href="/transform/sources/%s/steps/request"' % registry_id in card and "Edit" in card and "Remove" not in card and "/move" not in card
-    assert 'id="req_mode"' not in page and "request-card" not in page  # the form is on the step's own page now
+    assert ">REQ<" not in page and 'id="req_mode"' not in page and 'href="/load/sources/%s/request"' % registry_id in page
+    assert client.get("/transform/sources/%s/steps/request" % registry_id, follow_redirects=False).status_code == 404
 
 
-def test_a_source_that_stores_data_has_no_request_step(client, source):
-    _go(client, source, "create")
-    page = _main(client, source["id"])
-    assert ">REQ<" not in page and ">IN<" in page and ">OUT<" in page
-    resp = client.get("/transform/sources/%s/steps/request" % source["id"], follow_redirects=False)
-    assert resp.status_code == 303 and "only+an+api+source" in resp.headers["location"].lower().replace("%20", "+")
-
-
-def test_the_request_card_says_in_words_how_callers_ask(client, source, _isolated_db):
+def test_the_load_box_row_says_in_words_how_callers_ask_and_links_to_the_form(client, source, _isolated_db):
     registry_id = _registry(_isolated_db)
     _build(client, registry_id, enable=False)
-    assert "Callers use POST, as the provider does: the call is passed on as it is." in _req_card(_main(client, registry_id))
-    client.post("/transform/sources/%s/request" % registry_id, data={"mode": "swap", "template": '{"a": "{plate}", "b": "{kind}"}'}, follow_redirects=False)
-    assert "Callers send GET with the parameters plate, kind; a template turns them into the provider&#39;s POST body." in _req_card(_main(client, registry_id))
+    row = client.get("/load").text
+    assert "Callers use POST, as the provider does: the call is passed on as it is." in row and 'href="/load/sources/%s/request"' % registry_id in row
+    client.post("/load/sources/%s/request" % registry_id, data={"mode": "swap", "template": '{"a": "{plate}", "b": "{kind}"}'}, follow_redirects=False)
+    assert "Callers send GET with the parameters plate, kind; a template turns them into the provider&#39;s POST body." in client.get("/load").text
 
 
-def test_the_request_page_holds_the_form_and_saving_returns_to_the_list(client, source, _isolated_db):
+def test_the_request_page_holds_the_form_and_saving_works(client, source, _isolated_db):
     registry_id = _registry(_isolated_db)
     _build(client, registry_id, enable=False)
-    page = client.get("/transform/sources/%s/steps/request" % registry_id).text
-    assert "<h1>Request</h1>" in page and 'action="/transform/sources/%s/request"' % registry_id in page and "Back to the transform" in page
+    page = client.get("/load/sources/%s/request" % registry_id).text
+    assert "<h1>Request</h1>" in page and 'action="/load/sources/%s/request"' % registry_id in page and "Back to the Load Box" in page
     assert "same as the provider (POST)" in page and 'id="req_template"' in page
-    resp = client.post("/transform/sources/%s/request" % registry_id, data={"mode": "swap", "template": '{"a": "{plate}"}'}, follow_redirects=False)
-    assert resp.headers["location"].startswith("/transform/sources/%s?" % registry_id) and "Callers now use GET" in _flash(resp)
-    assert "GET &rarr; POST" in client.get("/transform/sources/%s/steps/request" % registry_id).text
+    resp = client.post("/load/sources/%s/request" % registry_id, data={"mode": "swap", "template": '{"a": "{plate}"}'}, follow_redirects=False)
+    assert resp.headers["location"].startswith("/load?") and "Callers now use GET" in _flash(resp)
+    assert "GET &rarr; POST" in client.get("/load/sources/%s/request" % registry_id).text
 
 
-def test_the_request_page_needs_a_transform(client, source, _isolated_db):
-    registry_id = _registry(_isolated_db)  # no transform created yet
-    resp = client.get("/transform/sources/%s/steps/request" % registry_id, follow_redirects=False)
-    assert resp.status_code == 303 and "No+such+transform" in resp.headers["location"]
+def test_a_bad_template_is_shown_on_the_request_page_itself(client, source, _isolated_db):
+    registry_id = _registry(_isolated_db)
+    resp = client.post("/load/sources/%s/request" % registry_id, data={"mode": "swap", "template": "nope"}, follow_redirects=False)
+    assert resp.headers["location"].startswith("/load/sources/%s/request?" % registry_id)
+
+
+def test_the_request_can_be_set_before_any_transform_exists_and_only_for_an_api_source(client, source, _isolated_db):
+    registry_id = _registry(_isolated_db)  # no transform yet: one is created, empty and switched off
+    resp = client.post("/load/sources/%s/request" % registry_id, data={"mode": "swap", "template": '{"a": "{plate}"}'}, follow_redirects=False)
+    assert "Callers now use GET" in _flash(resp)
+    assert "GET &rarr; POST" in client.get("/load/sources/%s/request" % registry_id).text
+    for method in (client.get, client.post):
+        resp = method("/load/sources/%s/request" % source["id"], follow_redirects=False)  # a push source
+        assert resp.status_code == 303 and "Only+an+API+source" in resp.headers["location"].replace("%20", "+")

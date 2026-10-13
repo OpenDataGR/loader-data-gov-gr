@@ -189,7 +189,7 @@ provider's uploads until they switch), and for an HTTPS push source **Rotate API
 key** (`/provider/sources/{id}/rotate-key`: the old key stops working immediately;
 before this a lost key meant deleting and re-registering the source).
 
-**Input and Output are steps** (Transform Box): a transform's list reads (for an API source) **REQ** (how callers' calls become the provider's: GET->POST turn-around and template) ->  **IN** -> the processing steps (the first is *Read XML/JSON/CSV/Excel*) -> **OUT**.
+**Input and Output are steps** (Transform Box): a transform's list reads **IN** -> the processing steps (the first is *Read XML/JSON/CSV/Excel*) -> **OUT**. How callers ask an API source's published address (the GET->POST turn-around and its template) is set in the Load Box, on the source's row (Request -> Edit).
 The two ends are fixed (not removable or movable, not offered under "Add a step") and each has its own page, opened by its Edit button:
 *Input* (`/transform/sources/{id}/steps/input`) says where the data comes from -- for a source that stores data, the newest file the steps are built
 on; for an API source, its sample answer (paste one, or fetch one with the source's test request); *Output* (`.../steps/output`) holds the format and

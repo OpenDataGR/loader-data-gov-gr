@@ -26,6 +26,7 @@
               {% else %}<span class="muted">nothing transformed yet</span>{% endif %}
             </td>
             <td>
+              {% if r.api %}<div class="muted" style="margin-bottom:0.3rem;">Request: {{ r.api.request_summary }} <a href="/load/sources/{{ r.source.id }}/request">Edit</a></div>{% endif %}
               {% if r.published %}
                 {% if r.source.status == "active" %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>published</span></span>
                 {% else %}<span class="badge badge-pending"><span>published, not live ({{ r.source.status }})</span></span>{% endif %}
