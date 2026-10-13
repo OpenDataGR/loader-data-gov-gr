@@ -115,3 +115,13 @@ def test_an_unknown_pipeline_is_not_a_page(client, source, _isolated_db):
     resp = client.get("/transform/sources/%s/pipelines/nope" % source["id"], follow_redirects=False)
     assert resp.status_code == 303 and resp.headers["location"].startswith("/transform/sources/%s?" % source["id"]) and "No such pipeline" in _flash(resp)
     assert _names(_isolated_db, source) == ["default"]  # nothing was created
+
+
+def test_the_transform_box_lists_each_pipeline_on_its_own_row_with_its_source_as_the_input(client, source):
+    assert "Set up</a>" in client.get("/transform").text  # a source with no transform: one row to set it up
+    _setup(client, source)
+    _go(client, source, "pipelines", data={"name": "lookup", "from": "default"})
+    page = client.get("/transform").text
+    assert page.count('<div class="name-title">default</div>') == 1 and page.count('<div class="name-title">lookup</div>') == 1
+    assert 'href="/transform/sources/%s"' % source["id"] in page and 'href="/transform/sources/%s/pipelines/lookup"' % source["id"] in page
+    assert page.count("from ") >= 2 and "Set up</a>" not in page

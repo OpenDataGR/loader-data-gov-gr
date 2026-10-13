@@ -12,11 +12,15 @@
       <div class="empty-state">{{ macros.icon("inbox", 40) }}<p>No sources yet. Register one in the Extract Box first.</p></div>
     {% else %}
       <table>
-        <thead><tr><th>Source</th><th>Transform</th><th>Steps</th><th>Outputs</th><th>Latest</th><th></th></tr></thead>
+        <thead><tr><th>Pipeline</th><th>Status</th><th>Steps</th><th>Outputs</th><th>Latest</th><th></th></tr></thead>
         <tbody>
           {% for r in rows %}
           <tr>
-            <td><div class="name-title">{{ r.source.title }}</div><span class="name-slug">{{ r.source.name }}</span>{% if r.source.transport_type == "http" %}<div class="muted" style="font-size:0.78rem;">acts on live answers (asked on demand)</div>{% endif %}</td>
+            <td>
+              {% if r.transform %}<div class="name-title">{{ r.transform.name }}</div><div class="muted" style="font-size:0.85rem;">from {{ r.source.title }} <span class="name-slug">({{ r.source.name }})</span></div>
+              {% else %}<div class="name-title">{{ r.source.title }}</div><span class="name-slug">{{ r.source.name }}</span>{% endif %}
+              {% if r.source.transport_type == "http" %}<div class="muted" style="font-size:0.78rem;">acts on live answers (asked on demand)</div>{% endif %}
+            </td>
             <td>
               {% if not r.transform %}<span class="muted">none</span>
               {% elif r.transform.enabled %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>on</span></span>
@@ -27,7 +31,7 @@
               {% if r.counts %}{{ r.counts.ok }} ok{% if r.counts.failed %}, <span style="color:var(--status-rejected)">{{ r.counts.failed }} failed</span>{% endif %}{% endif %}
             </td>
             <td class="muted">{% if r.counts and r.counts.latest %}{{ r.counts.latest|short_utc }} UTC{% endif %}</td>
-            <td><a class="btn btn-secondary btn-sm" href="/transform/sources/{{ r.source.id }}">{{ "Open" if r.transform else "Set up" }}</a></td>
+            <td><a class="btn btn-secondary btn-sm" href="{{ r.url }}">{{ "Open" if r.transform else "Set up" }}</a></td>
           </tr>
           {% endfor %}
         </tbody>

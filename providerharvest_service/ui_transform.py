@@ -101,12 +101,18 @@ def _table_columns(session: Session) -> dict[str, list[str]]:
 @router.get("", response_class=HTMLResponse)
 def overview(request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)):
     sources = provider_sources.list_all(session)
-    transforms = {t.source_id: t for t in session.scalars(select(Transform)).all()}
-    rows = []
+    pipelines: dict[str, list[Transform]] = {}
+    for pipeline in session.scalars(select(Transform)).all():
+        pipelines.setdefault(pipeline.source_id, []).append(pipeline)
+    rows = []  # one row per pipeline (the source is its input); a source with none yet gets one row to set it up
     for source in sources:
-        transform = transforms.get(source.id)
-        counts = transform_runner.output_counts(hsession, source.id) if transform else None
-        rows.append({"source": source, "transform": transform, "steps": len(transform_runner.steps_of(transform)) if transform else 0, "counts": counts})
+        found = sorted(pipelines.get(source.id, []), key=lambda t: (t.name != transform_runner.DEFAULT_PIPELINE, t.name or ""))
+        for transform in found or [None]:
+            url = "/transform/sources/%s" % source.id
+            if transform is not None and transform.name != transform_runner.DEFAULT_PIPELINE:
+                url += "/pipelines/%s" % transform.name
+            rows.append({"source": source, "transform": transform, "url": url, "steps": len(transform_runner.steps_of(transform)) if transform else 0,
+                         "counts": transform_runner.output_counts(hsession, source.id, transform.id) if transform else None})
     tables = []
     for table in _tables(session):
         tables.append({"table": table, "columns": json.loads(table.columns), "used_by": len(transform_runner.lookups_in_use(session, table.name))})
