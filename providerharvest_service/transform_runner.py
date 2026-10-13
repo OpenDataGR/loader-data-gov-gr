@@ -37,8 +37,22 @@ def _now() -> datetime.datetime:
     return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
 
 
+DEFAULT_PIPELINE = "default"
+
+
+def list_pipelines(session: Session, source_id: str) -> list[Transform]:
+    """A source's pipelines, the ``default`` one first, then by name."""
+    rows = session.scalars(select(Transform).where(Transform.source_id == source_id)).all()
+    return sorted(rows, key=lambda t: (t.name != DEFAULT_PIPELINE, t.name or ""))
+
+
+def get_pipeline(session: Session, source_id: str, name: str) -> Transform | None:
+    return session.scalar(select(Transform).where(Transform.source_id == source_id, Transform.name == name))
+
+
 def get_transform(session: Session, source_id: str) -> Transform | None:
-    return session.scalar(select(Transform).where(Transform.source_id == source_id))
+    """The source's ``default`` pipeline -- what every caller that predates several pipelines means by "the transform"."""
+    return get_pipeline(session, source_id, DEFAULT_PIPELINE)
 
 
 def steps_of(transform: Transform) -> list[dict]:

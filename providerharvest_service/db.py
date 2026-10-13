@@ -85,10 +85,28 @@ def _sync_schema(engine: Engine) -> None:
                 conn.execute(text(ddl))
 
 
+def _migrate_pipelines(engine: Engine) -> None:
+    """A source can have several transforms ("pipelines"), each with a name; until then there was exactly one, and ``source_id`` carried
+    a UNIQUE index. Gives every existing row the name ``default`` and swaps that index for a plain one, so the new unique pair
+    (source_id, name) is what keeps names apart. Idempotent: a database that is already migrated (or brand new) is left alone."""
+    inspector = inspect(engine)
+    if "transform" not in inspector.get_table_names():
+        return
+    indexes = {ix["name"]: ix for ix in inspector.get_indexes("transform")}
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE transform SET name = 'default' WHERE name IS NULL"))
+        if indexes.get("ix_transform_source_id", {}).get("unique"):
+            conn.execute(text("DROP INDEX ix_transform_source_id"))
+            conn.execute(text("CREATE INDEX ix_transform_source_id ON transform (source_id)"))
+        if "ix_transform_source_name" not in indexes:
+            conn.execute(text("CREATE UNIQUE INDEX ix_transform_source_name ON transform (source_id, name)"))
+
+
 def make_engine(url: str) -> Engine:
     engine = create_engine(url, connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     _sync_schema(engine)
+    _migrate_pipelines(engine)
     return engine
 
 

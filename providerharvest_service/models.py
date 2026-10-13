@@ -294,12 +294,18 @@ class FtpBoxStatus(Base):
 class Transform(Base):
     """What to do with one source's input before it goes anywhere: an ordered list of steps (see
     transform_engine.py) and the output format. One per source. The original file is never changed;
-    the output is stored beside it (``TransformedFile`` in the harvest database)."""
+    the output is stored beside it (``TransformedFile`` in the harvest database).
+
+    A source (the input) can have several of these -- *pipelines*, each with its own ``name`` (unique within the source), steps and
+    output format. The first one, and every one that existed before pipelines did, is named ``default``. ``name`` is nullable only
+    because a column added to a table that already has rows has to be (see db._sync_schema); db._migrate_pipelines fills it in."""
 
     __tablename__ = "transform"
+    __table_args__ = (Index("ix_transform_source_name", "source_id", "name", unique=True),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_new_id)
-    source_id: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    source_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    name: Mapped[str | None] = mapped_column(String, nullable=True, default="default")
     steps: Mapped[str] = mapped_column(String, nullable=False, default="[]")  # JSON list of step objects
     output_format: Mapped[str] = mapped_column(String, nullable=False, default="json")
     root_name: Mapped[str] = mapped_column(String, nullable=False, default="records")  # XML output only
