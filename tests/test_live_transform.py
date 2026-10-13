@@ -179,10 +179,10 @@ def test_the_chosen_output_format_is_what_callers_get_when_the_transform_is_on_a
     registry_id = _registry(_isolated_db)
     _build(client, registry_id, enable=False)
     client.post("/transform/sources/%s/output" % registry_id, data={"format": "xml", "root": "vehicle", "record": "item", "single_present": "1", "single": "1"}, follow_redirects=False)
-    assert "callers still get the provider's own answer" in client.get("/transform/sources/%s" % registry_id).text
+    assert "<strong>The transform is switched off" in client.get("/transform/sources/%s" % registry_id).text
     assert _caller().post("/proxy/registry", content="{}", headers=JSON_BODY).headers["content-type"].startswith("application/json")  # off: untouched
     client.post("/transform/sources/%s/enabled" % registry_id, data={"enabled": "1"}, follow_redirects=False)
     resp = _caller().post("/proxy/registry", content="{}", headers=JSON_BODY)
     assert resp.headers["content-type"].startswith("application/xml") or resp.headers["content-type"].startswith("text/xml")
     assert resp.text.lstrip().startswith("<?xml") or "<vehicle" in resp.text
-    assert "callers still get" not in client.get("/transform/sources/%s" % registry_id).text
+    assert "<strong>The transform is switched off" not in client.get("/transform/sources/%s" % registry_id).text

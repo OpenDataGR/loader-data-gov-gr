@@ -325,8 +325,8 @@ async def fetch_sample(source_id: str, request: Request, session: Session = Depe
     logger.info("transform box: %s fetched a sample answer for source %s from the provider", _who(request) or "?", source.name)
     steps = transform_runner.steps_of(transform)
     message = "Sample fetched (%s kB). %s" % (round(len(transform.sample.encode("utf-8")) / 1000, 1), "Now choose the fields to keep." if not steps else "It replaces the previous sample.")
-    if steps:
-        return _go(back, message)
+    if steps:  # stay on the Input page, where the replaced sample is shown
+        return RedirectResponse("%s/steps/input?%s" % (back, urlencode({"flash": message, "flash_kind": "success"})), status_code=303)
     # no steps yet: straight to choosing the fields (this address already has a query, so the message goes in it too)
     return RedirectResponse("%s/steps/new?%s" % (back, urlencode({"type": "read", "flash": message, "flash_kind": "success"})), status_code=303)
 

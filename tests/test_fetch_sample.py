@@ -79,7 +79,7 @@ def test_with_steps_already_built_the_page_is_shown_again_and_the_sample_is_repl
     _build(client, registry_id, enable=False)
     provider["resp"] = FakeUpstreamResponse(content=b'{"data": {"document": {"statements": {"make": "SEAT"}}}}')
     resp = _fetch(client, registry_id)
-    assert resp.headers["location"].startswith("/transform/sources/%s?" % registry_id) and "replaces the previous" in _flash(resp)
+    assert resp.headers["location"].startswith("/transform/sources/%s/steps/input?" % registry_id) and "replaces the previous" in _flash(resp)
     assert "SEAT" in _sample_of(_isolated_db, registry_id)
 
 
