@@ -16,7 +16,7 @@
         <tbody>
           {% for r in rows %}
           <tr>
-            <td><div class="name-title">{{ r.source.title }}</div><span class="name-slug">{{ r.source.name }}</span>{% if r.source.transport_type == "http" and r.source.proxy_enabled != False %}<div class="muted" style="font-size:0.78rem;">acts on live answers (the proxy)</div>{% endif %}</td>
+            <td><div class="name-title">{{ r.source.title }}</div><span class="name-slug">{{ r.source.name }}</span>{% if r.source.transport_type == "http" %}<div class="muted" style="font-size:0.78rem;">acts on live answers (asked on demand)</div>{% endif %}</td>
             <td>
               {% if not r.transform %}<span class="muted">none</span>
               {% elif r.transform.enabled %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>on</span></span>

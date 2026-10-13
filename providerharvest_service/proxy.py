@@ -72,7 +72,7 @@ from starlette.concurrency import run_in_threadpool
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from providerharvest_service import provider_sources, request_template
+from providerharvest_service import provider_sources, publishing, request_template
 from providerharvest_service.client_addr import sender_address
 from providerharvest_service.db import get_session
 from providerharvest_service.engine.auth_strategies import build_auth_strategy
@@ -118,20 +118,16 @@ def _per_ip_rate_limiter_for(source_id: str, client_ip: str, max_requests_per_mi
 
 def _get_active_http_source_or_404(session: Session, source_name: str) -> ProviderSource:
     source = session.scalar(select(ProviderSource).where(ProviderSource.name == source_name))
-    # Same 404 whether the name doesn't exist, isn't an HTTP source,
-    # isn't active yet, or had its proxy explicitly opted out -- a
-    # pending/rejected/paused/opted-out source's existence (and
-    # definitely its real endpoint) must not be discoverable via this
-    # public route. `is False`, not falsiness: NULL means "predates the
-    # proxy_enabled column", which must mean enabled (see models.py's
-    # own reasoning), not disabled.
+    # Same 404 whether the name doesn't exist, isn't an HTTP source, isn't active, or is not published (the Load Box's switch) -- a
+    # pending/rejected/paused/unpublished source's existence (and definitely its real endpoint) must not be discoverable via this
+    # public route.
     if (
         source is None
         or source.transport_type != "http"
         or source.status != "active"
-        or source.proxy_enabled is False
+        or not publishing.is_published(session, source.id)
     ):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such proxied source")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such published data")
     return source
 
 

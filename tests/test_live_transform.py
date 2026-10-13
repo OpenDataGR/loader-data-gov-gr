@@ -147,10 +147,10 @@ def test_a_source_without_a_transform_is_unchanged(client, source, _isolated_db,
 def test_the_pipeline_pages_say_the_answers_are_reshaped(client, source, _isolated_db, answer):
     registry_id = _registry(_isolated_db)
     before = _row(client.get("/load").text, "registry")
-    assert "or transformed" in before and "reshaped" not in before
+    assert "asked on demand" in before and "nothing is stored" in before and "reshaped" not in before
     _build(client, registry_id)
     after = _row(client.get("/load").text, "registry")
-    assert "reshaped by the transform" in after and "nothing is stored" in after and "or transformed" not in after
+    assert "reshaped by the" in after and "nothing is stored" in after
     assert 'href="/transform/sources/%s"' % registry_id in after
     overview = client.get("/transform").text
     assert "acts on live answers" in overview and "/transform/sources/%s" % registry_id in overview

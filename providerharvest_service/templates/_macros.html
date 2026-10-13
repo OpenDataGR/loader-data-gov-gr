@@ -74,7 +74,7 @@
         <span class="chip" title="Sent by calling our HTTPS upload endpoint with an API key">{{ icon("http", 15) }}<span>https</span></span>
       {% endif %}
     {% elif s.proxy_only %}
-      <span class="badge badge-pull" title="Called live through the proxy, one question per call: never pulled on a schedule">{{ icon("http", 13) }}<span>live proxy</span></span>
+      <span class="badge badge-pull" title="Asked on demand through its published address, one question per call: never pulled on a schedule">{{ icon("http", 13) }}<span>on demand</span></span>
       <span class="chip">{{ icon(s.transport_type, 15) }}<span>{{ s.transport_type }}</span></span>
     {% else %}
       <span class="badge badge-pull" title="We fetch the data on a schedule">{{ icon("download", 13) }}<span>pull</span></span>

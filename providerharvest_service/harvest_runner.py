@@ -136,7 +136,7 @@ def run_harvest(config_session: Session, harvest_session: Session, source_id: st
         )
     if source.proxy_only:
         raise UnsupportedTransportType(
-            "This source is a live proxy for a POST API: it has nothing to pull. Consumers call /proxy/%s." % source.name
+            "This source is an API that is asked on demand: it has nothing to pull. Once published, consumers call /data/%s." % source.name
         )
     if source.status != "active":
         raise provider_sources.InvalidTransition(

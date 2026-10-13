@@ -16,7 +16,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from providerharvest_service import admin_session, build_info, harvest_db, load_api, nav, provider_sources
+from providerharvest_service import admin_session, build_info, harvest_db, load_api, nav, provider_sources, publishing
 from providerharvest_service.db import get_session
 from providerharvest_service.models import LoadTarget, ProviderSource, Transform
 
@@ -36,10 +36,11 @@ def _go(flash: str | None = None, kind: str = "success") -> RedirectResponse:
     return RedirectResponse("/load" + query, status_code=303)
 
 
-def _proxy_of(source: ProviderSource, base: str, transform=None) -> dict | None:
-    """The live proxy as a destination: the source's address through the proxy, how it calls the provider, and whether it
-    answers right now. None for a source that has no live proxy. The settings themselves live on the source (Extract Box)."""
-    if source.transport_type != "http" or source.proxy_enabled is False:
+def _api_of(source: ProviderSource, base: str, transform=None) -> dict | None:
+    """What an API source's published address does, for the Load Box: how callers ask it (GET or POST, and for GET the parameters the
+    request template names), how the provider is called, the per-caller limit. None for a source that stores its data. The settings
+    themselves live on the source (Extract Box) and its Transform page; this only shows them."""
+    if source.transport_type != "http":
         return None
     try:
         config = json.loads(source.config or "{}")
@@ -49,14 +50,12 @@ def _proxy_of(source: ProviderSource, base: str, transform=None) -> dict | None:
 
     swapped = proxy_module.request_is_swapped(transform)
     method = proxy_module.consumer_method(source, transform)
-    # the call as a consumer makes it: for GET the parameters the template names, e.g. ?plate=...
     hint = ""
     if swapped and method == "GET":
         hint = "?" + "&".join("%s=..." % name for name in request_template.placeholders(transform.request_template))
     return {
-        "url": "%s/proxy/%s%s" % (base, source.name, hint), "method": method, "live": source.status == "active", "turned": swapped,
-        "provider_method": source.proxy_method,
-        "status": source.status, "per_caller": config.get("proxy_rate_limit_per_ip", 30), "only": source.proxy_only,
+        "url": "%s/data/%s%s" % (base, source.name, hint), "method": method, "turned": swapped, "provider_method": source.proxy_method,
+        "per_caller": config.get("proxy_rate_limit_per_ip", 30), "only": source.proxy_only,
     }
 
 
@@ -73,7 +72,7 @@ def overview(request: Request, session: Session = Depends(get_session), hsession
             "source": source, "transform": transforms.get(source.id), "published": bool(target and target.api_enabled),
             "latest": load_api.latest_output(hsession, source.id) if transforms.get(source.id) else None,
             "url": "%s/data/%s" % (base, source.name),
-            "proxy": _proxy_of(source, base, transforms.get(source.id)),
+            "api": _api_of(source, base, transforms.get(source.id)),
         })
     return templates.TemplateResponse(request, "load/overview.html", {
         "rows": rows, "flash": request.query_params.get("flash"), "flash_kind": request.query_params.get("flash_kind", "success"),
@@ -89,16 +88,11 @@ async def set_api(source_id: str, request: Request, session: Session = Depends(g
     enable = str(form.get("enabled") or "") == "1"
     if enable and source.status != "active":
         return _go("%s is not active yet, so it cannot be published." % source.title, "error")
-    if enable and session.scalar(select(Transform).where(Transform.source_id == source.id)) is None:
+    # A source that stores data publishes its transformed output, so it needs a transform; an API source answers on demand and does not.
+    if enable and source.transport_type != "http" and session.scalar(select(Transform).where(Transform.source_id == source.id)) is None:
         return _go("%s has no transform yet -- build one in the Transform Box first." % source.title, "error")
     who = admin_session.verify_session_cookie(request.cookies.get(admin_session.COOKIE_NAME, "")) or ""
-    target = session.scalar(select(LoadTarget).where(LoadTarget.source_id == source.id))
-    if target is None:
-        target = LoadTarget(source_id=source.id)
-        session.add(target)
-    target.api_enabled = enable
-    target.updated_by = who
-    target.updated_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    publishing.set_published(session, source, enable, who)
     session.commit()
     logger.info("load box: %s %s the API of source %s", who or "?", "published" if enable else "unpublished", source.name)
     return _go("%s is %s at /data/%s." % (source.title, "published" if enable else "no longer published", source.name))

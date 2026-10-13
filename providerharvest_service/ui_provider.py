@@ -484,7 +484,7 @@ def _form_template_vars(data, errors=None, editing=False, source_id=None) -> dic
         # applied when re-rendering after a validation error (that
         # `data` already reflects whatever the provider actually
         # submitted, including a deliberately unchecked box).
-        data = {"ftp_use_tls": "on", "proxy_enabled": "on"}
+        data = {"ftp_use_tls": "on"}
     return {
         "data": data,
         "errors": errors or {},

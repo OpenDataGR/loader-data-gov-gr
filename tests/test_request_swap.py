@@ -76,7 +76,7 @@ def _swap(client, source_id, template=REGISTRY_BODY, mode="swap"):
 def test_callers_use_a_plain_link_and_the_provider_gets_the_post_it_expects(client, source, _isolated_db, answer):
     registry_id = _registry(_isolated_db)
     client.post("/transform/sources/%s/create" % registry_id, follow_redirects=False)
-    assert "Callers now use GET on /proxy/registry" in _flash(_swap(client, registry_id))
+    assert "Callers now use GET on /data/registry" in _flash(_swap(client, registry_id))
     resp = _caller().get("/proxy/registry", params={"plate": "ZMM3707", "ignored": "x"})
     assert resp.status_code == 200 and resp.json() == ANSWER  # no response transform here: the answer passes through
     assert answer["calls"] == 1
@@ -148,7 +148,7 @@ def get_provider(client, source, _isolated_db, monkeypatch):
 
 
 def test_callers_post_a_json_body_and_the_provider_gets_a_get_with_query_parameters(client, get_provider):
-    assert "Callers now use POST on /proxy/lookup" in _flash(_swap(client, get_provider["id"], template="plate={plate}&kind={vehicle/type}"))
+    assert "Callers now use POST on /data/lookup" in _flash(_swap(client, get_provider["id"], template="plate={plate}&kind={vehicle/type}"))
     resp = _caller().post("/proxy/lookup", content=json.dumps({"plate": "AB1234", "vehicle": {"type": "car"}, "other": "dropped"}), headers=JSON_BODY)
     assert resp.status_code == 200 and resp.json() == {"found": True}
     url, kw = get_provider["calls"][0]
@@ -187,8 +187,8 @@ def test_the_load_box_shows_the_call_as_callers_make_it_and_the_transform_page_t
     assert "POST" in before and "?plate" not in before
     _swap(client, registry_id)
     row = _row(client.get("/load").text, "registry")
-    assert "GET" in row and "/proxy/registry?plate=..." in row and "sent to the provider as POST" in row
-    assert 'href="https://testserver/proxy/registry' not in row  # not offered as a link: the address needs its parameter
+    assert "GET" in row and "/data/registry?plate=..." in row and "sent to the provider as POST" in row
+    assert 'href="https://testserver/data/registry' not in row  # not offered as a link: the address needs its parameter
     page = client.get("/transform/sources/%s" % registry_id).text
     assert "Request: how callers ask" in page and "GET &rarr; POST" in page and "plate" in page
 

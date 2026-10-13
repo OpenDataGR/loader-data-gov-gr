@@ -2,7 +2,7 @@
 
 import pytest
 
-from providerharvest_service import provider_sources, proxy
+from providerharvest_service import provider_sources, proxy, publishing
 from providerharvest_service.engine.auth_strategies.api_key import ApiKeyAuth
 from providerharvest_service.engine.secrets.base import SecretBundle
 from tests.test_proxy import (  # noqa: F401  (fixtures and helpers shared with the proxy tests)
@@ -54,8 +54,10 @@ def test_the_word_is_kept_on_the_source_validated_and_shown_again_when_editing(_
 
 def test_the_proxy_sends_the_word_and_the_key_together(client, _isolated_db, monkeypatch):
     with _isolated_db() as session:
-        source = provider_sources.register(session, _form(proxy_method="POST", api_key_prefix="Token", proxy_enabled="on"))
+        source = provider_sources.register(session, _form(proxy_method="POST", api_key_prefix="Token"))
         provider_sources.activate(session, source.id)
+        publishing.set_published(session, source, True)
+        session.commit()
     sent = []
     monkeypatch.setattr(proxy.requests, "post", lambda url, **kw: (sent.append(kw), FakeUpstreamResponse())[-1])
     monkeypatch.setattr(proxy, "assert_safe_http_url", lambda url: None)

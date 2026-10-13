@@ -173,7 +173,7 @@ class ProviderSource(Base):
     last_check_message: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # Whether an active transport_type="http" source is also reachable
-    # live via proxy.py's GET /proxy/{name} -- opt-out, not opt-in
+    # live via the old GET /proxy/{name} -- opt-out, not opt-in. No longer used: publishing (the Load Box) is the switch; publishing.migrate_legacy_proxy carried it over once
     # (defaults True for a new registration; see the registration form's
     # own checkbox). Deliberately `nullable=True` despite having a
     # Python-side default: db._sync_schema adds this column to an
@@ -207,7 +207,7 @@ class ProviderSource(Base):
 
     @property
     def proxy_method(self) -> str:
-        """How the live proxy calls this source's endpoint: "GET" (the default, and what every older source does)
+        """How this source's endpoint is called (when it is asked on demand): "GET" (the default, and what every older source does)
         or "POST" (a JSON body is passed through). Only meaningful for an HTTP source."""
         try:
             config = json.loads(self.config or "{}")
@@ -228,7 +228,7 @@ class ProviderSource(Base):
 
     @property
     def proxy_only(self) -> bool:
-        """An HTTP source whose API is called with POST: it can only be reached through the proxy -- there is nothing to
+        """An HTTP source whose API is called with POST: it can only be asked on demand, through its published address -- there is nothing to
         pull on a schedule (each call asks one question, and may create something at the provider)."""
         return self.transport_type == "http" and self.proxy_method == "POST"
 
@@ -309,7 +309,7 @@ class Transform(Base):
     csv_bom: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # JSON output only: when the steps leave exactly one record, return that object instead of a one-element list (a lookup).
     output_single: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    # The live proxy's request side: callers use the OTHER method than the provider (provider POST -> callers GET, provider GET -> callers
+    # The request side of an API source's published address: callers use the OTHER method than the provider (provider POST -> callers GET, provider GET -> callers
     # POST), and this template turns their call into the provider's (see request_template.py). Off (NULL/False) = same method both ways.
     request_swap: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     request_template: Mapped[str | None] = mapped_column(String, nullable=True)

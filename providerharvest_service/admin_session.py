@@ -63,9 +63,9 @@ DEFAULT_TTL_S = 12 * 60 * 60  # 12h: long enough for a work session, short enoug
 #   /auth/*                     the Keycloak login itself (start + callback)
 #   /data/*                     a published source's newest output (the Load
 #                               Box's API) -- public, only once switched on
-#   /proxy/*                    the live open-data proxy for outside
-#                               consumers -- public by design; gating it
-#                               would break every consumer of it
+#   /proxy/*                    the old address of the same thing as /data/*
+#                               (a deprecated alias) -- public by design; gating
+#                               it would break every consumer of it
 # Matched with a "/" boundary, so "/admin/ftp-accounts" does not exempt
 # the admin page "/admin/ftp" (or the other way round).
 _EXEMPT_PATHS = frozenset({

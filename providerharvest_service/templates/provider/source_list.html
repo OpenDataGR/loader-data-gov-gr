@@ -34,9 +34,6 @@
             <td>{{ macros.type_badges(s) }}</td>
             <td class="muted">
               {% if s.kind == "push" %}{{ macros.push_origin(s) }}{% else %}{{ s.endpoint_url }}{% endif %}
-              {% if s.transport_type == "http" and s.status == "active" and s.proxy_enabled != False %}
-                <div class="proxy-url">{% if s.proxy_method == "POST" %}POST <code>/proxy/{{ s.name }}</code>{% else %}<a href="/proxy/{{ s.name }}">/proxy/{{ s.name }}</a>{% endif %}</div>
-              {% endif %}
             </td>
             <td>{% if s.transport_type == "push" %}<span class="muted">on arrival</span>{% else %}{{ s.frequency }}{% endif %}</td>
             <td>

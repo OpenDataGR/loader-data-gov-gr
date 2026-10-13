@@ -248,7 +248,7 @@ async def set_request(source_id: str, request: Request, session: Session = Depen
     if source is None or transform is None:
         return _go("/transform", "No such transform.", "error")
     if source.transport_type != "http":
-        return _go(back, "Only an API source has a live proxy.", "error")
+        return _go(back, "Only an API source is asked on demand.", "error")
     form = await request.form()
     swap = str(form.get("mode") or "") == "swap"
     template = str(form.get("template") or "").strip()
@@ -262,7 +262,7 @@ async def set_request(source_id: str, request: Request, session: Session = Depen
     transform.updated_at, transform.updated_by = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None), _who(request)
     session.commit()
     logger.info("transform box: %s %s the request turn-around of source %s", _who(request) or "?", "set" if swap else "switched off", source.name)
-    return _go(back, "Callers now use %s on /proxy/%s." % ("GET" if source.proxy_method == "POST" else "POST", source.name) if swap
+    return _go(back, "Callers now use %s on /data/%s." % ("GET" if source.proxy_method == "POST" else "POST", source.name) if swap
                else "Callers use the same method as the provider (%s)." % source.proxy_method)
 
 

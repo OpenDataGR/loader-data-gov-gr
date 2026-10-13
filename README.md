@@ -189,7 +189,17 @@ provider's uploads until they switch), and for an HTTPS push source **Rotate API
 key** (`/provider/sources/{id}/rotate-key`: the old key stops working immediately;
 before this a lost key meant deleting and re-registering the source).
 
-**POST proxy** (`proxy.py`, `proxy_method`): an HTTP source can be registered with the method `POST`. Its live proxy
+**Publishing: the one switch** (`publishing.py`, `load_api.py`, the Load Box): every source is exposed the same way -- an admin switches **Publish** on, and
+it answers at `/data/<name>`, public and without a login, only while it is active. A source that stores data answers with its newest good output
+(GET). An **API source** (HTTP) stores nothing: the provider is asked *at the moment someone calls* -- with the source's credential, request
+settings and transform -- and a published API source takes a GET or a POST depending on its settings (below). This replaces the separate
+"transparent/live proxy": the *also expose this as a live proxy* checkbox is gone from the source form, and `/proxy/<name>` survives only as a
+deprecated alias of `/data/<name>` that follows the same switch. On the first start after this change, every HTTP source that had its live proxy
+ticked was published (`publishing.migrate_legacy_proxy`, once; the old flag is cleared as it is consumed), so nothing that answered stopped
+answering; a source registered later is **not** published until someone switches it on. Where the sections below say "live proxy" or `/proxy/`,
+read "published address" and `/data/`.
+
+**POST APIs** (`proxy.py`, `proxy_method`): an HTTP source can be registered with the method `POST`. Its live proxy
 (`POST /proxy/{name}`) then passes the caller's JSON body (application/json only, valid JSON, at most 64 kB) to the provider's
 endpoint, with the provider's credential added by the loader (a caller's own `Authorization` or other headers are never sent), and
 relays the answer. One method per source: a POST source answers `405` to GET and an ordinary source answers `405` to POST. Such a

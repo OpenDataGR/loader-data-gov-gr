@@ -14,6 +14,7 @@ Run directly with ``providerharvest-service`` (see pyproject.toml's
 
 from __future__ import annotations
 
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -21,7 +22,7 @@ import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.responses import RedirectResponse
 
-from providerharvest_service import box_history, db, harvest_db, retention, scheduler
+from providerharvest_service import box_history, db, harvest_db, retention, scheduler, publishing
 from providerharvest_service.access_middleware import AccessControlMiddleware
 from providerharvest_service.admin_auth import require_admin_key
 from providerharvest_service.admin_ftp import router as ftp_accounts_router
@@ -55,6 +56,11 @@ async def lifespan(app: FastAPI):
     test in this repo can construct the real ``app`` without a real
     harvest-scheduler thread running underneath it.
     """
+    try:
+        with db.SessionLocal() as session:
+            publishing.migrate_legacy_proxy(session)  # once: what answered at /proxy keeps answering, now as published
+    except Exception:  # noqa: BLE001 -- the service must still start
+        logging.getLogger(__name__).exception("could not carry the live proxy flags over to publishing")
     thread = scheduler.start_background_thread(db.SessionLocal, harvest_db.get_session_factory)
     sampler = box_history.start_sampler(db.SessionLocal)  # the HTTP box's own figures, for its charts
     purger = retention.start_purger(db.SessionLocal, harvest_db.get_session_factory)  # each source's data retention

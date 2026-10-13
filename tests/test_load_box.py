@@ -6,7 +6,7 @@ import re
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from providerharvest_service import load_api
+from providerharvest_service import load_api, publishing
 from providerharvest_service.app import app
 from providerharvest_service.harvest_models import TransformedFile
 from providerharvest_service.models import LoadTarget
@@ -17,6 +17,10 @@ from tests.test_transform_ui import (  # noqa: F401  (fixtures and helpers share
 
 def _publish(client, source, on=True):
     return client.post("/load/sources/%s/api" % source["id"], data={"enabled": "1" if on else "0"}, follow_redirects=False)
+
+
+def _publish_id(client, source_id, on=True):
+    return client.post("/load/sources/%s/api" % source_id, data={"enabled": "1" if on else "0"}, follow_redirects=False)
 
 
 def _anonymous():
@@ -101,17 +105,20 @@ def test_the_published_address_uses_the_configured_public_base_url(client, sourc
 
 # -- the live proxy is part of the pipeline picture ----------------------------------------------------------------------------------
 
-def _http_source(session_factory, name, *, post=False, activate=True, **extra):
+def _http_source(session_factory, name, *, post=False, activate=True, published=True, **extra):
     from providerharvest_service import provider_sources
 
     form = {"name": name, "title": name.title(), "transport_type": "http", "endpoint_url": "https://registry.example.gr/api/", "auth_type": "api_key",
-            "api_key": "k", "proxy_enabled": "on", "proxy_rate_limit_per_ip": "7", **extra}
+            "api_key": "k", "proxy_rate_limit_per_ip": "7", **extra}
     if post:
         form["proxy_method"] = "POST"
     with session_factory() as session:
         source = provider_sources.register(session, form)
         if activate:
             provider_sources.activate(session, source.id)
+        if published:
+            publishing.set_published(session, source, True)
+            session.commit()
         return source.id
 
 
@@ -119,30 +126,34 @@ def _row(page, name):
     return re.search(r"<tr>(?:(?!</tr>).)*?<span class=\"name-slug\">%s</span>.*?</tr>" % re.escape(name), page, re.S).group(0)
 
 
-def test_a_post_proxy_source_is_shown_as_a_pass_through_with_nothing_to_publish(client, source, _isolated_db):
+def test_an_api_source_is_published_at_the_same_address_pattern_and_says_it_stores_nothing(client, source, _isolated_db):
     registry_id = _http_source(_isolated_db, "registry", post=True)
     row = _row(client.get("/load").text, "registry")
-    assert "pass-through" in row and "nothing is stored or transformed" in row
-    assert "POST" in row and "/proxy/registry" in row and "live" in row and "7/min per caller" in row
-    assert 'href="https://testserver/proxy/registry"' not in row  # a POST address is not offered as a link (opening it would be a GET)
-    assert "/load/sources/%s/api" % registry_id not in row  # nothing is stored, so there is nothing to publish
-    assert 'href="/provider/sources/%s/edit"' % registry_id in row  # the setting lives on the source
+    assert "asked on demand" in row and "nothing is stored" in row
+    assert "published" in row and "POST" in row and "/data/registry" in row and "7/min per caller" in row
+    assert "/proxy/" not in row and 'href="https://testserver/data/registry"' not in row  # a POST address is not offered as a link (opening it would be a GET)
+    assert "/load/sources/%s/api" % registry_id in row and "Unpublish" in row  # the same switch as every source
+    assert 'href="/provider/sources/%s/edit"' % registry_id in row  # the settings live on the source
 
 
-def test_a_source_that_is_not_active_yet_is_shown_as_not_live(client, source, _isolated_db):
+def test_a_source_that_is_not_active_yet_is_shown_as_published_but_not_live(client, source, _isolated_db):
     _http_source(_isolated_db, "waiting", post=True, activate=False)
-    assert "not live (pending)" in _row(client.get("/load").text, "waiting")
+    assert "published, not live (pending)" in _row(client.get("/load").text, "waiting")
 
 
-def test_a_get_proxy_source_keeps_its_publish_control_and_gets_a_link(client, source, _isolated_db):
+def test_a_get_api_source_gets_a_link_and_an_unpublished_one_says_where_it_would_answer(client, source, _isolated_db):
     source_id = _http_source(_isolated_db, "openfeed")
     row = _row(client.get("/load").text, "openfeed")
-    assert 'href="https://testserver/proxy/openfeed"' in row and "/load/sources/%s/api" % source_id in row and "pass-through" not in row
+    assert 'href="https://testserver/data/openfeed"' in row and "/load/sources/%s/api" % source_id in row
+    _http_source(_isolated_db, "private-feed", published=False)
+    private = _row(client.get("/load").text, "private-feed")
+    assert "not published" in private and "would answer at" in private and "/data/private-feed" in private and "Publish</button>" in private
 
 
-def test_a_source_without_a_live_proxy_shows_none(client, source, _isolated_db):
-    _http_source(_isolated_db, "private-feed", proxy_enabled="")
-    assert "/proxy/private-feed" not in client.get("/load").text
+def test_an_api_source_can_be_published_without_a_transform_but_a_source_that_stores_data_cannot(client, source, _isolated_db):
+    api_id = _http_source(_isolated_db, "feed", published=False)
+    assert "is published at /data/feed" in _flash(_publish_id(client, api_id))
+    assert "has no transform yet" in _flash(_publish_id(client, source["id"]))  # a push source: nothing to publish until it has a transform
 
 
 def test_the_transform_box_offers_a_transform_for_an_api_source_and_says_it_acts_on_live_answers(client, source, _isolated_db):

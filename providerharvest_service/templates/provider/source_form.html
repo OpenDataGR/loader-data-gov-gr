@@ -170,22 +170,17 @@
         <label for="items_path">Records path in the response (optional)</label>
         <input type="text" id="items_path" name="items_path" value="{{ data.get('items_path', 'results') }}">
 
-        <label for="proxy_method">How the live proxy calls this API</label>
+        <label for="proxy_method">How the provider is called</label>
         <select id="proxy_method" name="proxy_method" style="max-width:30rem;">
           <option value="GET"{% if data.get('proxy_method', 'GET') != 'POST' %} selected{% endif %}>GET -- the caller's query parameters are passed on (the usual case)</option>
           <option value="POST"{% if data.get('proxy_method') == 'POST' %} selected{% endif %}>POST -- the caller's JSON body is passed on (an API that is asked one question per call)</option>
         </select>
-        <p class="muted" style="margin:0.2rem 0 0.8rem;">A POST source is reached <strong>only</strong> through the live proxy: it is never pulled on a schedule, and <em>Test connection</em> makes a real call only when a test request is given below. Untick the box below to switch it off completely -- nobody can then call it. Set the request timeout to fit a slow API.</p>
+        <p class="muted" style="margin:0.2rem 0 0.8rem;">A POST source is asked <strong>only on demand</strong>, through its published address (the Load Box's <em>Publish</em> switch): it is never pulled on a schedule, and <em>Test connection</em> makes a real call only when a test request is given below. Set the request timeout to fit a slow API.</p>
         {% if errors.proxy_method %}<div class="error">{{ errors.proxy_method }}</div>{% endif %}
-
-        <div class="checkbox-row">
-          <input type="checkbox" id="proxy_enabled" name="proxy_enabled" {% if data.get('proxy_enabled') == 'on' %}checked{% endif %}>
-          <label for="proxy_enabled">Also expose this as a live proxy (<code>/proxy/{name}</code>) for consumers who need real-time access, not just a scheduled pull</label>
-        </div>
 
         <div class="limits-block" style="border:1px solid var(--color-border); border-radius:var(--radius); padding:0.8rem 1rem 0.5rem; margin:0.9rem 0; max-width:46rem;">
           <div style="font-weight:600;">Rate limits</div>
-          <p class="muted" style="margin:0.15rem 0 0.7rem;">How often this API may be called, per minute. The provider limit is shared by everything that calls it (scheduled pulls and the live proxy); the per-caller limit stops one address from using it all.</p>
+          <p class="muted" style="margin:0.15rem 0 0.7rem;">How often this API may be called, per minute. The provider limit is shared by everything that calls it (scheduled pulls and the published address); the per-caller limit stops one address from using it all.</p>
           <div style="display:flex; gap:1.6rem; flex-wrap:wrap;">
             <div>
               <label for="max_requests_per_minute">To the provider -- all callers together</label>
@@ -193,7 +188,7 @@
               {% if errors.max_requests_per_minute %}<div class="error">{{ errors.max_requests_per_minute }}</div>{% endif %}
             </div>
             <div>
-              <label for="proxy_rate_limit_per_ip">Through the live proxy -- per calling address</label>
+              <label for="proxy_rate_limit_per_ip">On the published address -- per calling address</label>
               <input type="number" class="small" id="proxy_rate_limit_per_ip" name="proxy_rate_limit_per_ip" min="1" value="{{ data.get('proxy_rate_limit_per_ip', '30') }}">
               {% if errors.proxy_rate_limit_per_ip %}<div class="error">{{ errors.proxy_rate_limit_per_ip }}</div>{% endif %}
             </div>

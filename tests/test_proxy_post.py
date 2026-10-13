@@ -2,7 +2,7 @@
 
 import pytest
 
-from providerharvest_service import provider_sources, proxy
+from providerharvest_service import provider_sources, proxy, publishing
 from tests.test_proxy import (  # noqa: F401  (fixtures and helpers shared with the GET proxy tests)
     FakeUpstreamResponse, _clear_rate_limiters, _isolated_db, _master_key, _register_active_http_source, client,
 )
@@ -15,12 +15,14 @@ def _register_post_source(session_factory, **overrides):
         "name": "registry-vehicle", "title": "Vehicle registry", "transport_type": "http", "proxy_method": "POST",
         "endpoint_url": "https://registry.example.gr/api/gates/USER/gate/documents/",
         "auth_type": "api_key", "api_key": "Token the-registry-token", "api_key_location": "header", "api_key_name": "Authorization",
-        "request_timeout_s": "60", "proxy_enabled": "on",  # as the form submits the ticked box
+        "request_timeout_s": "60",
     }
     form.update(overrides)
     with session_factory() as session:
         source = provider_sources.register(session, form)
         provider_sources.activate(session, source.id)
+        publishing.set_published(session, source, True)
+        session.commit()
         return source.id
 
 
@@ -103,9 +105,9 @@ def test_a_post_source_is_proxy_only_never_pulled(_isolated_db):
     source_id = _register_post_source(_isolated_db)
     with _isolated_db() as session:
         source = provider_sources.get_or_404(session, source_id)
-        assert source.proxy_method == "POST" and source.proxy_only and source.frequency == "MANUAL" and source.proxy_enabled is True  # as ticked on the form
+        assert source.proxy_method == "POST" and source.proxy_only and source.frequency == "MANUAL"
         assert scheduler.due_sources(session, None) == []
-        with pytest.raises(harvest_runner.UnsupportedTransportType, match="live proxy"):
+        with pytest.raises(harvest_runner.UnsupportedTransportType, match="asked on demand"):
             harvest_runner.run_harvest(session, None, source_id)
 
 
@@ -221,18 +223,15 @@ def test_an_ordinary_source_defaults_to_get_and_keeps_its_schedule(_isolated_db)
         assert source.proxy_method == "GET" and not source.proxy_only and source.frequency == "DAILY"
 
 
-def test_unticking_the_live_proxy_switches_a_post_source_off_and_ticking_it_again_brings_it_back(client, _isolated_db, upstream):
+def test_unpublishing_switches_a_post_source_off_and_publishing_brings_it_back(client, _isolated_db, upstream):
     source_id = _register_post_source(_isolated_db)
     assert client.post("/proxy/registry-vehicle", content="{}", headers=JSON).status_code == 200
-    form = {"name": "registry-vehicle", "title": "Vehicle registry", "transport_type": "http", "proxy_method": "POST",
-            "endpoint_url": "https://registry.example.gr/api/gates/USER/gate/documents/", "auth_type": "api_key", "api_key": "Token the-registry-token",
-            "api_key_location": "header", "api_key_name": "Authorization", "frequency": "DAILY"}  # no proxy_enabled: the box is unticked
     with _isolated_db() as session:
-        provider_sources.update(session, source_id, form)
-        source = provider_sources.get_or_404(session, source_id)
-        assert source.proxy_enabled is False and source.frequency == "MANUAL"  # still never pulled
+        publishing.set_published(session, provider_sources.get_or_404(session, source_id), False)
+        session.commit()
+        assert provider_sources.get_or_404(session, source_id).frequency == "MANUAL"  # still never pulled
     assert client.post("/proxy/registry-vehicle", content="{}", headers=JSON).status_code == 404  # nobody can call it
     with _isolated_db() as session:
-        provider_sources.update(session, source_id, {**form, "proxy_enabled": "on"})
-        assert provider_sources.get_or_404(session, source_id).proxy_enabled is True
+        publishing.set_published(session, provider_sources.get_or_404(session, source_id), True)
+        session.commit()
     assert client.post("/proxy/registry-vehicle", content="{}", headers=JSON).status_code == 200
