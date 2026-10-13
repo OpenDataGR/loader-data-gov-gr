@@ -51,7 +51,8 @@ def get_pipeline(session: Session, source_id: str, name: str) -> Transform | Non
 
 
 def get_transform(session: Session, source_id: str) -> Transform | None:
-    """The source's ``default`` pipeline -- what every caller that predates several pipelines means by "the transform"."""
+    """The source's ``default`` pipeline -- what every caller that predates several pipelines means by "the transform". When it has been
+    removed there is none: nothing takes its place."""
     return get_pipeline(session, source_id, DEFAULT_PIPELINE)
 
 

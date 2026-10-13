@@ -31,7 +31,8 @@
               {% if r.counts %}{{ r.counts.ok }} ok{% if r.counts.failed %}, <span style="color:var(--status-rejected)">{{ r.counts.failed }} failed</span>{% endif %}{% endif %}
             </td>
             <td class="muted">{% if r.counts and r.counts.latest %}{{ r.counts.latest|short_utc }} UTC{% endif %}</td>
-            <td><a class="btn btn-secondary btn-sm" href="{{ r.url }}">{{ "Open" if r.transform else "Set up" }}</a></td>
+            <td style="white-space:nowrap;"><a class="btn btn-secondary btn-sm" href="{{ r.url }}">{{ "Open" if r.transform else "Set up" }}</a>
+              {% if r.transform %}<form method="post" action="/transform/sources/{{ r.source.id }}/pipelines/{{ r.transform.name }}/delete" style="display:inline; margin:0 0 0 0.3rem;" onsubmit="return confirm('Remove the pipeline {{ r.transform.name }} and the outputs it stored?');"><button type="submit" class="btn-secondary btn-sm">Remove</button></form>{% endif %}</td>
           </tr>
           {% endfor %}
         </tbody>

@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from providerharvest_service import (
-    proxy, request_template, admin_session, build_info, harvest_db, nav, provider_sources, retention, transform_engine as te, transform_forms as tf, transform_runner,
+    proxy, publishing, request_template, admin_session, build_info, harvest_db, nav, provider_sources, retention, transform_engine as te, transform_forms as tf, transform_runner,
 )
 from providerharvest_service.db import get_session
 from providerharvest_service.harvest_models import TransformedFile
@@ -294,6 +294,9 @@ def source_page(source_id: str, request: Request, session: Session = Depends(get
     transform = transform_runner.get_pipeline(session, source_id, _pipeline_name(request))
     if transform is None and _pipeline_name(request) != transform_runner.DEFAULT_PIPELINE:
         return _go("/transform/sources/%s" % source_id, "No such pipeline.", "error")
+    if transform is None and "pipeline" not in request.path_params and transform_runner.list_pipelines(session, source_id):
+        first = transform_runner.list_pipelines(session, source_id)[0]  # the default was removed: open the first one that is left (opening only)
+        return RedirectResponse("/transform/sources/%s/pipelines/%s" % (source_id, first.name), status_code=303)
     return templates.TemplateResponse(request, "transform/source.html", _editor_context(session, hsession, source, transform, request))
 
 
@@ -742,15 +745,19 @@ async def add_pipeline(request: Request, session: Session = Depends(get_session)
 
 @router.post("/sources/{source_id}/pipelines/{pipeline}/delete")
 def delete_pipeline(source_id: str, pipeline: str, request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)):
-    """Remove a pipeline and the outputs it stored. The ``default`` one is the source's first transform and stays."""
+    """Remove a pipeline and the outputs it stored (any of them, the ``default`` one too). What a pipeline answered stops with it: the
+    source's published address is answered by its default pipeline, so removing that one also switches the publishing off -- nothing
+    takes its place."""
     base = "/transform/sources/%s" % source_id
     found = transform_runner.get_pipeline(session, source_id, pipeline)
     if found is None:
         return _go(base, "No such pipeline.", "error")
-    if pipeline == transform_runner.DEFAULT_PIPELINE:
-        return _go(base, "The default pipeline cannot be removed.", "error")
     count = transform_runner.delete_all_outputs(hsession, source_id, found.id)
     session.delete(found)
+    source = _source_or_none(session, source_id)
+    unpublished = pipeline == transform_runner.DEFAULT_PIPELINE and publishing.is_published(session, source_id)
+    if unpublished:
+        publishing.set_published(session, source, False, _who(request))
     session.commit()
     logger.info("transform box: %s removed the pipeline %s of source %s (%d outputs)", _who(request) or "?", pipeline, source_id, count)
-    return _go(base, "Pipeline %s removed." % pipeline)
+    return _go(base, "Pipeline %s removed.%s" % (pipeline, (" Its published address /data/%s was switched off with it." % source.name) if unpublished else ""))

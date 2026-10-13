@@ -24,7 +24,7 @@ from providerharvest_service.client_addr import sender_address
 from providerharvest_service.db import get_session
 from providerharvest_service.harvest_models import TransformedFile
 from providerharvest_service.models import LoadTarget, ProviderSource
-from providerharvest_service import proxy, publishing
+from providerharvest_service import proxy, publishing, transform_runner
 from providerharvest_service.proxy import _per_ip_rate_limiter_for
 
 router = APIRouter(prefix="/data", tags=["load-api"])
@@ -48,11 +48,11 @@ def latest_output(hsession: Session, source_id: str, transform_id: str | None = 
     return hsession.scalar(query.order_by(TransformedFile.created_at.desc()).limit(1))
 
 
-def _serve_output(source: ProviderSource, request: Request, hsession: Session) -> Response:
+def _serve_output(source: ProviderSource, request: Request, hsession: Session, transform_id: str) -> Response:
     """A source that stores data: its newest good output, exactly as stored."""
     if not _per_ip_rate_limiter_for("data:" + source.id, sender_address(request) or "unknown", PER_IP_PER_MINUTE).try_acquire():
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "rate limit exceeded -- try again shortly", headers={"Retry-After": "60"})
-    output = latest_output(hsession, source.id)
+    output = latest_output(hsession, source.id, transform_id)
     if output is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such published data")
     etag = '"%s"' % output.id
@@ -78,7 +78,10 @@ async def get_data(source_name: str, request: Request, filename: str = "", sessi
     if source.transport_type == "http":
         # An API source stores nothing: the provider is asked at this moment (see proxy.py: request template, credential, transform).
         return await proxy.proxy_get(source_name, request, session)
-    return await run_in_threadpool(_serve_output, source, request, hsession)
+    pipeline = transform_runner.get_transform(session, source.id)  # until each pipeline has an address of its own: the default one
+    if pipeline is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such published data")
+    return await run_in_threadpool(_serve_output, source, request, hsession, pipeline.id)
 
 
 @router.post("/{source_name}")

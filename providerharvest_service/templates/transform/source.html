@@ -28,9 +28,7 @@
       {% for name in pipelines %}
         <a class="btn {{ '' if name == pipeline_name else 'btn-secondary' }} btn-sm" href="/transform/sources/{{ source.id }}{{ '' if name == 'default' else '/pipelines/' ~ name }}">{{ name }}</a>
       {% endfor %}
-      {% if pipeline_name != "default" %}
-        <form method="post" action="{{ tbase }}/delete" style="margin:0;" onsubmit="return confirm('Remove the pipeline {{ pipeline_name }} and the outputs it stored?');"><button type="submit" class="btn-secondary btn-sm">Remove this pipeline</button></form>
-      {% endif %}
+      <form method="post" action="/transform/sources/{{ source.id }}/pipelines/{{ pipeline_name }}/delete" style="margin:0;" onsubmit="return confirm('Remove the pipeline {{ pipeline_name }} and the outputs it stored?{% if pipeline_name == 'default' %} If this source is published, its address stops answering.{% endif %}');"><button type="submit" class="btn-secondary btn-sm">Remove this pipeline</button></form>
     </div>
     {% endif %}
 

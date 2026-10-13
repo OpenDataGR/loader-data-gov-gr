@@ -67,7 +67,7 @@ def test_the_switcher_lists_the_pipelines_and_the_default_page_is_unchanged(clie
     _setup(client, source)
     _add(client, source, "lookup")
     page = client.get("/transform/sources/%s" % source["id"]).text
-    assert ">default</a>" in page and ">lookup</a>" in page and "Remove this pipeline" not in page and "+ Add a pipeline" not in page
+    assert ">default</a>" in page and ">lookup</a>" in page and "Remove this pipeline" in page and "+ Add a pipeline" not in page
     assert 'href="/transform/sources/%s/pipelines/lookup"' % source["id"] in page
 
 
@@ -84,7 +84,7 @@ def test_a_pipeline_needs_a_first_transform_to_copy(client, source, _isolated_db
     assert _names(_isolated_db, source) == []
 
 
-def test_a_pipeline_is_removed_with_its_outputs_but_the_default_stays(client, source, _isolated_db, _isolated_harvest_db):
+def test_a_pipeline_is_removed_with_its_outputs(client, source, _isolated_db, _isolated_harvest_db):
     _setup(client, source)
     _add(client, source, "lookup")
     _pipeline(client, source, "lookup", "enabled", data={"enabled": "1"})
@@ -95,7 +95,6 @@ def test_a_pipeline_is_removed_with_its_outputs_but_the_default_stays(client, so
     assert _names(_isolated_db, source) == ["default"]
     with _isolated_harvest_db() as h:
         assert len(transform_runner.recent_outputs(h, source["id"])) <= before
-    assert "cannot be removed" in _flash(_pipeline(client, source, "default", "delete"))
     assert "No such pipeline" in _flash(_pipeline(client, source, "nope", "delete"))
     assert _names(_isolated_db, source) == ["default"]
 
@@ -149,3 +148,56 @@ def test_copying_a_pipeline_that_does_not_exist_or_from_no_source_is_refused(cli
     assert "no pipeline called" in _flash(_add(client, source, "x1", start="ghost"))
     assert "Choose the source" in _flash(client.post("/transform/pipelines", data={"source_id": "nope", "name": "x1"}, follow_redirects=False))
     assert _names(_isolated_db, source) == ["default"]
+
+
+def test_the_transform_box_row_of_every_pipeline_has_a_remove_button(client, source, _isolated_db):
+    _setup(client, source)
+    _add(client, source, "lookup")
+    page = client.get("/transform").text
+    assert page.count(">Remove</button>") == 2 and 'action="/transform/sources/%s/pipelines/lookup/delete"' % source["id"] in page and 'pipelines/default/delete"' in page
+    resp = client.post("/transform/sources/%s/pipelines/lookup/delete" % source["id"], follow_redirects=False)
+    assert resp.headers["location"].startswith("/transform/sources/%s?" % source["id"]) and _names(_isolated_db, source) == ["default"]
+
+
+def test_removing_the_default_pipeline_stops_its_output_and_nothing_takes_its_place(client, source, _isolated_db, _isolated_harvest_db):
+    from fastapi.testclient import TestClient
+
+    from providerharvest_service.app import app
+
+    _setup(client, source)
+    _go(client, source, "enabled", data={"enabled": "1"})
+    _add(client, source, "lookup")
+    _pipeline(client, source, "lookup", "enabled", data={"enabled": "1"})
+    _upload_data(client, source)
+    client.post("/load/sources/%s/api" % source["id"], data={"enabled": "1"}, follow_redirects=False)
+    caller = TestClient(app, base_url="https://testserver")
+    assert caller.get("/data/acme-push").status_code == 200
+    flash = _flash(_pipeline(client, source, "default", "delete"))
+    assert "removed" in flash and "switched off" in flash
+    assert _names(_isolated_db, source) == ["lookup"]
+    assert caller.get("/data/acme-push").status_code == 404  # the published address stopped; the pipeline that is left did not take over
+    with _isolated_harvest_db() as h:
+        assert len(transform_runner.recent_outputs(h, source["id"])) == 1  # only lookup's own output remains
+    with _isolated_db() as s:
+        assert transform_runner.get_transform(s, source["id"]) is None  # "the transform" is the default one; no fallback
+    resp = client.get("/transform/sources/%s" % source["id"], follow_redirects=False)  # the source's page just opens the pipeline that is left
+    assert resp.status_code == 303 and resp.headers["location"].endswith("/pipelines/lookup")
+    _pipeline(client, source, "lookup", "delete")
+    assert _names(_isolated_db, source) == []
+    assert "no transform yet" in client.get("/transform/sources/%s" % source["id"]).text  # back to the start: set one up again
+
+
+def test_the_published_address_is_answered_by_the_default_pipeline_not_by_the_one_that_wrote_last(client, source, _isolated_db):
+    from fastapi.testclient import TestClient
+
+    from providerharvest_service.app import app
+
+    _setup(client, source)
+    _go(client, source, "enabled", data={"enabled": "1"})
+    _add(client, source, "table")
+    _pipeline(client, source, "table", "output", data={"format": "csv", "delimiter": ","})
+    _pipeline(client, source, "table", "enabled", data={"enabled": "1"})
+    _upload_data(client, source)
+    client.post("/load/sources/%s/api" % source["id"], data={"enabled": "1"}, follow_redirects=False)
+    resp = TestClient(app, base_url="https://testserver").get("/data/acme-push")
+    assert resp.status_code == 200 and resp.headers["content-type"].startswith("application/json")
