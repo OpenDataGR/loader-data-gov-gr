@@ -424,7 +424,8 @@
       </div>
 
       <div class="form-actions">
-        <button type="submit">{{ macros.icon(("check" if editing else "plus"), 16) }} {{ "Save changes" if editing else "Register source" }}</button>
+        <button type="submit" id="submit-btn">{{ macros.icon(("check" if editing else "plus"), 16) }} <span id="submit-label">{{ "Save changes" if editing else "Register source" }}</span></button>
+        <span id="submit-hint" class="muted" style="margin-left:0.8rem; font-size:0.85rem;"></span>
       </div>
     </form>
   </div>
@@ -493,6 +494,7 @@
       if (available.indexOf(name) < 0) name = 'general';
       activeTab = name;
       document.querySelectorAll('[data-tab]').forEach(function (el) { el.classList.toggle('tab-off', el.dataset.tab !== name); });
+      if (typeof updateWizard === 'function') setTimeout(updateWizard, 0);
       document.querySelectorAll('[data-tab-btn]').forEach(function (button) {
         var on = button.dataset.tabBtn === name;
         button.classList.toggle('active', on);
@@ -508,5 +510,70 @@
       var first = document.querySelector('#source-form .error'), holder = first && first.closest('[data-tab]');
       setTab(holder ? holder.dataset.tab : 'general');  // opens on the tab of the first problem, if there is one
     })();
+
+    // A new source is registered step by step: the button says which tab comes next until every required field has been filled, and
+    // only then becomes "Register source". (The server still checks everything; this only guides.) Editing keeps a plain Save button.
+    var WIZARD = {{ 'false' if editing else 'true' }};
+    var TAB_LABELS = {general: 'General', connection: 'Connection', request: 'Request', limits: 'Limits'};
+    var FIELD_NAMES = {
+      name: 'name', title: 'title', endpoint_url: 'endpoint URL / host', api_key: 'API key', basic_username: 'username', basic_password: 'password',
+      oauth2_client_id: 'client ID', oauth2_client_secret: 'client secret', oauth2_token_url: 'token URL', mtls_client_cert: 'client certificate',
+      mtls_client_key: 'client key', sftp_username: 'username', sftp_password: 'password or private key', host_key_fingerprint: 'host-key fingerprint',
+      ftp_username: 'username', ftp_password: 'password', ftp_plain_ftp_acknowledged: 'FTPS, or the plain-FTP acknowledgment'
+    };
+    function requiredFields() {
+      var fields = [['name', 'general'], ['title', 'general']];  // [field id, tab]
+      var kind = document.querySelector('input[name="kind"]:checked');
+      if ((kind ? kind.value : 'pull') === 'push') return fields;
+      fields.push(['endpoint_url', 'connection']);
+      var transport = document.getElementById('transport-type-pull').value;
+      if (transport === 'http') {
+        var auth = document.querySelector('input[name="auth_type"]:checked');
+        var needs = {api_key: ['api_key'], basic_auth: ['basic_username', 'basic_password'],
+                     oauth2_client_credentials: ['oauth2_client_id', 'oauth2_client_secret', 'oauth2_token_url'], mtls: ['mtls_client_cert', 'mtls_client_key']};
+        (needs[auth ? auth.value : 'api_key'] || []).forEach(function (id) { fields.push([id, 'connection']); });
+      } else if (transport === 'sftp' || transport === 'scp') {
+        fields.push(['sftp_username', 'connection']);
+        if (!document.getElementById('sftp_private_key').value.trim()) fields.push(['sftp_password', 'connection']);
+        fields.push(['host_key_fingerprint', 'connection']);
+      } else if (transport === 'ftp') {
+        fields.push(['ftp_username', 'connection'], ['ftp_password', 'connection']);
+        if (!document.getElementById('ftp_use_tls').checked) fields.push(['ftp_plain_ftp_acknowledged', 'connection']);
+      }
+      return fields;
+    }
+    function isFilled(id) {
+      var el = document.getElementById(id);
+      if (!el) return true;
+      return el.type === 'checkbox' ? el.checked : el.value.trim() !== '';
+    }
+    function missingFields() { return requiredFields().filter(function (f) { return !isFilled(f[0]); }); }
+    function updateWizard() {
+      if (!WIZARD) return;
+      var missing = missingFields(), button = document.getElementById('submit-btn');
+      var here = missing.filter(function (f) { return f[1] === activeTab; });
+      var elsewhere = missing.filter(function (f) { return f[1] !== activeTab; });
+      var target = '';
+      if (elsewhere.length) {
+        var later = elsewhere.filter(function (f) { return TAB_ORDER.indexOf(f[1]) > TAB_ORDER.indexOf(activeTab); });
+        target = (later.length ? later[0] : elsewhere[0])[1];
+      }
+      button.dataset.next = target;
+      document.getElementById('submit-label').textContent = target ? 'Next: ' + TAB_LABELS[target] : 'Register source';
+      button.disabled = here.length > 0;
+      document.getElementById('submit-hint').textContent = here.length ? 'Still needed here: ' + here.map(function (f) { return FIELD_NAMES[f[0]] || f[0]; }).join(', ') : '';
+    }
+    document.getElementById('submit-btn').addEventListener('click', function (event) {
+      if (!WIZARD || !this.dataset.next) return;  // nothing missing elsewhere: this click registers the source
+      event.preventDefault();
+      var target = this.dataset.next;
+      setTab(target);
+      var first = missingFields().filter(function (f) { return f[1] === target; })[0];
+      var field = first && document.getElementById(first[0]);
+      if (field && field.focus) field.focus();
+    });
+    document.getElementById('source-form').addEventListener('input', updateWizard);
+    document.getElementById('source-form').addEventListener('change', updateWizard);
+    updateWizard();
   </script>
 {% endblock %}
