@@ -37,7 +37,7 @@
     {% endif %}
 
     <form method="post" action="{{ '/provider/sources/%s/edit' % source_id if editing else '/provider/sources/new' }}">
-      <div class="form-tabs" id="form-tabs" role="tablist" hidden>
+      <div class="form-tabs" id="form-tabs" role="tablist">
         <button type="button" class="form-tab" role="tab" data-tab-btn="general">General</button>
         <button type="button" class="form-tab" role="tab" data-tab-btn="connection">Connection</button>
         <button type="button" class="form-tab" role="tab" data-tab-btn="request">Request</button>
@@ -355,7 +355,7 @@
 
       </div>
 
-      <div id="section-push" data-tab="general">
+      <div id="section-push" data-tab="connection">
         <input type="hidden" id="transport-type-push" name="transport_type" value="push">
         <fieldset id="fieldset-push">
           <legend>{{ macros.icon("push", 15) }} Push settings</legend>
@@ -483,7 +483,7 @@
     var activeTab = 'general';
     function availableTabs() {
       var checked = document.querySelector('input[name="kind"]:checked');
-      if ((checked ? checked.value : 'pull') === 'push') return ['general'];
+      if ((checked ? checked.value : 'pull') === 'push') return ['general', 'connection'];  // how they send, and who may send
       return document.getElementById('transport-type-pull').value === 'http' ? TAB_ORDER : ['general', 'connection'];
     }
     function setTab(name) {
@@ -497,7 +497,6 @@
         button.setAttribute('aria-selected', on ? 'true' : 'false');
         button.hidden = available.indexOf(button.dataset.tabBtn) < 0;
       });
-      document.getElementById('form-tabs').hidden = available.length < 2;
     }
     document.querySelectorAll('[data-tab-btn]').forEach(function (button) {
       button.addEventListener('click', function () { setTab(button.dataset.tabBtn); });

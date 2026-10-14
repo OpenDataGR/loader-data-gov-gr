@@ -27,16 +27,17 @@ def test_every_field_sits_on_the_tab_it_belongs_to_and_all_limits_are_together(c
     for tab, ids in EXPECTED.items():
         for element_id in ids:
             assert _owner(page, element_id) == tab, (element_id, tab)
-    for tag in ('<div id="section-push" data-tab="general">', '<fieldset id="fieldset-ssh" data-tab="connection">', '<fieldset id="fieldset-ftp" data-tab="connection">'):
-        assert tag in page  # (the push settings are the whole of a push source's form; SFTP and FTP are their Connection)
+    for tag in ('<div id="section-push" data-tab="connection">', '<fieldset id="fieldset-ssh" data-tab="connection">', '<fieldset id="fieldset-ftp" data-tab="connection">'):
+        assert tag in page  # (the push settings are a push source's Connection, like SFTP and FTP are theirs)
 
 
 def test_the_tab_bar_names_the_four_tabs_and_the_script_hides_the_ones_a_source_does_not_need(client):
     page = client.get("/provider/sources/new").text
     for name in ("general", "connection", "request", "limits"):
         assert 'data-tab-btn="%s"' % name in page
-    assert "function availableTabs()" in page and "return ['general']" in page  # a push source has only the General tab
+    assert "function availableTabs()" in page and "return ['general', 'connection'];  // how they send" in page  # push: how they send, and who may send
     assert "['general', 'connection']" in page  # SFTP / FTP: no Request or Limits
+    assert 'id="form-tabs" role="tablist" hidden' not in page and "form-tabs').hidden" not in page  # the bar never disappears when the choice changes
 
 
 def test_an_edited_source_shows_the_same_tabs_with_its_values(client, _isolated_db):
