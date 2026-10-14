@@ -2,6 +2,15 @@
 {% import "_macros.html" as macros %}
 {% block title %}{{ "Edit source" if editing else "Register a source" }} -- loader.data.gov.gr{% endblock %}
 {% block content %}
+  <style>
+    .form-tabs { display: flex; gap: 0.2rem; border-bottom: 1px solid var(--color-border); margin: 0 0 1rem; }
+    .form-tab { background: none; border: 0; border-bottom: 3px solid transparent; border-radius: 0; color: var(--color-text-muted, #5b6b7a); padding: 0.55rem 1rem; font-weight: 600; cursor: pointer; }
+    .form-tab:hover { color: var(--color-primary-mid); }
+    .form-tab.active { color: var(--color-primary); border-bottom-color: var(--color-primary-mid); }
+    .form-tab[hidden], .form-tabs[hidden] { display: none !important; }
+    [data-tab].tab-off { display: none !important; }
+    .plain-set { border: 0; padding: 0; margin: 0; min-width: 0; }
+  </style>
   <div class="panel">
     <h1>{{ "Edit source" if editing else "Register a new source" }}</h1>
     <p class="subtitle">
@@ -23,6 +32,13 @@
     {% endif %}
 
     <form method="post" action="{{ '/provider/sources/%s/edit' % source_id if editing else '/provider/sources/new' }}">
+      <div class="form-tabs" id="form-tabs" role="tablist" hidden>
+        <button type="button" class="form-tab" role="tab" data-tab-btn="general">General</button>
+        <button type="button" class="form-tab" role="tab" data-tab-btn="connection">Connection</button>
+        <button type="button" class="form-tab" role="tab" data-tab-btn="request">Request</button>
+        <button type="button" class="form-tab" role="tab" data-tab-btn="limits">Limits</button>
+      </div>
+      <div data-tab="general">
       <label for="name">Name (unique, lowercase, e.g. <code>acme-open-data</code>)</label>
       {% if editing %}
         <input type="text" value="{{ data.get('name', '') }}" disabled>
@@ -55,12 +71,16 @@
       </div>
       {% if editing %}<div class="muted" style="margin-top:0.3rem;">This can't be changed once registered.</div>{% endif %}
 
+      </div>
       <div id="section-pull">
+        <div data-tab="connection">
         <label for="endpoint_url">Endpoint URL / host</label>
         <input type="text" id="endpoint_url" name="endpoint_url" value="{{ data.get('endpoint_url', '') }}"
                placeholder="https://provider.example.gr/api/records or sftp.example.gr">
         {% if errors.endpoint_url %}<div class="error">{{ errors.endpoint_url }}</div>{% endif %}
 
+        </div>
+        <div data-tab="general">
         <label for="frequency">Harvest frequency</label>
         <select id="frequency" name="frequency">
           {% for f in frequencies %}
@@ -69,6 +89,8 @@
         </select>
         {% if errors.frequency %}<div class="error">{{ errors.frequency }}</div>{% endif %}
 
+        </div>
+        <div data-tab="general">
         {% set tt = data.get('transport_type', 'http') %}
         {% set connector = 'ssh' if tt in ('sftp', 'scp') else ('http' if tt == 'push' else tt) %}
         <label>Connector</label>
@@ -86,9 +108,9 @@
         </div>
         {% if errors.transport_type %}<div class="error">{{ errors.transport_type }}</div>{% endif %}
 
-      <fieldset id="fieldset-http">
-        <legend>{{ macros.icon("http", 15) }} HTTP API settings</legend>
-
+        </div>
+      <div id="fieldset-http" class="plain-set">
+        <div data-tab="connection">
         <label>Authentication</label>
         <div class="segmented">
           {% for a in http_auth_types %}
@@ -167,6 +189,8 @@
           <textarea id="mtls_client_key" name="mtls_client_key" rows="4" placeholder="{{ dots if stored_http == 'mtls' else '' }}">{{ data.get('mtls_client_key', '') }}</textarea>
         </div>
 
+        </div>
+        <div data-tab="request">
         <label for="items_path">Records path in the response (optional)</label>
         <input type="text" id="items_path" name="items_path" value="{{ data.get('items_path', 'results') }}">
 
@@ -177,23 +201,6 @@
         </select>
         <p class="muted" style="margin:0.2rem 0 0.8rem;">A POST source is asked <strong>only on demand</strong>, through its published address (the Load Box's <em>Publish</em> switch): it is never pulled on a schedule, and <em>Test connection</em> makes a real call only when a test request is given below. Set the request timeout to fit a slow API.</p>
         {% if errors.proxy_method %}<div class="error">{{ errors.proxy_method }}</div>{% endif %}
-
-        <div class="limits-block" style="border:1px solid var(--color-border); border-radius:var(--radius); padding:0.8rem 1rem 0.5rem; margin:0.9rem 0; max-width:46rem;">
-          <div style="font-weight:600;">Rate limits</div>
-          <p class="muted" style="margin:0.15rem 0 0.7rem;">How often this API may be called, per minute. The provider limit is shared by everything that calls it (scheduled pulls and the published address); the per-caller limit stops one address from using it all.</p>
-          <div style="display:flex; gap:1.6rem; flex-wrap:wrap;">
-            <div>
-              <label for="max_requests_per_minute">To the provider -- all callers together</label>
-              <input type="number" class="small" id="max_requests_per_minute" name="max_requests_per_minute" min="1" value="{{ data.get('max_requests_per_minute', '60') }}">
-              {% if errors.max_requests_per_minute %}<div class="error">{{ errors.max_requests_per_minute }}</div>{% endif %}
-            </div>
-            <div>
-              <label for="proxy_rate_limit_per_ip">On the published address -- per calling address</label>
-              <input type="number" class="small" id="proxy_rate_limit_per_ip" name="proxy_rate_limit_per_ip" min="1" value="{{ data.get('proxy_rate_limit_per_ip', '30') }}">
-              {% if errors.proxy_rate_limit_per_ip %}<div class="error">{{ errors.proxy_rate_limit_per_ip }}</div>{% endif %}
-            </div>
-          </div>
-        </div>
 
         <div class="test-request-block" style="max-width:46rem; margin:0.9rem 0;">
           <label for="test_request">Test request (optional)</label>
@@ -214,20 +221,50 @@
           </script>
         </div>
 
-        <label for="request_timeout_s">Request timeout (seconds)</label>
-        <input type="number" class="small" id="request_timeout_s" name="request_timeout_s" value="{{ data.get('request_timeout_s', '30') }}">
-        {% if errors.request_timeout_s %}<div class="error">{{ errors.request_timeout_s }}</div>{% endif %}
+        </div>
+        <div data-tab="limits">
+        <div class="limits-block" style="border:1px solid var(--color-border); border-radius:var(--radius); padding:0.8rem 1rem 0.5rem; margin:0.9rem 0; max-width:46rem;">
+          <div style="font-weight:600;">Rate limits</div>
+          <p class="muted" style="margin:0.15rem 0 0.7rem;">How often this API may be called, per minute. The provider limit is shared by everything that calls it (scheduled pulls and the published address); the per-caller limit stops one address from using it all.</p>
+          <div style="display:flex; gap:1.6rem; flex-wrap:wrap;">
+            <div>
+              <label for="max_requests_per_minute">To the provider -- all callers together</label>
+              <input type="number" class="small" id="max_requests_per_minute" name="max_requests_per_minute" min="1" value="{{ data.get('max_requests_per_minute', '60') }}">
+              {% if errors.max_requests_per_minute %}<div class="error">{{ errors.max_requests_per_minute }}</div>{% endif %}
+            </div>
+            <div>
+              <label for="proxy_rate_limit_per_ip">On the published address -- per calling address</label>
+              <input type="number" class="small" id="proxy_rate_limit_per_ip" name="proxy_rate_limit_per_ip" min="1" value="{{ data.get('proxy_rate_limit_per_ip', '30') }}">
+              {% if errors.proxy_rate_limit_per_ip %}<div class="error">{{ errors.proxy_rate_limit_per_ip }}</div>{% endif %}
+            </div>
+          </div>
+        </div>
 
-        <label for="max_pages">Max pages per harvest run (safety cap on pagination depth)</label>
-        <input type="number" class="small" id="max_pages" name="max_pages" value="{{ data.get('max_pages', '1000') }}">
-        {% if errors.max_pages %}<div class="error">{{ errors.max_pages }}</div>{% endif %}
+        <div class="limits-block-2" style="border:1px solid var(--color-border); border-radius:var(--radius); padding:0.8rem 1rem 0.5rem; margin:0.9rem 0; max-width:46rem;">
+          <div style="font-weight:600;">Each call</div>
+          <p class="muted" style="margin:0.15rem 0 0.7rem;">How long one call to the provider may take, how often a failed or throttled call is tried again, and how deep a scheduled pull may page.</p>
+          <div style="display:flex; gap:1.6rem; flex-wrap:wrap;">
+            <div>
+              <label for="request_timeout_s">Request timeout (seconds)</label>
+              <input type="number" class="small" id="request_timeout_s" name="request_timeout_s" value="{{ data.get('request_timeout_s', '30') }}">
+              {% if errors.request_timeout_s %}<div class="error">{{ errors.request_timeout_s }}</div>{% endif %}
+            </div>
+            <div>
+              <label for="max_retries">Max retries on a failed / throttled request</label>
+              <input type="number" class="small" id="max_retries" name="max_retries" value="{{ data.get('max_retries', '5') }}">
+              {% if errors.max_retries %}<div class="error">{{ errors.max_retries }}</div>{% endif %}
+            </div>
+            <div>
+              <label for="max_pages">Max pages per harvest run (safety cap on pagination depth)</label>
+              <input type="number" class="small" id="max_pages" name="max_pages" value="{{ data.get('max_pages', '1000') }}">
+              {% if errors.max_pages %}<div class="error">{{ errors.max_pages }}</div>{% endif %}
+            </div>
+          </div>
+        </div>
+        </div>
+      </div>
 
-        <label for="max_retries">Max retries on a failed/throttled request</label>
-        <input type="number" class="small" id="max_retries" name="max_retries" value="{{ data.get('max_retries', '5') }}">
-        {% if errors.max_retries %}<div class="error">{{ errors.max_retries }}</div>{% endif %}
-      </fieldset>
-
-      <fieldset id="fieldset-ssh">
+      <fieldset id="fieldset-ssh" data-tab="connection">
         <legend>{{ macros.icon("sftp", 15) }} SFTP/SCP settings</legend>
 
         <label>Protocol</label>
@@ -277,7 +314,7 @@
         <p class="muted" style="margin-top:1rem;">Maximum file size: <strong>{{ max_file_size_human }}</strong> -- a system-wide limit (upload gateway and server), not set per source.</p>
       </fieldset>
 
-      <fieldset id="fieldset-ftp">
+      <fieldset id="fieldset-ftp" data-tab="connection">
         <legend>{{ macros.icon("ftp", 15) }} FTP settings</legend>
         <label for="ftp_username">Username</label>
         <input type="text" id="ftp_username" name="ftp_username" value="{{ data.get('ftp_username', '') }}">
@@ -313,7 +350,7 @@
 
       </div>
 
-      <div id="section-push">
+      <div id="section-push" data-tab="general">
         <input type="hidden" id="transport-type-push" name="transport_type" value="push">
         <fieldset id="fieldset-push">
           <legend>{{ macros.icon("push", 15) }} Push settings</legend>
@@ -434,5 +471,34 @@
     showTransportFields();
     showPushMethodFields();
     showAuthFields();
+
+    var TAB_ORDER = ['general', 'connection', 'request', 'limits'];
+    var activeTab = 'general';
+    function availableTabs() {
+      var checked = document.querySelector('input[name="kind"]:checked');
+      if ((checked ? checked.value : 'pull') === 'push') return ['general'];
+      return document.getElementById('transport-type-pull').value === 'http' ? TAB_ORDER : ['general', 'connection'];
+    }
+    function setTab(name) {
+      var available = availableTabs();
+      if (available.indexOf(name) < 0) name = 'general';
+      activeTab = name;
+      document.querySelectorAll('[data-tab]').forEach(function (el) { el.classList.toggle('tab-off', el.dataset.tab !== name); });
+      document.querySelectorAll('[data-tab-btn]').forEach(function (button) {
+        var on = button.dataset.tabBtn === name;
+        button.classList.toggle('active', on);
+        button.setAttribute('aria-selected', on ? 'true' : 'false');
+        button.hidden = available.indexOf(button.dataset.tabBtn) < 0;
+      });
+      document.getElementById('form-tabs').hidden = available.length < 2;
+    }
+    document.querySelectorAll('[data-tab-btn]').forEach(function (button) {
+      button.addEventListener('click', function () { setTab(button.dataset.tabBtn); });
+    });
+    document.querySelector('form').addEventListener('change', function () { setTab(activeTab); });
+    (function () {
+      var first = document.querySelector('form .error'), holder = first && first.closest('[data-tab]');
+      setTab(holder ? holder.dataset.tab : 'general');  // opens on the tab of the first problem, if there is one
+    })();
   </script>
 {% endblock %}
