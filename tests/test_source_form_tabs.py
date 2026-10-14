@@ -84,3 +84,16 @@ def test_a_new_source_is_registered_step_by_step_and_an_edit_is_just_saved(clien
     source_id = re.search(r"/provider/sources/([^/]+)/edit", client.get("/provider/sources").text).group(1)
     edit_page = client.get("/provider/sources/%s/edit" % source_id).text
     assert "var WIZARD = false;" in edit_page and 'id="submit-label">Save changes<' in edit_page
+
+
+def test_the_form_has_a_back_button_that_leaves_without_saving(client, _isolated_db):
+    new_page = client.get("/provider/sources/new").text
+    assert '<a class="btn btn-secondary" id="back-btn" href="/provider/sources">' in new_page
+    assert new_page.index('id="back-btn"') < new_page.index('id="submit-btn"')  # Back first, the main action after it
+    client.post("/provider/sources/new", data={
+        "name": "backed", "title": "Backed", "kind": "pull", "transport_type": "http", "endpoint_url": "https://registry.example.gr/api/", "frequency": "DAILY",
+        "auth_type": "api_key", "api_key": "k",
+    })
+    source_id = re.search(r"/provider/sources/([^/]+)/edit", client.get("/provider/sources").text).group(1)
+    assert 'id="back-btn" href="/provider/sources"' in client.get("/provider/sources/%s/edit" % source_id).text
+    assert client.get("/provider/sources", follow_redirects=False).status_code == 200  # (where it goes)

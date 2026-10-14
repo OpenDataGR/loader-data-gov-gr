@@ -423,7 +423,8 @@
         </fieldset>
       </div>
 
-      <div class="form-actions">
+      <div class="form-actions" style="display:flex; gap:0.6rem; align-items:center;">
+        <a class="btn btn-secondary" id="back-btn" href="/provider/sources">{{ macros.icon("arrow-left", 16) }} Back</a>
         <button type="submit" id="submit-btn">{{ macros.icon(("check" if editing else "plus"), 16) }} <span id="submit-label">{{ "Save changes" if editing else "Register source" }}</span></button>
       </div>
     </form>
