@@ -185,11 +185,18 @@
       {% else %}
         <p class="muted" style="margin:0 0 0.4rem;">{{ counts.ok }} ok{% if counts.failed %}, {{ counts.failed }} failed{% endif %} in all. {% if failed_only %}The newest {{ outputs|length }} failed ones{% else %}Newest {{ outputs|length }}{% endif %}:
           {% if counts.failed and not failed_only %}<a href="{{ tbase }}?show=failed#outputs">Show the failed ones</a>{% elif failed_only %}<a href="{{ tbase }}#outputs">Show the newest of all</a>{% endif %}</p>
+        <form id="bulk-form" method="post" action="{{ tbase }}/outputs/bulk" style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; margin:0.3rem 0 0.6rem;">
+          <span class="muted" id="out-count">0 selected</span>
+          <button type="submit" name="action" value="download" class="btn-secondary btn-sm" id="out-download" disabled>{{ macros.icon("download", 14) }} Download selected</button>
+          <button type="submit" name="action" value="delete" class="btn-secondary btn-sm" id="out-delete" disabled onclick="return confirm('Delete the selected outputs? The original files are not affected.');">{{ macros.icon("trash", 14) }} Delete selected</button>
+          {% if counts.failed %}<button type="submit" formaction="{{ tbase }}/outputs/delete-failed" class="btn-secondary btn-sm" onclick="return confirm('Delete all {{ counts.failed }} failed outputs of this pipeline, not only the ones shown? The original files are not affected.');">{{ macros.icon("trash", 14) }} Delete all {{ counts.failed }} failed</button>{% endif %}
+        </form>
         <div class="scroll"><table>
-          <thead><tr><th>When</th><th>Result</th><th>File</th><th>Records</th><th>Size</th><th></th></tr></thead>
+          <thead><tr><th style="width:1.5rem;"><input type="checkbox" id="out-all" aria-label="Select all outputs on this page"></th><th>When</th><th>Result</th><th>File</th><th>Records</th><th>Size</th><th></th></tr></thead>
           <tbody>
             {% for o in outputs %}
             <tr>
+              <td><input type="checkbox" class="out-check" name="output_id" value="{{ o.id }}" form="bulk-form" aria-label="Select this output"></td>
               <td class="muted">{{ o.created_at.strftime("%m-%d %H:%M:%S") }} UTC</td>
               <td>{% if o.status == "ok" %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>ok</span></span>
                   {% else %}<span class="badge badge-error" title="{{ o.error_message }}">{{ macros.icon("rejected", 13) }}<span>failed</span></span><div class="muted">{{ o.error_message }}</div>{% endif %}
@@ -213,6 +220,22 @@
               onsubmit="return confirm('Delete all {{ counts.ok + counts.failed }} stored outputs of this source? The original files are not affected, and you can run the transform again.');">
           <button type="submit" class="btn-secondary btn-sm">{{ macros.icon("trash", 14) }} Delete all {{ counts.ok + counts.failed }} outputs</button>
         </form>
+        <script>
+          (function () {
+            var boxes = Array.prototype.slice.call(document.querySelectorAll('.out-check')), all = document.getElementById('out-all');
+            var count = document.getElementById('out-count'), download = document.getElementById('out-download'), del = document.getElementById('out-delete');
+            function refresh() {
+              var n = boxes.filter(function (b) { return b.checked; }).length;
+              count.textContent = n + ' selected';
+              download.disabled = del.disabled = n === 0;
+              all.checked = n > 0 && n === boxes.length;
+              all.indeterminate = n > 0 && n < boxes.length;
+            }
+            all.addEventListener('change', function () { boxes.forEach(function (b) { b.checked = all.checked; }); refresh(); });
+            boxes.forEach(function (b) { b.addEventListener('change', refresh); });
+            refresh();
+          })();
+        </script>
       {% endif %}
       {% endif %}
     {% endif %}

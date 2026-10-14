@@ -287,6 +287,39 @@ def delete_all_outputs(hsession: Session, source_id: str, transform_id: str | No
     return int(result.rowcount or 0)
 
 
+def delete_outputs(hsession: Session, source_id: str, output_ids: list[str], transform_id: str | None = None) -> int:
+    """Delete these stored outputs -- only ones that belong to this source (and pipeline, when given). Returns how many were deleted."""
+    if not output_ids:
+        return 0
+    query = delete(TransformedFile).where(TransformedFile.source_id == source_id, TransformedFile.id.in_(output_ids))
+    if transform_id:
+        query = query.where(TransformedFile.transform_id == transform_id)
+    result = hsession.execute(query)
+    hsession.commit()
+    return int(result.rowcount or 0)
+
+
+def delete_failed_outputs(hsession: Session, source_id: str, transform_id: str | None = None) -> int:
+    """Delete every failed output of this source (of one pipeline, when given). Returns how many."""
+    query = delete(TransformedFile).where(TransformedFile.source_id == source_id, TransformedFile.status == "error")
+    if transform_id:
+        query = query.where(TransformedFile.transform_id == transform_id)
+    result = hsession.execute(query)
+    hsession.commit()
+    return int(result.rowcount or 0)
+
+
+def outputs_with_content(hsession: Session, source_id: str, output_ids: list[str], transform_id: str | None = None) -> list[TransformedFile]:
+    """The selected outputs that can be downloaded (good ones whose contents are still kept), oldest first."""
+    if not output_ids:
+        return []
+    query = select(TransformedFile).where(
+        TransformedFile.source_id == source_id, TransformedFile.id.in_(output_ids), TransformedFile.status == "ok", func.length(TransformedFile.content) > 0)
+    if transform_id:
+        query = query.where(TransformedFile.transform_id == transform_id)
+    return list(hsession.scalars(query.order_by(TransformedFile.created_at)).all())
+
+
 # -- is this transform ready to run? ----------------------------------------------------------------------------------------------
 
 def check(config_session: Session, transform: Transform) -> list[str]:

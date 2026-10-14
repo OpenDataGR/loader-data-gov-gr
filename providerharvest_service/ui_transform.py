@@ -60,6 +60,11 @@ def _go(path: str, flash: str | None = None, kind: str = "success") -> RedirectR
     return RedirectResponse(path + query, status_code=303)
 
 
+def _go_at(path: str, fragment: str, flash: str, kind: str = "success") -> RedirectResponse:
+    """Like _go, back to a place on the page (the message has to come before the #, or the browser reads it as part of the anchor)."""
+    return RedirectResponse("%s?%s#%s" % (path, urlencode({"flash": flash, "flash_kind": kind}), fragment), status_code=303)
+
+
 def _size(count: int) -> str:
     value = float(count)
     for unit in ("B", "kB", "MB", "GB"):
@@ -612,6 +617,66 @@ def download_output(source_id: str, output_id: str, request: Request, session: S
     if row.status != "ok":
         return _go(_base(request, source_id), "That run failed, so there is no output: %s" % (row.error_message or ""), "error")
     return Response(content=row.content, media_type=row.content_type, headers={"Content-Disposition": 'attachment; filename="%s"' % row.filename.replace('"', "")})
+
+
+BULK_MAX_OUTPUTS = 500  # (the form parser itself refuses more than 1000 fields in one request)
+BULK_MAX_ZIP_BYTES = 200 * 1000 * 1000
+
+
+@router.post("/sources/{source_id}/outputs/bulk")
+async def bulk_outputs(source_id: str, request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)):
+    """Delete the selected outputs, or download them together as one zip (``action`` = delete | download). Only outputs of this source and
+    pipeline are touched, whatever ids are sent."""
+    back = _base(request, source_id)
+    source = _source_or_none(session, source_id)
+    if source is None:
+        return _go("/transform", "No such source.", "error")
+    form = await request.form()
+    ids = [str(i) for i in form.getlist("output_id")][:BULK_MAX_OUTPUTS + 1]
+    action = str(form.get("action") or "")
+    if not ids:
+        return _go_at(back, "outputs", "Select at least one output first.", "error")
+    if len(ids) > BULK_MAX_OUTPUTS:
+        return _go_at(back, "outputs", "Select at most %d outputs at a time." % BULK_MAX_OUTPUTS, "error")
+    pipeline = transform_runner.get_pipeline(session, source_id, _pipeline_name(request))
+    transform_id = pipeline.id if pipeline else None
+    if action == "delete":
+        count = transform_runner.delete_outputs(hsession, source_id, ids, transform_id)
+        logger.info("%d transform outputs of source %s deleted by %s", count, source_id, _who(request) or "?")
+        return _go_at(back, "outputs", "%d output%s deleted. The original files are untouched." % (count, "" if count == 1 else "s") if count else "None of the selected outputs exist any more.",
+                      "success" if count else "error")
+    if action != "download":
+        return _go_at(back, "outputs", "Choose what to do with the selected outputs.", "error")
+    rows = transform_runner.outputs_with_content(hsession, source_id, ids, transform_id)
+    if not rows:
+        return _go_at(back, "outputs", "Nothing to download: a failed run has no output, and a removed one has no contents.", "error")
+    if sum(len(r.content) for r in rows) > BULK_MAX_ZIP_BYTES:
+        return _go_at(back, "outputs", "Those outputs are larger than %d MB together -- select fewer." % (BULK_MAX_ZIP_BYTES // 1_000_000), "error")
+    import io
+    import zipfile
+
+    buffer, used = io.BytesIO(), set()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for row in rows:  # the time first, so the same file name made on different days never collides
+            name = "%s_%s" % (row.created_at.strftime("%Y%m%d-%H%M%S"), (row.filename or "output").replace("/", "_").replace("\\", "_"))
+            while name in used:
+                name = "dup_" + name
+            used.add(name)
+            archive.writestr(name, row.content)
+    filename = "%s-%s-outputs.zip" % (source.name, _pipeline_name(request))
+    return Response(content=buffer.getvalue(), media_type="application/zip", headers={"Content-Disposition": 'attachment; filename="%s"' % filename})
+
+
+@router.post("/sources/{source_id}/outputs/delete-failed")
+def delete_failed_outputs(source_id: str, request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)):
+    """Delete every failed output of this pipeline, not only the ones on the page."""
+    back = _base(request, source_id)
+    if _source_or_none(session, source_id) is None:
+        return _go("/transform", "No such source.", "error")
+    pipeline = transform_runner.get_pipeline(session, source_id, _pipeline_name(request))
+    count = transform_runner.delete_failed_outputs(hsession, source_id, pipeline.id if pipeline else None)
+    logger.info("all %d failed transform outputs of source %s deleted by %s", count, source_id, _who(request) or "?")
+    return _go_at(back, "outputs", "%d failed output%s deleted. The original files are untouched." % (count, "" if count == 1 else "s") if count else "There were no failed outputs.")
 
 
 # -- several pipelines on one source --------------------------------------------------------------------------------------------------------
