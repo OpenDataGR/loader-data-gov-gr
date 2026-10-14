@@ -40,7 +40,7 @@ from providerharvest_service.ftp_credentials import (
     password_problem,
 )
 from providerharvest_service import retention, sender_allowlist
-from providerharvest_service.models import FtpAccount, FtpAllowedIp, ProviderSource, _new_id
+from providerharvest_service.models import FtpAccount, FtpAllowedIp, LoadTarget, LookupTable, ProviderSource, Transform, _new_id
 
 TRANSPORT_TYPES = ("http", "sftp", "scp", "ftp", "push")
 PROXY_METHODS = ("GET", "POST")
@@ -820,10 +820,41 @@ def delete(session: Session, source_id: str) -> None:
     still runs as a single stand-in user, so there's no ownership check
     to enforce here yet either."""
     source = get_or_404(session, source_id)
+    removed = {"accounts": 0, "pipelines": 0, "tables": 0, "published": 0}
     for account in _managed_ftp_accounts(session, source):
         session.delete(account)
+        removed["accounts"] += 1
+    # what belongs to the source goes with it: its pipelines, its index tables and its publish setting (nothing can use them afterwards)
+    for model, key in ((Transform, "pipelines"), (LookupTable, "tables"), (LoadTarget, "published")):
+        for row in session.scalars(select(model).where(model.source_id == source_id)).all():
+            removed[key] += 1 if key != "published" else int(bool(row.api_enabled))
+            session.delete(row)
     session.delete(source)
     session.commit()
+    return removed
+
+
+def deletion_summary(removed: dict[str, int], stored: dict[str, int] | None = None) -> str:
+    """What deleting a source took with it, in words, for the message that follows."""
+    def n(count: int, what: str) -> str:
+        return "%d %s%s" % (count, what, "" if count == 1 else "s")
+
+    parts = []
+    if removed.get("pipelines"):
+        parts.append(n(removed["pipelines"], "pipeline"))
+    if removed.get("tables"):
+        parts.append(n(removed["tables"], "index table"))
+    if stored:
+        if stored.get("runs"):
+            parts.append("%s with %s" % (n(stored["runs"], "stored run"), n(stored["files"], "file")))
+        if stored.get("outputs"):
+            parts.append(n(stored["outputs"], "output"))
+    text = "Source deleted."
+    if parts:
+        text += " Removed with it: %s." % ", ".join(parts)
+    if removed.get("published"):
+        text += " Its published address stopped answering."
+    return text
 
 
 def get_or_404(session: Session, source_id: str) -> ProviderSource:

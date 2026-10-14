@@ -27,10 +27,10 @@ import os
 import threading
 from typing import Callable
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
-from providerharvest_service.harvest_models import HarvestedFile, HarvestRun, TransformedFile
+from providerharvest_service.harvest_models import HarvestedFile, HarvestedRecord, HarvestRun, TransformedFile
 from providerharvest_service.models import FtpAccount, ProviderSource
 
 logger = logging.getLogger(__name__)
@@ -177,6 +177,19 @@ def purge_source(hsession: Session, source_id: str, days: int, *, now: datetime.
     hsession.execute(update(HarvestedFile).where(*_candidates(source_id, cutoff)).values(content=b""))
     hsession.commit()
     return files, size
+
+
+def delete_source_data(hsession: Session, source_id: str) -> dict[str, int]:
+    """Everything stored for a source that is being deleted: its transformed outputs, its stored files and records, and its runs. Nothing
+    can reach them once the source is gone, so nothing is kept. Returns how many of each were removed."""
+    runs = select(HarvestRun.id).where(HarvestRun.source_id == source_id)
+    outputs = hsession.execute(delete(TransformedFile).where(TransformedFile.source_id == source_id)).rowcount or 0
+    outputs += hsession.execute(delete(TransformedFile).where(TransformedFile.run_id.in_(runs))).rowcount or 0
+    files = hsession.execute(delete(HarvestedFile).where(HarvestedFile.run_id.in_(runs))).rowcount or 0
+    hsession.execute(delete(HarvestedRecord).where(HarvestedRecord.run_id.in_(runs)))
+    run_count = hsession.execute(delete(HarvestRun).where(HarvestRun.source_id == source_id)).rowcount or 0
+    hsession.commit()
+    return {"runs": int(run_count), "files": int(files), "outputs": int(outputs)}
 
 
 def purge_all(config_session: Session, hsession: Session, *, now: datetime.datetime | None = None) -> list[tuple[str, int, int]]:

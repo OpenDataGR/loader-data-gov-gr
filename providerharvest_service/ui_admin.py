@@ -122,14 +122,16 @@ def check_connection(source_id: str, request: Request, session: Session = Depend
 
 
 @router.post("/{source_id}/delete")
-def delete_source(source_id: str, request: Request, session: Session = Depends(get_session)) -> RedirectResponse:
+def delete_source(source_id: str, request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)) -> RedirectResponse:
     try:
-        provider_sources.delete(session, source_id)
+        provider_sources.get_or_404(session, source_id)
+        stored = retention.delete_source_data(hsession, source_id)
+        removed = provider_sources.delete(session, source_id)
     except provider_sources.NotFound:
         return RedirectResponse(
             _came_from(request, "/admin/sources", "No such source.", kind="error"), status_code=303
         )
-    return RedirectResponse(_came_from(request, "/admin/sources", "Source deleted."), status_code=303)
+    return RedirectResponse(_came_from(request, "/admin/sources", provider_sources.deletion_summary(removed, stored)), status_code=303)
 
 
 def _size(count: int) -> str:

@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from providerharvest_service import connection_check, db, provider_sources
 from providerharvest_service.app import app
 from providerharvest_service.engine.transport.base import Entry, Page, Transport
+from tests.test_push_ingest import _isolated_harvest_db  # noqa: F401  (a harvest database for the tests that delete a source)
 
 ADMIN_USERNAME = "test-admin"
 ADMIN_PASSWORD = "test-password"

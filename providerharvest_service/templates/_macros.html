@@ -157,7 +157,7 @@
         </form>
       {% endif %}
       <form method="post" action="{{ action_prefix }}/{{ s.id }}/delete"
-            onsubmit="return confirm('Permanently delete {{ s.name }}? This cannot be undone.');">
+            onsubmit="return confirm('Permanently delete {{ s.name }} and everything stored for it -- its pipelines, index tables, published address, stored files and outputs? This cannot be undone.');">
         <button type="submit" class="danger">{{ icon("trash", 14) }} Delete</button>
       </form>
     </div>
