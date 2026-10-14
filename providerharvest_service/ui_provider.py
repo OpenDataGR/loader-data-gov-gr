@@ -19,10 +19,12 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from providerharvest_service import build_info, connection_check, harvest_db, harvest_runner, nav, provider_sources, push_check
 from providerharvest_service.db import get_session
+from providerharvest_service.models import LookupTable
 
 router = APIRouter(prefix="/provider", tags=["provider-ui"])
 templates = Jinja2Templates(directory="providerharvest_service/templates")
@@ -39,11 +41,15 @@ HTTP_AUTH_TYPES = provider_sources.HTTP_AUTH_TYPES
 @router.get("/sources", response_class=HTMLResponse)
 def source_list(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
     sources = provider_sources.list_all(session)
+    index_tables: dict[str, list] = {}  # informational: each source's index tables (name, rows)
+    for table in session.scalars(select(LookupTable).where(LookupTable.source_id.is_not(None)).order_by(LookupTable.name)).all():
+        index_tables.setdefault(table.source_id, []).append(table)
     return templates.TemplateResponse(
         request,
         "provider/source_list.html",
         {
             "sources": sources,
+            "index_tables": index_tables,
             "counts": provider_sources.status_counts(session),
             "flash": request.query_params.get("flash"),
             "flash_kind": request.query_params.get("flash_kind", "success"),

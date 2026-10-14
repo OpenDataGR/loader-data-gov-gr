@@ -144,3 +144,13 @@ def test_binding_is_refused_when_the_source_already_has_a_table_of_that_name(cli
         s.commit()
         orphan = s.query(LookupTable).filter(LookupTable.source_id.is_(None)).one().id
     assert "already has a table called" in _flash(client.post("/provider/tables/%s/bind" % orphan, data={"source_id": source["id"]}, follow_redirects=False))
+
+
+def test_the_sources_page_lists_each_sources_index_tables_for_information(client, source, _isolated_db):
+    other = _second_source(client, _isolated_db)
+    page = client.get("/provider/sources").text
+    assert "Index tables:" not in page  # none yet
+    _upload_table(client, source)
+    page = client.get("/provider/sources").text
+    assert 'Index tables: <a href="/provider/sources/%s/tables">stations (2)</a>' % source["id"] in page
+    assert "/provider/sources/%s/tables\">stations" % other["id"] not in page  # the other source has none

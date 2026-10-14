@@ -30,7 +30,8 @@
         <tbody>
           {% for s in sources %}
           <tr>
-            <td><div class="name-title">{{ s.title }}</div><div class="name-slug">{{ s.name }}</div></td>
+            <td><div class="name-title">{{ s.title }}</div><div class="name-slug">{{ s.name }}</div>
+              {% set its = index_tables.get(s.id, []) %}{% if its %}<div class="muted" style="font-size:0.78rem; margin-top:0.25rem;">Index tables: <a href="/provider/sources/{{ s.id }}/tables">{% for t in its %}{{ t.name }} ({{ "{:,}".format(t.row_count) }}){{ ", " if not loop.last }}{% endfor %}</a></div>{% endif %}</td>
             <td>{{ macros.type_badges(s) }}</td>
             <td class="muted">
               {% if s.kind == "push" %}{{ macros.push_origin(s) }}{% else %}{{ s.endpoint_url }}{% endif %}
