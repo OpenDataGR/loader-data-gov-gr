@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 
 from providerharvest_service.app import app
 from providerharvest_service.harvest_models import HarvestedFile, HarvestedRecord, HarvestRun, TransformedFile
-from providerharvest_service.models import LoadTarget, LookupTable, ProviderSource, Transform
+from providerharvest_service.models import LookupTable, ProviderSource, Transform
 from tests.test_pipelines_ui import _add, _setup
 from tests.test_transform_ui import (  # noqa: F401  (fixtures and helpers shared with the Transform Box tests)
     _flash, _go, _isolated_db, _isolated_harvest_db, _master_key, _upload_data, _upload_table, client, source,
@@ -16,8 +16,7 @@ from tests.test_transform_ui import (  # noqa: F401  (fixtures and helpers share
 def _other_sources_data(_isolated_db, _isolated_harvest_db):
     """A second source's rows in both databases, to prove they are not touched."""
     with _isolated_db() as s:
-        s.add_all([Transform(source_id="other", steps="[]"), LookupTable(source_id="other", name="stations", columns='["id"]', rows="[]", row_count=0),
-                   LoadTarget(source_id="other", api_enabled=True)])
+        s.add_all([Transform(source_id="other", steps="[]", published=True), LookupTable(source_id="other", name="stations", columns='["id"]', rows="[]", row_count=0)])
         s.commit()
     with _isolated_harvest_db() as h:
         run = HarvestRun(source_id="other", source_name="other", status="success")
@@ -30,7 +29,9 @@ def _other_sources_data(_isolated_db, _isolated_harvest_db):
 
 def _counts(_isolated_db, _isolated_harvest_db, source_id):
     with _isolated_db() as s:
-        config = [s.scalar(select(func.count()).select_from(m).where(m.source_id == source_id)) for m in (Transform, LookupTable, LoadTarget)]
+        config = [s.scalar(select(func.count()).select_from(Transform).where(Transform.source_id == source_id)),
+                  s.scalar(select(func.count()).select_from(LookupTable).where(LookupTable.source_id == source_id)),
+                  s.scalar(select(func.count()).select_from(Transform).where(Transform.source_id == source_id, Transform.published.is_(True)))]
     with _isolated_harvest_db() as h:
         stored = [h.scalar(select(func.count()).select_from(HarvestRun).where(HarvestRun.source_id == source_id)),
                   h.scalar(select(func.count()).select_from(TransformedFile).where(TransformedFile.source_id == source_id)),
@@ -44,10 +45,10 @@ def test_deleting_a_source_removes_what_belongs_to_it_and_nothing_else(client, s
     _go(client, source, "enabled", data={"enabled": "1"})
     _add(client, source, "lookup")
     _upload_data(client, source)
-    client.post("/load/sources/%s/api" % source["id"], data={"enabled": "1"}, follow_redirects=False)
+    client.post("/load/sources/%s/api" % source["id"], data={"enabled": "1"}, follow_redirects=False)  # the default pipeline
     _other_sources_data(_isolated_db, _isolated_harvest_db)
     before = _counts(_isolated_db, _isolated_harvest_db, source["id"])
-    assert before[0] == 2 and before[1] == 1 and before[2] == 1 and all(n >= 1 for n in before[3:])
+    assert before[0] == 2 and before[1] == 1 and before[2] == 1  # two pipelines, one table, one published and all(n >= 1 for n in before[3:])
     caller = TestClient(app, base_url="https://testserver")
     assert caller.get("/data/acme-push").status_code == 200
 

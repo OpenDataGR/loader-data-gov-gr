@@ -16,9 +16,9 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from providerharvest_service import admin_session, build_info, harvest_db, load_api, nav, provider_sources, publishing, request_template, transform_forms as tf
+from providerharvest_service import admin_session, build_info, harvest_db, load_api, nav, provider_sources, publishing, request_template, transform_forms as tf, transform_runner
 from providerharvest_service.db import get_session
-from providerharvest_service.models import LoadTarget, ProviderSource, Transform
+from providerharvest_service.models import ProviderSource, Transform
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/load", tags=["load-ui"])
@@ -36,10 +36,10 @@ def _go(flash: str | None = None, kind: str = "success") -> RedirectResponse:
     return RedirectResponse("/load" + query, status_code=303)
 
 
-def _api_of(source: ProviderSource, base: str, transform=None) -> dict | None:
+def _api_of(source: ProviderSource, base: str, pipeline=None) -> dict | None:
     """What an API source's published address does, for the Load Box: how callers ask it (GET or POST, and for GET the parameters the
     request template names), how the provider is called, the per-caller limit. None for a source that stores its data. The settings
-    themselves live on the source (Extract Box) and its Transform page; this only shows them."""
+    live on the source (Extract Box), on the pipeline's request page and on its Transform page; this only shows them."""
     if source.transport_type != "http":
         return None
     try:
@@ -48,40 +48,42 @@ def _api_of(source: ProviderSource, base: str, transform=None) -> dict | None:
         config = {}
     from providerharvest_service import proxy as proxy_module
 
-    swapped = proxy_module.request_is_swapped(transform)
-    method = proxy_module.consumer_method(source, transform)
+    swapped = proxy_module.request_is_swapped(pipeline)
+    method = proxy_module.consumer_method(source, pipeline)
     hint = ""
     if swapped and method == "GET":
-        hint = "?" + "&".join("%s=..." % name for name in request_template.placeholders(transform.request_template))
+        hint = "?" + "&".join("%s=..." % name for name in request_template.placeholders(pipeline.request_template))
+    path = publishing.address_of(source, pipeline) if pipeline is not None else "/data/%s" % source.name
     return {
-        "url": "%s/data/%s%s" % (base, source.name, hint), "method": method, "turned": swapped, "provider_method": source.proxy_method,
+        "url": "%s%s%s" % (base, path, hint), "method": method, "turned": swapped, "provider_method": source.proxy_method,
         "per_caller": config.get("proxy_rate_limit_per_ip", 30), "only": source.proxy_only,
-        "request_summary": tf.request_summary(source.proxy_method, transform),
+        "request_summary": tf.request_summary(source.proxy_method, pipeline),
     }
 
 
 @router.get("", response_class=HTMLResponse)
 def overview(request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)):
-    targets = {t.source_id: t for t in session.scalars(select(LoadTarget)).all()}
-    transforms = {t.source_id: t for t in session.scalars(select(Transform)).all()}
     # the configured public address: behind the gateway the request itself says "http" (see ui_provider._push_upload_url)
     base = (os.environ.get("LOADER_PUBLIC_BASE_URL") or str(request.base_url)).rstrip("/")
-    rows = []
+    rows = []  # one row per pipeline (what is published is a pipeline); a source with none yet gets one row
     for source in provider_sources.list_all(session):
-        target = targets.get(source.id)
-        rows.append({
-            "source": source, "transform": transforms.get(source.id), "published": bool(target and target.api_enabled),
-            "latest": load_api.latest_output(hsession, source.id) if transforms.get(source.id) else None,
-            "url": "%s/data/%s" % (base, source.name),
-            "api": _api_of(source, base, transforms.get(source.id)),
-        })
+        for pipeline in transform_runner.list_pipelines(session, source.id) or [None]:
+            path = publishing.address_of(source, pipeline) if pipeline is not None else "/data/%s" % source.name
+            rows.append({
+                "source": source, "pipeline": pipeline, "published": publishing.is_pipeline_published(pipeline),
+                "latest": load_api.latest_output(hsession, source.id, pipeline.id) if pipeline is not None and source.transport_type != "http" else None,
+                "path": path, "url": base + path, "api": _api_of(source, base, pipeline),
+                "base": ("/load/sources/%s" % source.id) + ("" if pipeline is None or pipeline.name == transform_runner.DEFAULT_PIPELINE else "/pipelines/%s" % pipeline.name),
+            })
     return templates.TemplateResponse(request, "load/overview.html", {
         "rows": rows, "flash": request.query_params.get("flash"), "flash_kind": request.query_params.get("flash_kind", "success"),
     })
 
 
 @router.post("/sources/{source_id}/api")
-async def set_api(source_id: str, request: Request, session: Session = Depends(get_session)):
+@router.post("/sources/{source_id}/pipelines/{pipeline}/api")
+async def set_api(source_id: str, request: Request, pipeline: str = transform_runner.DEFAULT_PIPELINE, session: Session = Depends(get_session)):
+    """Publish or unpublish one pipeline of a source (the ``default`` one at /load/sources/<id>/api)."""
     source = session.get(ProviderSource, source_id)
     if source is None:
         return _go("No such source.", "error")
@@ -89,14 +91,23 @@ async def set_api(source_id: str, request: Request, session: Session = Depends(g
     enable = str(form.get("enabled") or "") == "1"
     if enable and source.status != "active":
         return _go("%s is not active yet, so it cannot be published." % source.title, "error")
-    # A source that stores data publishes its transformed output, so it needs a transform; an API source answers on demand and does not.
-    if enable and source.transport_type != "http" and session.scalar(select(Transform).where(Transform.source_id == source.id)) is None:
-        return _go("%s has no transform yet -- build one in the Transform Box first." % source.title, "error")
     who = admin_session.verify_session_cookie(request.cookies.get(admin_session.COOKIE_NAME, "")) or ""
-    publishing.set_published(session, source, enable, who)
+    if pipeline == transform_runner.DEFAULT_PIPELINE:
+        # a source that stores data publishes its transformed output, so it needs a pipeline; an API source with none gets one without
+        # steps, which passes the provider's answer through
+        target = publishing.set_published(session, source, enable, who)
+        if enable and target is None:
+            return _go("%s has no transform yet -- build one in the Transform Box first." % source.title, "error")
+    else:
+        target = transform_runner.get_pipeline(session, source_id, pipeline)
+        if target is None:
+            return _go("%s has no pipeline called %r." % (source.title, pipeline), "error")
+        publishing.set_pipeline_published(session, target, enable, who)
     session.commit()
-    logger.info("load box: %s %s the API of source %s", who or "?", "published" if enable else "unpublished", source.name)
-    return _go("%s is %s at /data/%s." % (source.title, "published" if enable else "no longer published", source.name))
+    path = publishing.address_of(source, target) if target is not None else "/data/%s" % source.name
+    logger.info("load box: %s %s %s", who or "?", "published" if enable else "unpublished", path)
+    return _go("%s is %s at %s." % (source.title if target is None or target.name == transform_runner.DEFAULT_PIPELINE else "%s / %s" % (source.title, target.name),
+                                    "published" if enable else "no longer published", path))
 
 
 def _api_source(session: Session, source_id: str):
@@ -104,29 +115,39 @@ def _api_source(session: Session, source_id: str):
     return source if source is not None and source.transport_type == "http" else None
 
 
+def _request_base(source_id: str, pipeline: str) -> str:
+    return "/load/sources/%s%s" % (source_id, "" if pipeline == transform_runner.DEFAULT_PIPELINE else "/pipelines/%s" % pipeline)
+
+
 @router.get("/sources/{source_id}/request", response_class=HTMLResponse)
-def request_page(source_id: str, request: Request, session: Session = Depends(get_session)):
-    """How callers ask an API source's published address, and the template that turns their call into the provider's."""
+@router.get("/sources/{source_id}/pipelines/{pipeline}/request", response_class=HTMLResponse)
+def request_page(source_id: str, request: Request, pipeline: str = transform_runner.DEFAULT_PIPELINE, session: Session = Depends(get_session)):
+    """How callers ask a pipeline's published address, and the template that turns their call into the provider's."""
     source = _api_source(session, source_id)
     if source is None:
         return _go("Only an API source is asked on demand, so only it has a request.", "error")
-    transform = session.scalar(select(Transform).where(Transform.source_id == source_id))
+    found = transform_runner.get_pipeline(session, source_id, pipeline)
+    if found is None and pipeline != transform_runner.DEFAULT_PIPELINE:
+        return _go("%s has no pipeline called %r." % (source.title, pipeline), "error")
     return templates.TemplateResponse(request, "load/request.html", {
-        "source": source, "provider_method": source.proxy_method, "proxy_name": source.name,
-        "request_swap": bool(transform and transform.request_swap), "request_template": (transform.request_template if transform else "") or "",
+        "source": source, "pipeline_name": pipeline, "provider_method": source.proxy_method, "proxy_name": source.name,
+        "request_action": _request_base(source_id, pipeline) + "/request",
+        "address": publishing.address_of(source, found) if found is not None else "/data/%s" % source.name,
+        "request_swap": bool(found and found.request_swap), "request_template": (found.request_template if found else "") or "",
         "flash": request.query_params.get("flash"), "flash_kind": request.query_params.get("flash_kind", "success"),
     })
 
 
 @router.post("/sources/{source_id}/request")
-async def set_request(source_id: str, request: Request, session: Session = Depends(get_session)):
+@router.post("/sources/{source_id}/pipelines/{pipeline}/request")
+async def set_request(source_id: str, request: Request, pipeline: str = transform_runner.DEFAULT_PIPELINE, session: Session = Depends(get_session)):
     """Callers use the other method than the provider, and the template turns their call into the provider's (see request_template.py).
-    The provider's own method is the source's setting (Extract Box); this only turns it around. The setting is kept on the source's
-    transform row, which is created (empty, switched off) when there is none yet."""
+    The provider's own method is the source's setting (Extract Box); this only turns it around. The setting is kept on the pipeline,
+    and the default pipeline is created (empty, switched off) when the source has none yet."""
     source = _api_source(session, source_id)
     if source is None:
         return _go("Only an API source is asked on demand, so only it has a request.", "error")
-    back = "/load/sources/%s/request" % source_id
+    back = _request_base(source_id, pipeline) + "/request"
 
     def refuse(message: str) -> RedirectResponse:
         return RedirectResponse(back + "?" + urlencode({"flash": message, "flash_kind": "error"}), status_code=303)
@@ -140,14 +161,16 @@ async def set_request(source_id: str, request: Request, session: Session = Depen
     except request_template.RequestTemplateError as exc:
         return refuse(str(exc))
     who = admin_session.verify_session_cookie(request.cookies.get(admin_session.COOKIE_NAME, "")) or ""
-    transform = session.scalar(select(Transform).where(Transform.source_id == source_id))
-    if transform is None:
-        transform = Transform(source_id=source_id, steps="[]", enabled=False, output_single=True)
-        session.add(transform)
-    transform.request_swap = swap
-    transform.request_template = template if swap else (template or transform.request_template)
-    transform.updated_at, transform.updated_by = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None), who
+    found = transform_runner.get_pipeline(session, source_id, pipeline)
+    if found is None:
+        if pipeline != transform_runner.DEFAULT_PIPELINE:
+            return _go("%s has no pipeline called %r." % (source.title, pipeline), "error")
+        found = Transform(source_id=source_id, name=pipeline, steps="[]", enabled=False, output_single=True)
+        session.add(found)
+    found.request_swap = swap
+    found.request_template = template if swap else (template or found.request_template)
+    found.updated_at, found.updated_by = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None), who
     session.commit()
-    logger.info("load box: %s %s the request turn-around of source %s", who or "?", "set" if swap else "switched off", source.name)
-    return _go("Callers now use %s on /data/%s." % ("GET" if source.proxy_method == "POST" else "POST", source.name) if swap
+    logger.info("load box: %s %s the request turn-around of %s / %s", who or "?", "set" if swap else "switched off", source.name, pipeline)
+    return _go("Callers now use %s on %s." % ("GET" if source.proxy_method == "POST" else "POST", publishing.address_of(source, found)) if swap
                else "Callers use the same method as the provider (%s)." % source.proxy_method)

@@ -121,7 +121,7 @@ own credential -- `/health`, `/push/*` (API key), the FTP box's
 `/admin/ftp-login-attempts` (sync key; the last feeds the failed-login report
 at `/admin/security/failed-logins`, see `ftp-forwarder/README.md`), the JSON admin API `/admin/ftp-accounts*` and
 `/admin/harvest-db/health` (admin key), `/me` (bearer token) -- plus
-`/proxy/*`, the live open-data proxy, which is public by design. A route
+`/data/*`, the published pipelines (and the live open-data answers of API sources), which are public by design. A route
 added later is therefore protected without anyone remembering to. (Until
 this it was the other way round -- only `/admin/sources` and `/admin/ftp`
 were gated, which left the provider portal, and the harvested files it
@@ -196,15 +196,16 @@ on; for an API source, its sample answer (paste one, or fetch one with the sourc
 its settings (JSON incl. "one object when there is one record", JSON Lines, XML names, CSV separator and Excel mark). Their cards show a one-line summary
 in words. The settings still live in the `Transform` row, so nothing was migrated.
 
-**Publishing: the one switch** (`publishing.py`, `load_api.py`, the Load Box): every source is exposed the same way -- an admin switches **Publish** on, and
-it answers at `/data/<name>`, public and without a login, only while it is active. A source that stores data answers with its newest good output
-(GET). An **API source** (HTTP) stores nothing: the provider is asked *at the moment someone calls* -- with the source's credential, request
-settings and transform -- and a published API source takes a GET or a POST depending on its settings (below). This replaces the separate
-"transparent/live proxy": the *also expose this as a live proxy* checkbox is gone from the source form, and `/proxy/<name>` survives only as a
-deprecated alias of `/data/<name>` that follows the same switch. On the first start after this change, every HTTP source that had its live proxy
-ticked was published (`publishing.migrate_legacy_proxy`, once; the old flag is cleared as it is consumed), so nothing that answered stopped
-answering; a source registered later is **not** published until someone switches it on. Where the sections below say "live proxy" or `/proxy/`,
-read "published address" and `/data/`.
+**Publishing: the one switch** (`publishing.py`, `load_api.py`, the Load Box): what is published is a **pipeline** (`Transform.published`). An admin
+switches **Publish** on for it, and it answers at `/data/<source>/<pipeline>` -- the source's `default` pipeline also at `/data/<source>` -- public
+and without a login, only while its source is active. A pipeline of a source that stores data answers with its newest good output (GET). A pipeline
+of an **API source** (HTTP) stores nothing: the provider is asked *at the moment someone calls* -- with the source's credential and the pipeline's
+request settings and steps -- and takes a GET or a POST depending on the pipeline's request settings (below); a pipeline that is switched off, or has
+no steps, passes the provider's answer through unchanged. Several pipelines on one source each have their own address, their own Publish switch and
+their own request settings, and removing a pipeline stops its address. There is no separate "live proxy" and no `/proxy/*` address any more.
+`publishing.migrate_to_pipelines` carried the old per-source switch over once (the source's default pipeline is published, created without steps for an
+API source that had none), so nothing that answered stopped answering; a pipeline created later is **not** published until someone switches it on.
+Where the sections below say "live proxy" or `/proxy/`, read "published address" and `/data/`.
 
 **POST APIs** (`proxy.py`, `proxy_method`): an HTTP source can be registered with the method `POST`. Its live proxy
 (`POST /proxy/{name}`) then passes the caller's JSON body (application/json only, valid JSON, at most 64 kB) to the provider's
@@ -268,7 +269,7 @@ the worst problem), only warnings (for example no file has arrived yet) -> an am
 
 **Integrity of what arrives** (FTP/SFTP push): the box's catch-up sweep skips a file that is still being written; the box sends a SHA-256 and the loader refuses a mismatch and answers with the hash of what it stored (a transfer counts as done only when both agree); a provider may also send `<file>.sha256` before each file for an end-to-end check, and a file that does not match it is put aside on the box instead of sent; each run's detail page shows the stored file's SHA-256. Details and a ready-to-send provider note: `ftp-forwarder/README.md`.
 
-**Load Box** (`/load`; `load_api.py`, `ui_load.py`, `LoadTarget`). Per source, an admin can *publish* the transformed output: `GET /data/{source name}` (also `/data/{source name}/{any file name}`, for tools that want an extension) then answers, to anyone and without a login, with the newest successfully transformed output that still has its contents, in its own content type, with an `ETag` (conditional requests get 304) and a 60 s cache hint. Off by default; only for an active source; an unknown, unpublished, paused or empty source is the same 404; per-address limit of 60/min (shared limiter with `/proxy`). The planned next destination is a CKAN resource that links to this address, pushed automatically after each transform and by hand.
+**Load Box** (`/load`; `load_api.py`, `ui_load.py`). One row per pipeline; an admin can *publish* its transformed output: `GET /data/{source name}/{pipeline}` (the `default` pipeline also `/data/{source name}`, and a trailing file name is ignored, for tools that want an extension) then answers, to anyone and without a login, with the newest successfully transformed output that still has its contents, in its own content type, with an `ETag` (conditional requests get 304) and a 60 s cache hint. Off by default; only for an active source; an unknown, unpublished, paused or empty source is the same 404; per-address limit of 60/min (shared limiter with `/proxy`). The planned next destination is a CKAN resource that links to this address, pushed automatically after each transform and by hand.
 
 **Transform Box** (`/transform`; `transform_engine.py`, `transform_forms.py`, `transform_runner.py`, `ui_transform.py`). A source's
 transform is an ordered list of steps run on every file it receives (and re-runnable over earlier ones), producing JSON, JSON Lines,
@@ -555,9 +556,9 @@ NOT NULL column against a table that already has rows -- that always
 needs a deliberate migration (add nullable, backfill, tighten), not an
 automatic one.
 
-`providerharvest_service/proxy.py` -- a live API proxy for providers
-who don't want their own API publicly reachable at all: `GET
-/proxy/{source_name}` forwards to exactly that source's registered
+`providerharvest_service/proxy.py` -- the live API answers of providers
+who don't want their own API publicly reachable at all (served at the
+published `/data/...` address of an API source's pipeline): a GET forwards to exactly that source's registered
 `endpoint_url` (the caller's query parameters passed through, auth
 injected server-side via the same `engine/auth_strategies` every other
 piece uses) and relays the response back -- one live call in, one live

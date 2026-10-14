@@ -60,7 +60,7 @@ def answer(monkeypatch):
 
 
 def test_a_transform_is_created_with_a_pasted_sample_that_is_validated(client, source, _isolated_db):
-    registry_id = _registry(_isolated_db)
+    registry_id = _http_source(_isolated_db, "registry", post=True, published=False)  # (a published source already has a pipeline, without steps)
     bad = client.post("/transform/sources/%s/create" % registry_id, data={"sample": "not json {"}, follow_redirects=False)
     assert "not valid JSON" in _flash(bad)
     assert "no transform yet" in client.get("/transform/sources/%s" % registry_id).text or "This source has no transform yet" in client.get("/transform/sources/%s" % registry_id).text
@@ -101,7 +101,7 @@ def test_the_steps_are_built_and_tried_on_the_sample_and_show_only_what_is_kept(
 def test_the_proxy_answers_with_only_the_kept_fields_as_one_object(client, source, _isolated_db, answer):
     registry_id = _registry(_isolated_db)
     _build(client, registry_id)
-    resp = _caller().post("/proxy/registry", content="{}", headers=JSON_BODY)
+    resp = _caller().post("/data/registry", content="{}", headers=JSON_BODY)
     assert resp.status_code == 200 and resp.headers["content-type"].startswith("application/json")
     body = resp.json()
     assert body == {"plate_number": "ZMM3707", "make": "FIAT AUTO SPA PUNTO", "emporiki_onomasia_ochimatos": "PUNTO",
@@ -114,10 +114,10 @@ def test_a_list_is_returned_when_the_one_object_option_is_switched_off(client, s
     _build(client, registry_id)
     form = {"format": "json", "single_present": "1"}  # the box unticked: no "single" sent
     assert "Output set" in _flash(client.post("/transform/sources/%s/output" % registry_id, data=form, follow_redirects=False))
-    body = _caller().post("/proxy/registry", content="{}", headers=JSON_BODY).json()
+    body = _caller().post("/data/registry", content="{}", headers=JSON_BODY).json()
     assert isinstance(body, list) and len(body) == 1 and body[0]["make"] == "FIAT AUTO SPA PUNTO"
     client.post("/transform/sources/%s/output" % registry_id, data={**form, "single": "1"}, follow_redirects=False)
-    assert isinstance(_caller().post("/proxy/registry", content="{}", headers=JSON_BODY).json(), dict)
+    assert isinstance(_caller().post("/data/registry", content="{}", headers=JSON_BODY).json(), dict)
 
 
 def test_a_transform_that_cannot_be_applied_fails_closed_and_never_passes_the_raw_answer(client, source, _isolated_db, answer):
@@ -125,7 +125,7 @@ def test_a_transform_that_cannot_be_applied_fails_closed_and_never_passes_the_ra
     _build(client, registry_id)
     for broken in (b"this is not json", b'{"something": "else entirely"}', b"[1, 2, 3]"):
         answer["resp"] = FakeUpstreamResponse(content=broken)
-        resp = _caller().post("/proxy/registry", content="{}", headers=JSON_BODY)
+        resp = _caller().post("/data/registry", content="{}", headers=JSON_BODY)
         assert resp.status_code == 502 and "could not be reshaped" in resp.text
         assert broken.decode() not in resp.text
 
@@ -134,17 +134,17 @@ def test_a_provider_error_is_passed_on_unchanged_and_a_switched_off_transform_do
     registry_id = _registry(_isolated_db)
     _build(client, registry_id)
     answer["resp"] = FakeUpstreamResponse(status_code=403, content=b'{"detail": "no"}')
-    resp = _caller().post("/proxy/registry", content="{}", headers=JSON_BODY)
+    resp = _caller().post("/data/registry", content="{}", headers=JSON_BODY)
     assert resp.status_code == 403 and resp.json() == {"detail": "no"}
     answer["resp"] = FakeUpstreamResponse(content=json.dumps(ANSWER).encode())
     client.post("/transform/sources/%s/enabled" % registry_id, data={"enabled": "0"}, follow_redirects=False)
-    raw = _caller().post("/proxy/registry", content="{}", headers=JSON_BODY).json()
+    raw = _caller().post("/data/registry", content="{}", headers=JSON_BODY).json()
     assert raw["data"]["document"]["statements"]["arithmos_plaisiou"] == "ZFA18800000629998"  # passes through as before
 
 
 def test_a_source_without_a_transform_is_unchanged(client, source, _isolated_db, answer):
     _registry(_isolated_db)
-    assert _caller().post("/proxy/registry", content="{}", headers=JSON_BODY).json() == ANSWER
+    assert _caller().post("/data/registry", content="{}", headers=JSON_BODY).json() == ANSWER
 
 
 def test_the_pipeline_pages_say_the_answers_are_reshaped(client, source, _isolated_db, answer):
@@ -180,9 +180,9 @@ def test_the_chosen_output_format_is_what_callers_get_when_the_transform_is_on_a
     _build(client, registry_id, enable=False)
     client.post("/transform/sources/%s/output" % registry_id, data={"format": "xml", "root": "vehicle", "record": "item", "single_present": "1", "single": "1"}, follow_redirects=False)
     assert "<strong>The transform is switched off" in client.get("/transform/sources/%s" % registry_id).text
-    assert _caller().post("/proxy/registry", content="{}", headers=JSON_BODY).headers["content-type"].startswith("application/json")  # off: untouched
+    assert _caller().post("/data/registry", content="{}", headers=JSON_BODY).headers["content-type"].startswith("application/json")  # off: untouched
     client.post("/transform/sources/%s/enabled" % registry_id, data={"enabled": "1"}, follow_redirects=False)
-    resp = _caller().post("/proxy/registry", content="{}", headers=JSON_BODY)
+    resp = _caller().post("/data/registry", content="{}", headers=JSON_BODY)
     assert resp.headers["content-type"].startswith("application/xml") or resp.headers["content-type"].startswith("text/xml")
     assert resp.text.lstrip().startswith("<?xml") or "<vehicle" in resp.text
     assert "<strong>The transform is switched off" not in client.get("/transform/sources/%s" % registry_id).text

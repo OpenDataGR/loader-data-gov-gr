@@ -323,6 +323,9 @@ class Transform(Base):
     # (a live proxy keeps nothing). Never used to answer anyone.
     sample: Mapped[str | None] = mapped_column(String, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Published (the Load Box's switch): this pipeline answers at /data/<source>[/<pipeline>]. The ``default`` one also answers at
+    # /data/<source>. Empty means not published (a column added to a table with rows is nullable -- see db._sync_schema).
+    published: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
     updated_by: Mapped[str] = mapped_column(String, nullable=False, default="")

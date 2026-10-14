@@ -160,5 +160,5 @@ def test_only_an_api_source_with_a_transform_has_this_and_only_a_signed_in_admin
 
 def test_the_shared_provider_call_still_serves_the_live_proxy(client, source, _isolated_db, provider):
     _post_source(_isolated_db)
-    resp = TestClient(app, base_url="https://testserver").post("/proxy/registry", content="{}", headers={"Content-Type": "application/json"})
+    resp = TestClient(app, base_url="https://testserver").post("/data/registry", content="{}", headers={"Content-Type": "application/json"})
     assert resp.status_code == 200 and resp.json() == ANSWER and provider["calls"][0][0] == "post"

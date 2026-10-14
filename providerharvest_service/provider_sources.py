@@ -825,9 +825,12 @@ def delete(session: Session, source_id: str) -> None:
         session.delete(account)
         removed["accounts"] += 1
     # what belongs to the source goes with it: its pipelines, its index tables and its publish setting (nothing can use them afterwards)
-    for model, key in ((Transform, "pipelines"), (LookupTable, "tables"), (LoadTarget, "published")):
+    for model, key in ((Transform, "pipelines"), (LookupTable, "tables"), (LoadTarget, None)):  # (the old per-source switch is only cleaned up)
         for row in session.scalars(select(model).where(model.source_id == source_id)).all():
-            removed[key] += 1 if key != "published" else int(bool(row.api_enabled))
+            if key:
+                removed[key] += 1
+            if model is Transform and row.published:
+                removed["published"] += 1
             session.delete(row)
     session.delete(source)
     session.commit()

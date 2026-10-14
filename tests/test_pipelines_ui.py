@@ -173,7 +173,7 @@ def test_removing_the_default_pipeline_stops_its_output_and_nothing_takes_its_pl
     caller = TestClient(app, base_url="https://testserver")
     assert caller.get("/data/acme-push").status_code == 200
     flash = _flash(_pipeline(client, source, "default", "delete"))
-    assert "removed" in flash and "switched off" in flash
+    assert "removed" in flash and "stopped answering" in flash
     assert _names(_isolated_db, source) == ["lookup"]
     assert caller.get("/data/acme-push").status_code == 404  # the published address stopped; the pipeline that is left did not take over
     with _isolated_harvest_db() as h:

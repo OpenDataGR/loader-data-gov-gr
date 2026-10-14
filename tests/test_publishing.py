@@ -1,5 +1,5 @@
 """Publishing is the one switch: an API source answers at /data/<name> by asking the provider on demand, a source that stores data answers with
-its newest output, and what used to answer at /proxy/<name> was carried over once so nothing that was reachable stopped being reachable."""
+its newest output, and what used to answer at /data/<name> was carried over once so nothing that was reachable stopped being reachable."""
 
 import json
 
@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from providerharvest_service import proxy, provider_sources, publishing
 from providerharvest_service.app import app
-from providerharvest_service.models import LoadTarget
+from providerharvest_service.models import LoadTarget, Transform
 from tests.test_live_transform import (  # noqa: F401  (fixtures and helpers shared with the live-transform tests)
     ANSWER, JSON_BODY, FakeUpstreamResponse, _build, _flash, _http_source, _isolated_db, _isolated_harvest_db, _master_key, _clear_rate_limiters, client, source,
 )
@@ -29,54 +29,54 @@ def provider(monkeypatch):
     return state
 
 
-# -- the one-time carry-over ------------------------------------------------------------------------------------------------------------------
+# -- the one-time carry-over onto pipelines ------------------------------------------------------------------------------------------------------
 
-def _legacy(session_factory, name, proxy_enabled, transport="http"):
+def _legacy(session_factory, name, enabled, *, with_pipeline=False):
+    """An HTTP source whose address was switched on (or off) the old way: one LoadTarget per source."""
     with session_factory() as session:
         source = provider_sources.register(session, {"name": name, "title": name, "endpoint_url": "https://x.example.gr/api", "transport_type": "http",
                                                      "auth_type": "api_key", "api_key": "k"})
         provider_sources.activate(session, source.id)
-        source.proxy_enabled = proxy_enabled
+        session.add(LoadTarget(source_id=source.id, api_enabled=enabled, updated_by="an admin"))
+        if with_pipeline:
+            session.add(Transform(source_id=source.id, steps="[]", enabled=True))
         session.commit()
         return source.id
 
 
-def _targets(session_factory):
+def _pipelines(session_factory):
     with session_factory() as session:
-        return {t.source_id: (t.api_enabled, t.updated_by) for t in session.scalars(select(LoadTarget)).all()}
+        return {(t.source_id, t.name): (bool(t.published), t.enabled) for t in session.scalars(select(Transform)).all()}
 
 
-def test_a_source_that_had_a_live_proxy_is_published_once_and_the_old_flag_is_consumed(_isolated_db):
-    ticked, unset, unticked = _legacy(_isolated_db, "ticked", True), _legacy(_isolated_db, "unset", None), _legacy(_isolated_db, "unticked", False)
+def test_a_source_that_was_published_has_its_default_pipeline_published_once_and_the_old_flag_is_consumed(_isolated_db):
+    bare, shaped, off = _legacy(_isolated_db, "bare", True), _legacy(_isolated_db, "shaped", True, with_pipeline=True), _legacy(_isolated_db, "off", False)
     with _isolated_db() as session:
-        assert publishing.migrate_legacy_proxy(session) == 2
-    targets = _targets(_isolated_db)
-    assert targets[ticked][0] is True and targets[unset][0] is True and unticked not in targets  # NULL meant "enabled", exactly as before
-    assert "carried over" in targets[ticked][1]
+        assert publishing.migrate_to_pipelines(session) == 2
+    pipelines = _pipelines(_isolated_db)
+    assert pipelines[(bare, "default")] == (True, False)  # an API source with none: a pipeline without steps, which passes the answer through
+    assert pipelines[(shaped, "default")] == (True, True)  # an existing pipeline is the one that is published, as it was
+    assert (off, "default") not in pipelines  # not published stays not published
     with _isolated_db() as session:
-        assert all(provider_sources.get_or_404(session, i).proxy_enabled is False for i in (ticked, unset, unticked))
+        assert not session.scalars(select(LoadTarget).where(LoadTarget.api_enabled.is_(True))).all()  # consumed
 
 
-def test_the_carry_over_never_publishes_anything_registered_later_and_respects_a_choice_already_made(_isolated_db):
+def test_the_carry_over_runs_once_and_never_publishes_anything_later(_isolated_db):
     first = _legacy(_isolated_db, "first", True)
     with _isolated_db() as session:
-        publishing.migrate_legacy_proxy(session)
-    later = _legacy(_isolated_db, "later", None)  # something new, with a leftover default
-    with _isolated_db() as session:
-        source = provider_sources.get_or_404(session, first)
-        publishing.set_published(session, source, False, "an admin")  # unpublished on purpose
+        assert publishing.migrate_to_pipelines(session) == 1
+        publishing.set_published(session, provider_sources.get_or_404(session, first), False, "an admin")  # unpublished on purpose
         session.commit()
-        source.proxy_enabled = True
-        session.commit()
-        carried = publishing.migrate_legacy_proxy(session)
-    assert carried == 1  # only "later" (it had no choice recorded); "first" already has one
-    assert _targets(_isolated_db)[first][0] is False
+        assert publishing.migrate_to_pipelines(session) == 0  # the flag was consumed: the choice stays
+    assert _pipelines(_isolated_db)[(first, "default")][0] is False
 
 
-def test_other_transports_are_left_alone(_isolated_db, source):
+def test_a_source_that_stores_data_and_has_no_pipeline_cannot_be_carried_over(_isolated_db, source):
     with _isolated_db() as session:
-        assert publishing.migrate_legacy_proxy(session) == 0  # the push source in the fixture is not an HTTP source
-    assert _targets(_isolated_db) == {}
+        session.add(LoadTarget(source_id=source["id"], api_enabled=True))
+        session.commit()
+        assert publishing.migrate_to_pipelines(session) == 0
+    assert _pipelines(_isolated_db) == {}
 
 
 # -- /data/<name> for an API source ---------------------------------------------------------------------------------------------------------------
@@ -143,9 +143,9 @@ def test_a_source_that_stores_data_still_answers_with_its_output_and_takes_no_po
 
 def test_the_old_proxy_address_still_answers_for_a_published_source_and_follows_the_same_switch(client, source, _isolated_db, _isolated_harvest_db, provider):
     source_id = _http_source(_isolated_db, "feed")
-    assert _caller().get("/proxy/feed").json() == _caller().get("/data/feed").json() == ANSWER
+    assert _caller().get("/data/feed").json() == _caller().get("/data/feed").json() == ANSWER
     _publish_id(client, source_id, on=False)
-    assert _caller().get("/proxy/feed").status_code == 404 and _caller().get("/data/feed").status_code == 404
+    assert _caller().get("/data/feed").status_code == 404 and _caller().get("/data/feed").status_code == 404
 
 
 def test_the_per_caller_limit_applies_at_the_data_address(client, source, _isolated_db, _isolated_harvest_db, provider):

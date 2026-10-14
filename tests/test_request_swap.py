@@ -77,7 +77,7 @@ def test_callers_use_a_plain_link_and_the_provider_gets_the_post_it_expects(clie
     registry_id = _registry(_isolated_db)
     client.post("/transform/sources/%s/create" % registry_id, follow_redirects=False)
     assert "Callers now use GET on /data/registry" in _flash(_swap(client, registry_id))
-    resp = _caller().get("/proxy/registry", params={"plate": "ZMM3707", "ignored": "x"})
+    resp = _caller().get("/data/registry", params={"plate": "ZMM3707", "ignored": "x"})
     assert resp.status_code == 200 and resp.json() == ANSWER  # no response transform here: the answer passes through
     assert answer["calls"] == 1
 
@@ -89,7 +89,7 @@ def test_the_provider_receives_exactly_the_built_body_and_the_loaders_credential
     sent = []
     monkeypatch.setattr(proxy.requests, "post", lambda url, **kw: (sent.append(kw), FakeUpstreamResponse(content=b"{}"))[-1])
     monkeypatch.setattr(proxy, "assert_safe_http_url", lambda url: None)
-    _caller().get("/proxy/registry", params={"plate": 'X","evil":"1', "other": "dropped"}, headers={"Authorization": "Token stolen"})
+    _caller().get("/data/registry", params={"plate": 'X","evil":"1', "other": "dropped"}, headers={"Authorization": "Token stolen"})
     kw = sent[0]
     assert json.loads(kw["data"])["document"]["statements"]["platenumber"] == 'X","evil":"1'
     assert kw["headers"]["Content-Type"] == "application/json" and kw["headers"]["X-API-Key"] == "k" and "Authorization" not in kw["headers"]
@@ -101,11 +101,11 @@ def test_the_post_method_is_not_accepted_any_more_and_a_missing_parameter_is_a_4
     registry_id = _registry(_isolated_db)
     client.post("/transform/sources/%s/create" % registry_id, follow_redirects=False)
     _swap(client, registry_id)
-    resp = _caller().post("/proxy/registry", content="{}", headers=JSON_BODY)
+    resp = _caller().post("/data/registry", content="{}", headers=JSON_BODY)
     assert resp.status_code == 405 and resp.headers["allow"] == "GET"
-    missing = _caller().get("/proxy/registry")
+    missing = _caller().get("/data/registry")
     assert missing.status_code == 400 and "'plate' is missing" in missing.text
-    assert _caller().get("/proxy/registry", params={"plate": "x" * 300}).status_code == 400
+    assert _caller().get("/data/registry", params={"plate": "x" * 300}).status_code == 400
     assert answer["calls"] == 0  # nothing reached the provider
 
 
@@ -113,7 +113,7 @@ def test_turned_around_and_reshaped_the_caller_gets_one_small_object_from_a_link
     registry_id = _registry(_isolated_db)
     _build(client, registry_id)  # the live-transform setup: keeps five fields, one object
     _swap(client, registry_id)
-    resp = _caller().get("/proxy/registry", params={"plate": "ZMM3707"})
+    resp = _caller().get("/data/registry", params={"plate": "ZMM3707"})
     assert resp.status_code == 200 and set(resp.json()) == {"plate_number", "make", "emporiki_onomasia_ochimatos", "colour", "kylindrismos"}
 
 
@@ -122,8 +122,8 @@ def test_turning_it_off_returns_to_the_providers_own_method(client, source, _iso
     client.post("/transform/sources/%s/create" % registry_id, follow_redirects=False)
     _swap(client, registry_id)
     assert "same method as the provider (POST)" in _flash(_swap(client, registry_id, mode="same"))
-    assert _caller().get("/proxy/registry", params={"plate": "x"}).status_code == 405
-    assert _caller().post("/proxy/registry", content="{}", headers=JSON_BODY).status_code == 200
+    assert _caller().get("/data/registry", params={"plate": "x"}).status_code == 405
+    assert _caller().post("/data/registry", content="{}", headers=JSON_BODY).status_code == 200
 
 
 def test_a_bad_template_is_refused_and_the_setting_is_left_alone(client, source, _isolated_db, answer):
@@ -131,7 +131,7 @@ def test_a_bad_template_is_refused_and_the_setting_is_left_alone(client, source,
     client.post("/transform/sources/%s/create" % registry_id, follow_redirects=False)
     for bad in ("", '{"a": {plate}}', '{"a": "b"}'):
         assert "Callers now use" not in _flash(_swap(client, registry_id, template=bad))
-    assert _caller().get("/proxy/registry", params={"plate": "x"}).status_code == 405  # still the provider's own method
+    assert _caller().get("/data/registry", params={"plate": "x"}).status_code == 405  # still the provider's own method
     assert "Only an API source" in _flash(client.post("/load/sources/nope/request", data={"mode": "swap", "template": REGISTRY_BODY}, follow_redirects=False))
 
 
@@ -149,7 +149,7 @@ def get_provider(client, source, _isolated_db, monkeypatch):
 
 def test_callers_post_a_json_body_and_the_provider_gets_a_get_with_query_parameters(client, get_provider):
     assert "Callers now use POST on /data/lookup" in _flash(_swap(client, get_provider["id"], template="plate={plate}&kind={vehicle/type}"))
-    resp = _caller().post("/proxy/lookup", content=json.dumps({"plate": "AB1234", "vehicle": {"type": "car"}, "other": "dropped"}), headers=JSON_BODY)
+    resp = _caller().post("/data/lookup", content=json.dumps({"plate": "AB1234", "vehicle": {"type": "car"}, "other": "dropped"}), headers=JSON_BODY)
     assert resp.status_code == 200 and resp.json() == {"found": True}
     url, kw = get_provider["calls"][0]
     assert kw["params"]["plate"] == "AB1234" and kw["params"]["kind"] == "car" and "other" not in kw["params"]
@@ -158,12 +158,12 @@ def test_callers_post_a_json_body_and_the_provider_gets_a_get_with_query_paramet
 
 def test_the_get_side_refuses_a_get_and_a_body_that_does_not_fit(client, get_provider):
     _swap(client, get_provider["id"], template="plate={plate}")
-    refused = _caller().get("/proxy/lookup", params={"plate": "AB"})
+    refused = _caller().get("/data/lookup", params={"plate": "AB"})
     assert refused.status_code == 405 and refused.headers["allow"] == "POST"
-    assert _caller().post("/proxy/lookup", content="{}", headers=JSON_BODY).status_code == 400  # the field is missing
-    assert _caller().post("/proxy/lookup", content="[1]", headers=JSON_BODY).status_code == 400  # not an object
-    assert _caller().post("/proxy/lookup", content='{"plate": {"a": 1}}', headers=JSON_BODY).status_code == 400
-    assert _caller().post("/proxy/lookup", content="not json", headers=JSON_BODY).status_code == 400
+    assert _caller().post("/data/lookup", content="{}", headers=JSON_BODY).status_code == 400  # the field is missing
+    assert _caller().post("/data/lookup", content="[1]", headers=JSON_BODY).status_code == 400  # not an object
+    assert _caller().post("/data/lookup", content='{"plate": {"a": 1}}', headers=JSON_BODY).status_code == 400
+    assert _caller().post("/data/lookup", content="not json", headers=JSON_BODY).status_code == 400
     assert get_provider["calls"] == []
 
 
@@ -174,7 +174,7 @@ def test_the_providers_own_credential_is_added_and_a_caller_cannot_override_it(c
     seen = []
     monkeypatch.setattr(proxy.requests, "get", lambda url, **kw: (seen.append(kw), FakeUpstreamResponse())[-1])
     monkeypatch.setattr(proxy, "assert_safe_http_url", lambda url: None)
-    _caller().post("/proxy/keyed", content='{"plate": "AB", "apikey": "stolen"}', headers=JSON_BODY)
+    _caller().post("/data/keyed", content='{"plate": "AB", "apikey": "stolen"}', headers=JSON_BODY)
     assert seen[0]["params"]["api_key"] == "k"  # the loader's key wins over whatever a template or caller put there
 
 
@@ -201,5 +201,5 @@ def test_an_ordinary_source_is_unchanged_by_all_this(client, source, _isolated_d
     seen = []
     monkeypatch.setattr(proxy.requests, "get", lambda url, **kw: (seen.append(kw), FakeUpstreamResponse())[-1])
     monkeypatch.setattr(proxy, "assert_safe_http_url", lambda url: None)
-    assert _caller().get("/proxy/plain", params={"category": "x"}).status_code == 200
+    assert _caller().get("/data/plain", params={"category": "x"}).status_code == 200
     assert seen[0]["params"]["category"] == "x"  # parameters still pass through, as they always did

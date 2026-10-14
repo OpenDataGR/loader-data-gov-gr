@@ -5,28 +5,34 @@
   <div class="panel">
     <h1>Load Box</h1>
     <p class="subtitle">
-      Where a source's result goes: one switch, <strong>Publish</strong>, and one public address per source, <code>/data/&lt;name&gt;</code>.
-      A source that stores data (a push source with a transform) answers with its newest good output -- the address a CKAN resource can link to.
-      An API source stores nothing: the provider is asked at the moment someone calls, with the source's credential, its request settings and
-      its transform. Nothing is published until you switch it on, and only an active source answers.
+      Where a pipeline's result goes: one switch, <strong>Publish</strong>, and one public address per pipeline --
+      <code>/data/&lt;source&gt;/&lt;pipeline&gt;</code>, and the source's <code>default</code> pipeline also at <code>/data/&lt;source&gt;</code>.
+      A pipeline of a source that stores data (a push source) answers with its newest good output -- the address a CKAN resource can link to.
+      A pipeline of an API source stores nothing: the provider is asked at the moment someone calls, with the source's credential and the
+      pipeline's request settings; a pipeline that is switched off, or has no steps, passes the provider's answer through unchanged.
+      Nothing is published until you switch it on, and only an active source answers.
     </p>
+    {% if flash %}<div class="flash flash-{{ flash_kind }}">{{ flash }}</div>{% endif %}
     {% if not rows %}
       <div class="empty-state">{{ macros.icon("inbox", 40) }}<p>No sources yet. Register one in the Extract Box first.</p></div>
     {% else %}
       <table>
-        <thead><tr><th>Source</th><th>What it answers with</th><th>Published address</th><th></th></tr></thead>
+        <thead><tr><th>Pipeline</th><th>What it answers with</th><th>Published address</th><th></th></tr></thead>
         <tbody>
           {% for r in rows %}
           <tr>
-            <td><div class="name-title">{{ r.source.title }}</div><span class="name-slug">{{ r.source.name }}</span></td>
             <td>
-              {% if r.api %}<span class="muted">asked on demand{% if r.transform and r.transform.enabled %}, reshaped by the <a href="/transform/sources/{{ r.source.id }}">transform</a>{% endif %} -- nothing is stored</span>
-              {% elif not r.transform %}<span class="muted">no transform -- <a href="/transform/sources/{{ r.source.id }}">set one up</a></span>
+              <div class="name-title">{{ r.pipeline.name if r.pipeline else "none yet" }}</div>
+              <div class="muted" style="font-size:0.85rem;">from {{ r.source.title }} <span class="name-slug">({{ r.source.name }})</span></div>
+            </td>
+            <td>
+              {% if r.api %}<span class="muted">asked on demand{% if r.pipeline and r.pipeline.enabled %}, reshaped by the <a href="{{ '/transform/sources/%s' % r.source.id }}{{ '' if r.pipeline.name == 'default' else '/pipelines/' ~ r.pipeline.name }}">pipeline</a>{% else %}, passed through unchanged{% endif %} -- nothing is stored</span>
+              {% elif not r.pipeline %}<span class="muted">no pipeline -- <a href="/transform/sources/{{ r.source.id }}">set one up</a></span>
               {% elif r.latest %}{{ r.latest.created_at|short_utc }} UTC<br><span class="muted">{{ r.latest.filename }} &middot; {{ r.latest.records_out }} records</span>
               {% else %}<span class="muted">nothing transformed yet</span>{% endif %}
             </td>
             <td>
-              {% if r.api %}<div class="muted" style="margin-bottom:0.3rem;">Request: {{ r.api.request_summary }} <a href="/load/sources/{{ r.source.id }}/request">Edit</a></div>{% endif %}
+              {% if r.api %}<div class="muted" style="margin-bottom:0.3rem;">Request: {{ r.api.request_summary }} <a href="{{ r.base }}/request">Edit</a></div>{% endif %}
               {% if r.published %}
                 {% if r.source.status == "active" %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>published</span></span>
                 {% else %}<span class="badge badge-pending"><span>published, not live ({{ r.source.status }})</span></span>{% endif %}
@@ -39,15 +45,17 @@
                 {% else %}
                   <a href="{{ r.url }}" target="_blank" rel="noopener"><code>{{ r.url }}</code></a>
                 {% endif %}
-              {% else %}<span class="badge badge-pending"><span>not published</span></span>
-                {% if r.api %}<div class="muted">would answer at <code>/data/{{ r.source.name }}</code></div>{% endif %}
-              {% endif %}
+              {% elif r.pipeline or r.api %}<span class="badge badge-pending"><span>not published</span></span>
+                <div class="muted">would answer at <code>{{ r.path }}</code></div>
+              {% else %}<span class="muted">-</span>{% endif %}
             </td>
             <td>
-              <form method="post" action="/load/sources/{{ r.source.id }}/api" style="margin:0;"{% if r.published %} onsubmit="return confirm('Stop publishing {{ r.source.name }}? Anyone using its address will get a 404.');"{% endif %}>
+              {% if r.pipeline or r.api %}
+              <form method="post" action="{{ r.base }}/api" style="margin:0;"{% if r.published %} onsubmit="return confirm('Stop publishing {{ r.path }}? Anyone using its address will get a 404.');"{% endif %}>
                 <input type="hidden" name="enabled" value="{{ '0' if r.published else '1' }}">
                 <button type="submit" class="btn-secondary btn-sm">{{ "Unpublish" if r.published else "Publish" }}</button>
               </form>
+              {% endif %}
             </td>
           </tr>
           {% endfor %}

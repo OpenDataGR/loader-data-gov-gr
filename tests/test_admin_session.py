@@ -174,7 +174,7 @@ def test_machine_and_public_endpoints_are_never_sent_to_the_login(monkeypatch):
         ("get", "/admin/ftp-accounts"), ("get", "/admin/ftp-accounts-sync"),
         ("put", "/admin/ftp-box-status"), ("post", "/admin/ftp-login-attempts"),
         ("post", "/admin/ftp-relay/x/upload"),
-        ("post", "/push/x/upload"), ("get", "/proxy/x"),
+        ("post", "/push/x/upload"), ("get", "/data/x"),
     )
     for method, path in calls:
         resp = client.request(method, path, follow_redirects=False)

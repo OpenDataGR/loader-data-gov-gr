@@ -2,6 +2,7 @@
 
 import pytest
 
+from tests.test_push_ingest import _isolated_harvest_db  # noqa: F401  (/data needs a harvest database)
 from providerharvest_service import provider_sources, proxy, publishing
 from tests.test_proxy import (  # noqa: F401  (fixtures and helpers shared with the GET proxy tests)
     FakeUpstreamResponse, _clear_rate_limiters, _isolated_db, _master_key, _register_active_http_source, client,
@@ -40,7 +41,7 @@ def test_a_post_source_passes_the_json_body_on_with_the_providers_credential_add
     _register_post_source(_isolated_db)
     body = '{"document": {"statements": {"platenumber": "ZKY3395", "plate_number": "ZKY3395"}}}'
 
-    resp = client.post("/proxy/registry-vehicle", content=body, headers=JSON)
+    resp = client.post("/data/registry-vehicle", content=body, headers=JSON)
 
     assert resp.status_code == 200 and b"SEAT" in resp.content
     url, kwargs = upstream["post"][0]
@@ -52,7 +53,7 @@ def test_a_post_source_passes_the_json_body_on_with_the_providers_credential_add
 
 def test_a_caller_cannot_bring_their_own_credential_or_headers_to_the_provider(client, _isolated_db, upstream):
     _register_post_source(_isolated_db)
-    client.post("/proxy/registry-vehicle", content="{}", headers={**JSON, "Authorization": "Token stolen", "X-Other": "x"})
+    client.post("/data/registry-vehicle", content="{}", headers={**JSON, "Authorization": "Token stolen", "X-Other": "x"})
     sent = upstream["post"][0][1]["headers"]
     assert sent["Authorization"] == "Token the-registry-token" and "X-Other" not in sent
 
@@ -60,9 +61,9 @@ def test_a_caller_cannot_bring_their_own_credential_or_headers_to_the_provider(c
 def test_each_source_answers_only_the_method_it_was_registered_with(client, _isolated_db, upstream):
     _register_post_source(_isolated_db)
     _register_active_http_source(_isolated_db)  # an ordinary GET source
-    assert client.get("/proxy/registry-vehicle").status_code == 405
-    assert client.get("/proxy/registry-vehicle").headers["allow"] == "POST"
-    resp = client.post("/proxy/acme-open-data", content="{}", headers=JSON)
+    assert client.get("/data/registry-vehicle").status_code == 405
+    assert client.get("/data/registry-vehicle").headers["allow"] == "POST"
+    resp = client.post("/data/acme-open-data", content="{}", headers=JSON)
     assert resp.status_code == 405 and resp.headers["allow"] == "GET"
     assert upstream["get"] == [] and upstream["post"] == []  # nothing reached any provider
 
@@ -75,14 +76,14 @@ def test_each_source_answers_only_the_method_it_was_registered_with(client, _iso
 ])
 def test_a_bad_body_is_refused_before_anything_is_sent(client, _isolated_db, upstream, kwargs, status_code):
     _register_post_source(_isolated_db)
-    assert client.post("/proxy/registry-vehicle", **kwargs).status_code == status_code
+    assert client.post("/data/registry-vehicle", **kwargs).status_code == status_code
     assert upstream["post"] == []
 
 
 def test_the_post_proxy_is_still_hidden_and_limited_like_any_other(client, _isolated_db, upstream):
-    assert client.post("/proxy/nobody", content="{}", headers=JSON).status_code == 404
+    assert client.post("/data/nobody", content="{}", headers=JSON).status_code == 404
     _register_post_source(_isolated_db, proxy_rate_limit_per_ip="2")
-    codes = [client.post("/proxy/registry-vehicle", content="{}", headers=JSON).status_code for _ in range(4)]
+    codes = [client.post("/data/registry-vehicle", content="{}", headers=JSON).status_code for _ in range(4)]
     assert codes[:2] == [200, 200] and 429 in codes[2:]
 
 
@@ -90,13 +91,13 @@ def test_upstream_trouble_with_a_post_is_a_502_and_a_providers_error_is_passed_o
     _register_post_source(_isolated_db)
     monkeypatch.setattr(proxy, "assert_safe_http_url", lambda url: None)
     monkeypatch.setattr(proxy.requests, "post", lambda url, **kw: FakeUpstreamResponse(status_code=403, content=b'{"detail": "no"}'))
-    assert client.post("/proxy/registry-vehicle", content="{}", headers=JSON).status_code == 403
+    assert client.post("/data/registry-vehicle", content="{}", headers=JSON).status_code == 403
 
     def boom(url, **kw):
         raise proxy.requests.ConnectionError("down")
 
     monkeypatch.setattr(proxy.requests, "post", boom)
-    assert client.post("/proxy/registry-vehicle", content="{}", headers=JSON).status_code == 502
+    assert client.post("/data/registry-vehicle", content="{}", headers=JSON).status_code == 502
 
 
 def test_a_post_source_is_proxy_only_never_pulled(_isolated_db):
@@ -225,13 +226,13 @@ def test_an_ordinary_source_defaults_to_get_and_keeps_its_schedule(_isolated_db)
 
 def test_unpublishing_switches_a_post_source_off_and_publishing_brings_it_back(client, _isolated_db, upstream):
     source_id = _register_post_source(_isolated_db)
-    assert client.post("/proxy/registry-vehicle", content="{}", headers=JSON).status_code == 200
+    assert client.post("/data/registry-vehicle", content="{}", headers=JSON).status_code == 200
     with _isolated_db() as session:
         publishing.set_published(session, provider_sources.get_or_404(session, source_id), False)
         session.commit()
         assert provider_sources.get_or_404(session, source_id).frequency == "MANUAL"  # still never pulled
-    assert client.post("/proxy/registry-vehicle", content="{}", headers=JSON).status_code == 404  # nobody can call it
+    assert client.post("/data/registry-vehicle", content="{}", headers=JSON).status_code == 404  # nobody can call it
     with _isolated_db() as session:
         publishing.set_published(session, provider_sources.get_or_404(session, source_id), True)
         session.commit()
-    assert client.post("/proxy/registry-vehicle", content="{}", headers=JSON).status_code == 200
+    assert client.post("/data/registry-vehicle", content="{}", headers=JSON).status_code == 200

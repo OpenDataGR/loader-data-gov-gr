@@ -63,7 +63,6 @@ DEFAULT_TTL_S = 12 * 60 * 60  # 12h: long enough for a work session, short enoug
 #   /auth/*                     the Keycloak login itself (start + callback)
 #   /data/*                     a published source's newest output (the Load
 #                               Box's API) -- public, only once switched on
-#   /proxy/*                    the old address of the same thing as /data/*
 #                               (a deprecated alias) -- public by design; gating
 #                               it would break every consumer of it
 # Matched with a "/" boundary, so "/admin/ftp-accounts" does not exempt
@@ -73,7 +72,7 @@ _EXEMPT_PATHS = frozenset({
     "/admin/ftp-accounts-sync", "/admin/ftp-box-status", "/admin/ftp-login-attempts",
     "/admin/harvest-db/health",
 })
-_EXEMPT_PREFIXES = ("/push", "/proxy", "/data", "/auth", "/admin/ftp-accounts", "/admin/ftp-relay")
+_EXEMPT_PREFIXES = ("/push", "/data", "/auth", "/admin/ftp-accounts", "/admin/ftp-relay")
 
 
 class SessionConfigError(RuntimeError):

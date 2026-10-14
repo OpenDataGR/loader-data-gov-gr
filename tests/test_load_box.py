@@ -9,7 +9,7 @@ from sqlalchemy import select
 from providerharvest_service import load_api, publishing
 from providerharvest_service.app import app
 from providerharvest_service.harvest_models import TransformedFile
-from providerharvest_service.models import LoadTarget
+from providerharvest_service.models import Transform
 from tests.test_transform_ui import (  # noqa: F401  (fixtures and helpers shared with the Transform Box tests)
     _all_outputs, _flash, _isolated_db, _isolated_harvest_db, _master_key, _outputs_ready, client, source,
 )
@@ -29,7 +29,7 @@ def _anonymous():
 
 def test_the_tab_lists_sources_and_nothing_is_published_by_default(client, source):
     page = client.get("/load").text
-    assert "Load Box</a>" in page and "acme-push" in page and "not published" in page
+    assert "Load Box</a>" in page and "acme-push" in page and "no pipeline" in page and "Publish</button>" not in page
     assert _anonymous().get("/data/acme-push").status_code == 404
 
 
@@ -38,7 +38,7 @@ def test_publishing_needs_a_transform_and_then_serves_the_newest_output_to_anyon
     _outputs_ready(client, source, n=2)
     assert "published at /data/acme-push" in _flash(_publish(client, source))
     with _isolated_db() as s:
-        assert s.scalar(select(LoadTarget.api_enabled).where(LoadTarget.source_id == source["id"])) is True
+        assert s.scalar(select(Transform.published).where(Transform.source_id == source["id"], Transform.name == "default")) is True
     stranger = _anonymous()
     resp = stranger.get("/data/acme-push")
     newest = _all_outputs(_isolated_harvest_db)[-1]
@@ -123,7 +123,7 @@ def _http_source(session_factory, name, *, post=False, activate=True, published=
 
 
 def _row(page, name):
-    return re.search(r"<tr>(?:(?!</tr>).)*?<span class=\"name-slug\">%s</span>.*?</tr>" % re.escape(name), page, re.S).group(0)
+    return re.search(r"<tr>(?:(?!</tr>).)*?<span class=\"name-slug\">\(%s\)</span>.*?</tr>" % re.escape(name), page, re.S).group(0)
 
 
 def test_an_api_source_is_published_at_the_same_address_pattern_and_says_it_stores_nothing(client, source, _isolated_db):
@@ -131,7 +131,7 @@ def test_an_api_source_is_published_at_the_same_address_pattern_and_says_it_stor
     row = _row(client.get("/load").text, "registry")
     assert "asked on demand" in row and "nothing is stored" in row
     assert "published" in row and "POST" in row and "/data/registry" in row and "7/min per caller" in row
-    assert "/proxy/" not in row and 'href="https://testserver/data/registry"' not in row  # a POST address is not offered as a link (opening it would be a GET)
+    assert 'href="https://testserver/data/registry"' not in row  # a POST address is not offered as a link (opening it would be a GET)
     assert "/load/sources/%s/api" % registry_id in row and "Unpublish" in row  # the same switch as every source
     assert 'href="/provider/sources/%s/edit"' % registry_id in row  # the settings live on the source
 

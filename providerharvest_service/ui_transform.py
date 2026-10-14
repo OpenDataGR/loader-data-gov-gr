@@ -215,7 +215,20 @@ async def create_transform(source_id: str, request: Request, session: Session = 
     source = _source_or_none(session, source_id)
     if source is None:
         return _go("/transform", "No such source.", "error")
-    if transform_runner.get_transform(session, source_id) is None:
+    existing = transform_runner.get_transform(session, source_id)
+    if existing is not None:
+        # e.g. an API source that was published first (its pipeline has no steps yet): nothing is created again, but a sample given here is kept
+        sample = str((await request.form()).get("sample") or "")
+        if source.transport_type == "http" and sample.strip():
+            try:
+                transform_runner.set_sample(existing, sample)
+            except te.TransformError as exc:
+                session.rollback()
+                return _go(_base(request, source_id), str(exc), "error")
+            session.commit()
+            return _go(_base(request, source_id), "Sample answer saved. Add the first step: read the answer.")
+        return _go(_base(request, source_id), "This source already has a transform.")
+    if existing is None:
         transform = Transform(source_id=source_id, steps="[]", enabled=False, updated_by=_who(request))
         sample = str((await request.form()).get("sample") or "")
         try:
@@ -665,9 +678,8 @@ def delete_pipeline(source_id: str, pipeline: str, request: Request, session: Se
     count = transform_runner.delete_all_outputs(hsession, source_id, found.id)
     session.delete(found)
     source = _source_or_none(session, source_id)
-    unpublished = pipeline == transform_runner.DEFAULT_PIPELINE and publishing.is_published(session, source_id)
-    if unpublished:
-        publishing.set_published(session, source, False, _who(request))
+    unpublished = publishing.is_pipeline_published(found)  # the switch is on the pipeline: it goes with it
+    address = publishing.address_of(source, found)
     session.commit()
     logger.info("transform box: %s removed the pipeline %s of source %s (%d outputs)", _who(request) or "?", pipeline, source_id, count)
-    return _go(base, "Pipeline %s removed.%s" % (pipeline, (" Its published address /data/%s was switched off with it." % source.name) if unpublished else ""))
+    return _go(base, "Pipeline %s removed.%s" % (pipeline, (" Its published address %s stopped answering with it." % address) if unpublished else ""))

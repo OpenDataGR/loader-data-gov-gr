@@ -82,8 +82,6 @@ from providerharvest_service.models import ProviderSource
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/proxy", tags=["proxy"])
-
 DEFAULT_TIMEOUT_S = 30
 _MAX_TRACKED_CALLERS = 4096
 
@@ -116,27 +114,12 @@ def _per_ip_rate_limiter_for(source_id: str, client_ip: str, max_requests_per_mi
     return bucket
 
 
-def _get_active_http_source_or_404(session: Session, source_name: str) -> ProviderSource:
-    source = session.scalar(select(ProviderSource).where(ProviderSource.name == source_name))
-    # Same 404 whether the name doesn't exist, isn't an HTTP source, isn't active, or is not published (the Load Box's switch) -- a
-    # pending/rejected/paused/unpublished source's existence (and definitely its real endpoint) must not be discoverable via this
-    # public route.
-    if (
-        source is None
-        or source.transport_type != "http"
-        or source.status != "active"
-        or not publishing.is_published(session, source.id)
-    ):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such published data")
-    return source
-
-
 def request_is_swapped(transform) -> bool:
     return bool(transform is not None and transform.request_swap and (transform.request_template or "").strip())
 
 
 def consumer_method(source: ProviderSource, transform) -> str:
-    """The method callers use on /proxy/<name>: the provider's own, or the other one when the request is turned around."""
+    """The method callers use on the published address: the provider's own, or the other one when the request is turned around."""
     provider = source.proxy_method
     if not request_is_swapped(transform):
         return provider
@@ -177,15 +160,13 @@ def call_provider(session: Session, source: ProviderSource, params: dict, body: 
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "upstream request failed: %s" % exc) from exc
 
 
-def _forward(session: Session, source_name: str, method: str, query_params: dict, client_ip: str, body: bytes | None) -> Response:
-    source = _get_active_http_source_or_404(session, source_name)
+def _forward(session: Session, source: ProviderSource, transform, method: str, query_params: dict, client_ip: str, body: bytes | None) -> Response:
+    """One call to the published address of an API source's pipeline (``transform``): the request turned around if the pipeline says so,
+    the provider asked with the source's credential, its answer reshaped by the pipeline when that is switched on."""
     config = json.loads(source.config or "{}")
 
     # One method per source for callers: the provider's own (the one it was registered with), or -- when the source's Transform page
     # turns the request around -- the other one. Nothing can be sent to a provider in a shape that was never agreed.
-    from providerharvest_service import transform_runner
-
-    transform = transform_runner.get_transform(session, source.id)
     swap = request_is_swapped(transform)
     allowed = consumer_method(source, transform)
     if method != allowed:
@@ -217,7 +198,7 @@ def _forward(session: Session, source_name: str, method: str, query_params: dict
     upstream = call_provider(session, source, params, provider_body)
 
     if 200 <= upstream.status_code < 300:
-        reshaped = _reshape(session, source, upstream.content)
+        reshaped = _reshape(session, source, upstream.content, transform)
         if reshaped is not None:
             return reshaped
     return Response(
@@ -227,13 +208,12 @@ def _forward(session: Session, source_name: str, method: str, query_params: dict
     )
 
 
-def _reshape(session: Session, source: ProviderSource, content: bytes) -> Response | None:
-    """The provider's successful answer through the source's transform (the Transform Box), when one is switched on. None when
+def _reshape(session: Session, source: ProviderSource, content: bytes, transform) -> Response | None:
+    """The provider's successful answer through the pipeline (the Transform Box), when it is switched on. None when
     there is no transform to apply. It fails closed: a transform that cannot be applied gives an error -- the unreshaped answer is
     never passed on instead, since a transform that keeps only some fields exists to keep the others from leaving."""
     from providerharvest_service import transform_engine, transform_runner
 
-    transform = transform_runner.get_transform(session, source.id)
     if transform is None or not transform.enabled:
         return None
     try:
@@ -244,20 +224,20 @@ def _reshape(session: Session, source: ProviderSource, content: bytes) -> Respon
     return Response(content=result.content, status_code=status.HTTP_200_OK, media_type=result.content_type)
 
 
-@router.get("/{source_name}")
-async def proxy_get(source_name: str, request: Request, session: Session = Depends(get_session)) -> Response:
+async def answer_get(session: Session, source: ProviderSource, pipeline, request: Request) -> Response:
+    """A GET to the published address of an API source's pipeline."""
     # The real caller, not the socket peer: behind the gateway and nginx that
     # is the gateway's own address, which would put every outside consumer in
     # one shared bucket (see client_addr.py).
     return await run_in_threadpool(
-        _forward, session, source_name, "GET", dict(request.query_params), sender_address(request) or "unknown", None
+        _forward, session, source, pipeline, "GET", dict(request.query_params), sender_address(request) or "unknown", None
     )
 
 
-@router.post("/{source_name}")
-async def proxy_post(source_name: str, request: Request, session: Session = Depends(get_session)) -> Response:
-    """For a source registered with the POST method: the caller's JSON body is passed through, the loader adds the
-    provider's credential. The body is checked here -- JSON only, small -- before anything leaves the loader."""
+async def answer_post(session: Session, source: ProviderSource, pipeline, request: Request) -> Response:
+    """A POST to the published address of an API source's pipeline: the caller's JSON body is passed through (or turned into the
+    provider's query), the loader adds the provider's credential. The body is checked here -- JSON only, small -- before anything
+    leaves the loader."""
     if not (request.headers.get("content-type") or "").lower().startswith("application/json"):
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "send the body as application/json")
     declared = request.headers.get("content-length")
@@ -271,5 +251,5 @@ async def proxy_post(source_name: str, request: Request, session: Session = Depe
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "the body is not valid JSON") from exc
     return await run_in_threadpool(
-        _forward, session, source_name, "POST", dict(request.query_params), sender_address(request) or "unknown", body
+        _forward, session, source, pipeline, "POST", dict(request.query_params), sender_address(request) or "unknown", body
     )

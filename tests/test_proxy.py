@@ -4,6 +4,7 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.test_push_ingest import _isolated_harvest_db  # noqa: F401  (/data needs a harvest database)
 from providerharvest_service import db, provider_sources, proxy, publishing
 from providerharvest_service.app import app
 
@@ -93,7 +94,7 @@ def test_proxies_to_the_registered_endpoint_with_auth_injected(client, _isolated
     monkeypatch.setattr(proxy.requests, "get", fake_get)
     monkeypatch.setattr(proxy, "assert_safe_http_url", lambda url: None)
 
-    resp = client.get("/proxy/acme-open-data", params={"category": "health"})
+    resp = client.get("/data/acme-open-data", params={"category": "health"})
 
     assert resp.status_code == 200
     assert resp.content == b'{"ok": true}'
@@ -115,7 +116,7 @@ def test_proxy_uses_the_sources_configured_request_timeout(client, _isolated_db,
     )
     monkeypatch.setattr(proxy, "assert_safe_http_url", lambda url: None)
 
-    client.get("/proxy/acme-open-data")
+    client.get("/data/acme-open-data")
     assert calls[0]["timeout"] == 5
 
 
@@ -126,10 +127,10 @@ def test_per_ip_rate_limit_returns_429_once_exceeded(client, _isolated_db, monke
     )
     monkeypatch.setattr(proxy, "assert_safe_http_url", lambda url: None)
 
-    first = client.get("/proxy/acme-open-data")
+    first = client.get("/data/acme-open-data")
     assert first.status_code == 200
 
-    second = client.get("/proxy/acme-open-data")
+    second = client.get("/data/acme-open-data")
     assert second.status_code == 429
     assert second.headers["retry-after"] == "60"
 
@@ -143,7 +144,7 @@ def test_per_ip_rate_limit_tells_callers_apart_behind_the_gateway(client, _isola
     monkeypatch.setattr(proxy, "assert_safe_http_url", lambda url: None)
 
     def get_as(address):
-        return client.get("/proxy/acme-open-data", headers={"X-Forwarded-For": "%s:4000, 10.0.0.4" % address})
+        return client.get("/data/acme-open-data", headers={"X-Forwarded-For": "%s:4000, 10.0.0.4" % address})
 
     assert get_as("203.0.113.1").status_code == 200
     assert get_as("203.0.113.2").status_code == 200  # a different consumer: its own bucket
@@ -191,13 +192,13 @@ def test_caller_cannot_override_the_injected_api_key(client, _isolated_db, monke
     monkeypatch.setattr(proxy.requests, "get", fake_get)
     monkeypatch.setattr(proxy, "assert_safe_http_url", lambda url: None)
 
-    client.get("/proxy/acme-open-data", params={"api_key": "attacker-supplied"})
+    client.get("/data/acme-open-data", params={"api_key": "attacker-supplied"})
 
     assert calls[0][1]["params"]["api_key"] == "the-real-secret-key"
 
 
 def test_unknown_source_is_404(client):
-    resp = client.get("/proxy/no-such-source")
+    resp = client.get("/data/no-such-source")
     assert resp.status_code == 404
 
 
@@ -208,7 +209,7 @@ def test_pending_source_is_404_not_leaked(client, _isolated_db):
             "endpoint_url": "https://provider.example.gr/api", "transport_type": "http",
             "auth_type": "api_key", "api_key": "k",
         })
-    resp = client.get("/proxy/still-pending")
+    resp = client.get("/data/still-pending")
     assert resp.status_code == 404
 
 
@@ -220,13 +221,13 @@ def test_non_http_transport_source_is_404(client, _isolated_db):
             "host_key_fingerprint": "SHA256:abcdef",
         })
         provider_sources.activate(session, source.id)
-    resp = client.get("/proxy/acme-sftp")
+    resp = client.get("/data/acme-sftp")
     assert resp.status_code == 404
 
 
 def test_an_active_http_source_that_is_not_published_is_404(client, _isolated_db):
     _register_active_http_source(_isolated_db, publish=False)
-    assert client.get("/proxy/acme-open-data").status_code == 404
+    assert client.get("/data/acme-open-data").status_code == 404
 
 
 def test_upstream_connection_failure_is_502(client, _isolated_db, monkeypatch):
@@ -240,7 +241,7 @@ def test_upstream_connection_failure_is_502(client, _isolated_db, monkeypatch):
     monkeypatch.setattr(proxy.requests, "get", fake_get)
     monkeypatch.setattr(proxy, "assert_safe_http_url", lambda url: None)
 
-    resp = client.get("/proxy/acme-open-data")
+    resp = client.get("/data/acme-open-data")
     assert resp.status_code == 502
 
 
@@ -254,7 +255,7 @@ def test_unsafe_network_target_is_502_not_500(client, _isolated_db, monkeypatch)
 
     monkeypatch.setattr(proxy, "assert_safe_http_url", fail)
 
-    resp = client.get("/proxy/acme-open-data")
+    resp = client.get("/data/acme-open-data")
     assert resp.status_code == 502
 
 
@@ -273,6 +274,6 @@ def test_upstream_response_headers_are_not_passed_through(client, _isolated_db, 
     monkeypatch.setattr(proxy.requests, "get", fake_get)
     monkeypatch.setattr(proxy, "assert_safe_http_url", lambda url: None)
 
-    resp = client.get("/proxy/acme-open-data")
+    resp = client.get("/data/acme-open-data")
     assert "set-cookie" not in resp.headers
     assert "www-authenticate" not in resp.headers

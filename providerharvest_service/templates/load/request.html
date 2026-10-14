@@ -2,12 +2,12 @@
 {% block title %}Request -- {{ source.title }} -- loader.data.gov.gr{% endblock %}
 {% block content %}
   <div class="panel">
-    <p class="muted" style="margin:0 0 0.4rem;"><a href="/load">Load Box</a> / {{ source.title }}</p>
-    <h1>Request</h1>
+    <p class="muted" style="margin:0 0 0.4rem;"><a href="/load">Load Box</a> / {{ source.title }} / <code>{{ address }}</code></p>
+    <h1>Request{% if pipeline_name != "default" %} -- {{ pipeline_name }}{% endif %}</h1>
     <p class="subtitle">How a call to this source's published address becomes the call to the provider.{% if request_swap %} <span class="badge badge-ok"><span>{{ "GET" if provider_method == "POST" else "POST" }} &rarr; {{ provider_method }}</span></span>{% else %} <span class="badge badge-pending"><span>same as the provider ({{ provider_method }})</span></span>{% endif %}</p>
     {% if flash %}<div class="flash flash-{{ flash_kind }}">{{ flash }}</div>{% endif %}
     <p class="muted" style="margin:0.4rem 0;">The provider is called with <strong>{{ provider_method }}</strong> (set on the source, in the Extract Box). Here callers can use the <em>other</em> method on <code>/data/{{ proxy_name }}</code>, and a template turns their call into the provider's. Only what the template names goes on; their other parameters are dropped, and every value is escaped.</p>
-    <form method="post" action="/load/sources/{{ source.id }}/request">
+    <form method="post" action="{{ request_action }}">
       <label for="req_mode">Callers send</label>
       <select id="req_mode" name="mode" style="max-width:34rem;">
         <option value="same"{% if not request_swap %} selected{% endif %}>{{ provider_method }} -- the same as the provider (the call is passed on as it is)</option>

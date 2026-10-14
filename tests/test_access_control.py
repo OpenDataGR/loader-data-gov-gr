@@ -725,7 +725,7 @@ def test_the_confirmation_needs_the_login(machine):
 
 def test_a_blacklisted_address_is_refused_everywhere_before_anything_else(machine, session):
     access_control.add_rule(session, BLOCK, "203.0.113.0/24")
-    for path in ("/health", "/admin/login", "/provider/sources", "/proxy/anything", "/push/x/upload", "/admin/ftp-box-status"):
+    for path in ("/health", "/admin/login", "/provider/sources", "/data/anything", "/push/x/upload", "/admin/ftp-box-status"):
         resp = machine.get(path, headers=_from("203.0.113.9"), follow_redirects=False)
         assert resp.status_code == 403 and resp.text == "Forbidden", path  # not the login redirect, not a 404
 

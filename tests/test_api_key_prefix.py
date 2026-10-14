@@ -2,6 +2,7 @@
 
 import pytest
 
+from tests.test_push_ingest import _isolated_harvest_db  # noqa: F401  (/data needs a harvest database)
 from providerharvest_service import provider_sources, proxy, publishing
 from providerharvest_service.engine.auth_strategies.api_key import ApiKeyAuth
 from providerharvest_service.engine.secrets.base import SecretBundle
@@ -61,7 +62,7 @@ def test_the_proxy_sends_the_word_and_the_key_together(client, _isolated_db, mon
     sent = []
     monkeypatch.setattr(proxy.requests, "post", lambda url, **kw: (sent.append(kw), FakeUpstreamResponse())[-1])
     monkeypatch.setattr(proxy, "assert_safe_http_url", lambda url: None)
-    client.post("/proxy/registry", content="{}", headers={"Content-Type": "application/json"})
+    client.post("/data/registry", content="{}", headers={"Content-Type": "application/json"})
     assert sent[0]["headers"]["Authorization"] == "Token abc123"
 
 
