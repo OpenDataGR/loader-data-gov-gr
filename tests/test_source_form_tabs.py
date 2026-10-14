@@ -8,8 +8,8 @@ from tests.test_transform_ui import (  # noqa: F401  (fixtures shared with the T
 )
 
 EXPECTED = {
-    "general": ["name", "title", "notification_email", "kind-pull", "frequency", "transport-type-pull"],
-    "connection": ["endpoint_url", "api_key", "api_key_prefix", "basic_username", "oauth2_client_id", "mtls_client_cert"],
+    "general": ["name", "title", "notification_email"],
+    "connection": ["kind-pull", "transport-type-pull", "frequency", "endpoint_url", "api_key", "api_key_prefix", "basic_username", "oauth2_client_id", "mtls_client_cert"],
     "request": ["items_path", "proxy_method", "test_request"],
     "limits": ["max_requests_per_minute", "proxy_rate_limit_per_ip", "request_timeout_s", "max_retries", "max_pages"],
 }
@@ -59,3 +59,15 @@ def test_a_form_with_an_error_opens_on_the_tab_of_the_first_one(client):
     })
     assert resp.status_code == 400 and 'class="error"' in resp.text
     assert "first problem" in resp.text and "first.closest('[data-tab]')" in resp.text  # the script picks the tab of the first message
+
+
+def test_the_tabs_listen_to_the_source_form_not_to_the_first_form_of_the_page(client):
+    page = client.get("/provider/sources/new").text
+    assert '<form id="source-form"' in page and "document.getElementById('source-form').addEventListener('change'" in page
+    assert "document.querySelector('form')" not in page  # the first <form> of every page is the header's Log out
+
+
+def test_delivery_connector_endpoint_and_schedule_come_in_that_order_on_the_connection_tab(client):
+    page = client.get("/provider/sources/new").text
+    positions = [page.index(marker) for marker in ('id="kind-pull"', 'class="connector-grid"', 'id="endpoint_url"', 'id="frequency"', "<label>Authentication</label>")]
+    assert positions == sorted(positions)

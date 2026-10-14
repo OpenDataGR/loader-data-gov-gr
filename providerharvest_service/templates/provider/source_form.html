@@ -36,7 +36,7 @@
       </div>
     {% endif %}
 
-    <form method="post" action="{{ '/provider/sources/%s/edit' % source_id if editing else '/provider/sources/new' }}">
+    <form id="source-form" method="post" action="{{ '/provider/sources/%s/edit' % source_id if editing else '/provider/sources/new' }}">
       <div class="form-tabs" id="form-tabs" role="tablist">
         <button type="button" class="form-tab" role="tab" data-tab-btn="general">General</button>
         <button type="button" class="form-tab" role="tab" data-tab-btn="connection">Connection</button>
@@ -61,6 +61,8 @@
       <input type="email" id="notification_email" name="notification_email" value="{{ data.get('notification_email', '') }}">
 
       {% set kind = 'push' if data.get('transport_type') == 'push' else 'pull' %}
+      </div>
+      <div data-tab="connection">
       <label>How does this source deliver its data?</label>
       <div class="segmented">
         <span>
@@ -79,23 +81,6 @@
       </div>
       <div id="section-pull">
         <div data-tab="connection">
-        <label for="endpoint_url">Endpoint URL / host</label>
-        <input type="text" id="endpoint_url" name="endpoint_url" value="{{ data.get('endpoint_url', '') }}"
-               placeholder="https://provider.example.gr/api/records or sftp.example.gr">
-        {% if errors.endpoint_url %}<div class="error">{{ errors.endpoint_url }}</div>{% endif %}
-
-        </div>
-        <div data-tab="general">
-        <label for="frequency">Harvest frequency</label>
-        <select id="frequency" name="frequency">
-          {% for f in frequencies %}
-            <option value="{{ f }}" {% if data.get('frequency', 'DAILY') == f %}selected{% endif %}>{{ f }}</option>
-          {% endfor %}
-        </select>
-        {% if errors.frequency %}<div class="error">{{ errors.frequency }}</div>{% endif %}
-
-        </div>
-        <div data-tab="general">
         {% set tt = data.get('transport_type', 'http') %}
         {% set connector = 'ssh' if tt in ('sftp', 'scp') else ('http' if tt == 'push' else tt) %}
         <label>Connector</label>
@@ -112,6 +97,23 @@
           {% endfor %}
         </div>
         {% if errors.transport_type %}<div class="error">{{ errors.transport_type }}</div>{% endif %}
+
+        </div>
+        <div data-tab="connection">
+        <label for="endpoint_url">Endpoint URL / host</label>
+        <input type="text" id="endpoint_url" name="endpoint_url" value="{{ data.get('endpoint_url', '') }}"
+               placeholder="https://provider.example.gr/api/records or sftp.example.gr">
+        {% if errors.endpoint_url %}<div class="error">{{ errors.endpoint_url }}</div>{% endif %}
+
+        </div>
+        <div data-tab="connection">
+        <label for="frequency">Harvest frequency</label>
+        <select id="frequency" name="frequency">
+          {% for f in frequencies %}
+            <option value="{{ f }}" {% if data.get('frequency', 'DAILY') == f %}selected{% endif %}>{{ f }}</option>
+          {% endfor %}
+        </select>
+        {% if errors.frequency %}<div class="error">{{ errors.frequency }}</div>{% endif %}
 
         </div>
       <div id="fieldset-http" class="plain-set">
@@ -501,9 +503,9 @@
     document.querySelectorAll('[data-tab-btn]').forEach(function (button) {
       button.addEventListener('click', function () { setTab(button.dataset.tabBtn); });
     });
-    document.querySelector('form').addEventListener('change', function () { setTab(activeTab); });
+    document.getElementById('source-form').addEventListener('change', function () { setTab(activeTab); });
     (function () {
-      var first = document.querySelector('form .error'), holder = first && first.closest('[data-tab]');
+      var first = document.querySelector('#source-form .error'), holder = first && first.closest('[data-tab]');
       setTab(holder ? holder.dataset.tab : 'general');  // opens on the tab of the first problem, if there is one
     })();
   </script>
