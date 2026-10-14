@@ -425,7 +425,6 @@
 
       <div class="form-actions">
         <button type="submit" id="submit-btn">{{ macros.icon(("check" if editing else "plus"), 16) }} <span id="submit-label">{{ "Save changes" if editing else "Register source" }}</span></button>
-        <span id="submit-hint" class="muted" style="margin-left:0.8rem; font-size:0.85rem;"></span>
       </div>
     </form>
   </div>
@@ -515,12 +514,6 @@
     // only then becomes "Register source". (The server still checks everything; this only guides.) Editing keeps a plain Save button.
     var WIZARD = {{ 'false' if editing else 'true' }};
     var TAB_LABELS = {general: 'General', connection: 'Connection', request: 'Request', limits: 'Limits'};
-    var FIELD_NAMES = {
-      name: 'name', title: 'title', endpoint_url: 'endpoint URL / host', api_key: 'API key', basic_username: 'username', basic_password: 'password',
-      oauth2_client_id: 'client ID', oauth2_client_secret: 'client secret', oauth2_token_url: 'token URL', mtls_client_cert: 'client certificate',
-      mtls_client_key: 'client key', sftp_username: 'username', sftp_password: 'password or private key', host_key_fingerprint: 'host-key fingerprint',
-      ftp_username: 'username', ftp_password: 'password', ftp_plain_ftp_acknowledged: 'FTPS, or the plain-FTP acknowledgment'
-    };
     function requiredFields() {
       var fields = [['name', 'general'], ['title', 'general']];  // [field id, tab]
       var kind = document.querySelector('input[name="kind"]:checked');
@@ -561,7 +554,6 @@
       button.dataset.next = target;
       document.getElementById('submit-label').textContent = target ? 'Next: ' + TAB_LABELS[target] : 'Register source';
       button.disabled = here.length > 0;
-      document.getElementById('submit-hint').textContent = here.length ? 'Still needed here: ' + here.map(function (f) { return FIELD_NAMES[f[0]] || f[0]; }).join(', ') : '';
     }
     document.getElementById('submit-btn').addEventListener('click', function (event) {
       if (!WIZARD || !this.dataset.next) return;  // nothing missing elsewhere: this click registers the source
