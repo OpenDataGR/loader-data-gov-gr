@@ -110,3 +110,9 @@ def test_required_fields_get_an_asterisk_and_incomplete_ones_a_red_outline(clien
     assert "button.disabled" not in page  # the button is never greyed out: clicking it with a gap outlines the gap
     resp = client.post("/provider/sources/new", data={"name": "x", "title": "", "kind": "pull", "transport_type": "http", "endpoint_url": "", "frequency": "DAILY", "auth_type": "api_key"})
     assert resp.status_code == 400 and re.search(r'id="title"[^>]*>\s*<div class="error">', resp.text)  # the error div follows the input: that is what the CSS outlines
+
+
+def test_the_subtitle_does_not_overlap_the_title_row_with_the_back_arrow(client):
+    page = client.get("/provider/sources/new").text
+    assert ".form-head + .subtitle { margin: 0.5rem 0 1.1rem; }" in page
+    assert page.index('class="form-head"') < page.index('class="subtitle"')  # the subtitle follows the title row directly

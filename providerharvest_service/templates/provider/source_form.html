@@ -16,6 +16,7 @@
     .form-actions { margin-top: 1.4rem; padding-top: 1rem; border-top: 1px solid var(--color-border); }
     .form-head { display: flex; align-items: center; gap: 0.8rem; margin-bottom: 0.2rem; }
     .form-head h1 { margin: 0; }
+    .form-head + .subtitle { margin: 0.5rem 0 1.1rem; }  /* (the base rule pulls a subtitle up under a heading that has its own bottom margin; this row has none) */
     a.back-arrow { padding: 0.45rem 0.6rem; }
     .req { color: var(--status-rejected, #c62828); font-weight: 700; }
     #source-form .is-invalid, #source-form input:has(+ .error), #source-form select:has(+ .error), #source-form textarea:has(+ .error) {
