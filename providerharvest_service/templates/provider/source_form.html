@@ -3,12 +3,17 @@
 {% block title %}{{ "Edit source" if editing else "Register a source" }} -- loader.data.gov.gr{% endblock %}
 {% block content %}
   <style>
-    .form-tabs { display: flex; gap: 0.2rem; border-bottom: 1px solid var(--color-border); margin: 0 0 1rem; }
-    .form-tab { background: none; border: 0; border-bottom: 3px solid transparent; border-radius: 0; color: var(--color-text-muted, #5b6b7a); padding: 0.55rem 1rem; font-weight: 600; cursor: pointer; }
-    .form-tab:hover { color: var(--color-primary-mid); }
-    .form-tab.active { color: var(--color-primary); border-bottom-color: var(--color-primary-mid); }
+    .form-tabs { display: flex; gap: 0.15rem; border-bottom: 1px solid var(--color-border); margin: 0 0 1.2rem; }
+    /* (these beat the base stylesheet's button and button:hover rules, which would fill a tab with the primary colour) */
+    button.form-tab, button.form-tab:hover, button.form-tab:focus-visible {
+      background: none; color: var(--color-text-muted, #5b6b7a); border: 0; border-bottom: 3px solid transparent; border-radius: 6px 6px 0 0;
+      padding: 0.6rem 1.1rem; margin-bottom: -1px; font-size: 0.92rem; font-weight: 600;
+    }
+    button.form-tab:hover { color: var(--color-primary-mid); background: #f2f6fc; }
+    button.form-tab.active, button.form-tab.active:hover { color: var(--color-primary); border-bottom-color: var(--color-primary-mid); background: none; }
     .form-tab[hidden], .form-tabs[hidden] { display: none !important; }
     [data-tab].tab-off { display: none !important; }
+    .form-actions { margin-top: 1.4rem; padding-top: 1rem; border-top: 1px solid var(--color-border); }
     .plain-set { border: 0; padding: 0; margin: 0; min-width: 0; }
   </style>
   <div class="panel">
@@ -416,7 +421,9 @@
         </fieldset>
       </div>
 
-      <button type="submit">{{ macros.icon(("check" if editing else "plus"), 16) }} {{ "Save changes" if editing else "Register source" }}</button>
+      <div class="form-actions">
+        <button type="submit">{{ macros.icon(("check" if editing else "plus"), 16) }} {{ "Save changes" if editing else "Register source" }}</button>
+      </div>
     </form>
   </div>
 
