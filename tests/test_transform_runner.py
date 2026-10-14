@@ -25,10 +25,10 @@ def source(client, _isolated_db):
     return {"id": source_id, "key": api_key, "name": "acme-push"}
 
 
-def _add_table(session_factory, name="stations", columns=("id", "name", "lat", "lon"), rows=None):
+def _add_table(session_factory, source_id, name="stations", columns=("id", "name", "lat", "lon"), rows=None):
     rows = rows or [{"id": "MS812", "name": "Kifisias", "lat": "38.03", "lon": "23.80"}, {"id": "MS810", "name": "Mesogeion", "lat": "38.00", "lon": "23.80"}]
     with session_factory() as s:
-        table = LookupTable(name=name, columns=json.dumps(list(columns)), rows=json.dumps(rows), row_count=len(rows))
+        table = LookupTable(source_id=source_id, name=name, columns=json.dumps(list(columns)), rows=json.dumps(rows), row_count=len(rows))
         s.add(table)
         s.commit()
         return table.id
@@ -54,7 +54,7 @@ def _outputs(hfactory):
 # -- on arrival ----------------------------------------------------------------------------------------
 
 def test_a_pushed_file_is_transformed_and_the_original_is_stored_untouched(client, source, _isolated_db, _isolated_harvest_db):
-    _add_table(_isolated_db)
+    _add_table(_isolated_db, source["id"])
     _transform(_isolated_db, source["id"])
     resp = _upload(client, source)
     assert resp.status_code == 200 and resp.json()["status"] == "success"
@@ -68,7 +68,7 @@ def test_a_pushed_file_is_transformed_and_the_original_is_stored_untouched(clien
 
 
 def test_the_output_format_and_name_follow_the_transform(client, source, _isolated_db, _isolated_harvest_db):
-    _add_table(_isolated_db)
+    _add_table(_isolated_db, source["id"])
     _transform(_isolated_db, source["id"], output="csv")
     _upload(client, source, name="export.2026.xml")
     (out,) = _outputs(_isolated_harvest_db)
@@ -82,7 +82,7 @@ def test_nothing_runs_for_a_source_without_a_transform_or_with_a_disabled_one(cl
 
 
 def test_a_file_the_transform_cannot_read_still_arrives_and_leaves_an_error_to_read(client, source, _isolated_db, _isolated_harvest_db):
-    _add_table(_isolated_db)
+    _add_table(_isolated_db, source["id"])
     _transform(_isolated_db, source["id"])
     resp = _upload(client, source, content=b"this is not xml at all")
     assert resp.status_code == 200 and resp.json()["status"] == "success"  # it arrived
@@ -100,7 +100,7 @@ def test_an_index_table_that_was_deleted_is_an_error_row_not_a_failed_upload(cli
 
 
 def test_even_an_unexpected_bug_in_a_transform_cannot_fail_the_upload(client, source, _isolated_db, _isolated_harvest_db, monkeypatch):
-    _add_table(_isolated_db)
+    _add_table(_isolated_db, source["id"])
     _transform(_isolated_db, source["id"])
 
     def boom(*args, **kwargs):
@@ -113,7 +113,7 @@ def test_even_an_unexpected_bug_in_a_transform_cannot_fail_the_upload(client, so
 
 
 def test_each_run_has_one_output_and_a_rerun_replaces_it(client, source, _isolated_db, _isolated_harvest_db):
-    _add_table(_isolated_db)
+    _add_table(_isolated_db, source["id"])
     _transform(_isolated_db, source["id"])
     _upload(client, source)
     with _isolated_db() as s, _isolated_harvest_db() as h:
@@ -134,7 +134,7 @@ def _runs(client, source, n=4):
 def test_reprocess_runs_the_transform_over_earlier_files_whether_or_not_it_was_on_then(client, source, _isolated_db, _isolated_harvest_db):
     _runs(client, source, 4)  # arrived before any transform existed
     assert _outputs(_isolated_harvest_db) == []
-    _add_table(_isolated_db)
+    _add_table(_isolated_db, source["id"])
     _transform(_isolated_db, source["id"], enabled=False)
     with _isolated_db() as s, _isolated_harvest_db() as h:
         summary = transform_runner.reprocess(s, h, source["id"], limit=3)
@@ -144,7 +144,7 @@ def test_reprocess_runs_the_transform_over_earlier_files_whether_or_not_it_was_o
 
 def test_reprocess_skips_files_whose_contents_retention_removed_and_says_so(client, source, _isolated_db, _isolated_harvest_db):
     _runs(client, source, 3)
-    _add_table(_isolated_db)
+    _add_table(_isolated_db, source["id"])
     _transform(_isolated_db, source["id"])
     with _isolated_harvest_db() as h:
         oldest = h.scalar(select(HarvestedFile).order_by(HarvestedFile.fetched_at).limit(1))
@@ -157,7 +157,7 @@ def test_reprocess_skips_files_whose_contents_retention_removed_and_says_so(clie
 
 def test_reprocess_stops_at_its_time_budget_and_reports_it(client, source, _isolated_db, _isolated_harvest_db):
     _runs(client, source, 4)
-    _add_table(_isolated_db)
+    _add_table(_isolated_db, source["id"])
     _transform(_isolated_db, source["id"])
     with _isolated_db() as s, _isolated_harvest_db() as h:
         summary = transform_runner.reprocess(s, h, source["id"], limit=10, budget_s=-1)
@@ -178,7 +178,7 @@ def test_reprocess_counts_failures_and_does_nothing_without_a_transform(client, 
 
 def test_preview_uses_the_newest_stored_file_and_stores_nothing(client, source, _isolated_db, _isolated_harvest_db):
     _upload(client, source)
-    _add_table(_isolated_db)
+    _add_table(_isolated_db, source["id"])
     tid = _transform(_isolated_db, source["id"], enabled=False)
     with _isolated_db() as s, _isolated_harvest_db() as h:
         sample, result, error = transform_runner.preview(s, h, s.get(Transform, tid))
@@ -200,7 +200,7 @@ def test_preview_says_so_when_there_is_nothing_to_try_it_on_and_explains_a_failu
 def test_preview_can_use_a_chosen_run(client, source, _isolated_db, _isolated_harvest_db):
     _upload(client, source, content=SOAP.replace("MS812", "MS000").encode("utf-8"))
     _upload(client, source)
-    _add_table(_isolated_db)
+    _add_table(_isolated_db, source["id"])
     tid = _transform(_isolated_db, source["id"], steps=[XML_STEP])
     with _isolated_harvest_db() as h:
         first_run = h.scalar(select(HarvestRun.id).order_by(HarvestRun.started_at).limit(1))
@@ -211,14 +211,15 @@ def test_preview_can_use_a_chosen_run(client, source, _isolated_db, _isolated_ha
 
 # -- index tables ---------------------------------------------------------------------------------------------
 
-def test_which_transforms_use_an_index_table(client, source, _isolated_db):
+def test_which_pipelines_of_a_source_use_an_index_table(client, source, _isolated_db):
     _transform(_isolated_db, source["id"])
     with _isolated_db() as s:
-        assert transform_runner.lookups_in_use(s, "stations") == [source["id"]] and transform_runner.lookups_in_use(s, "other") == []
+        assert [t.source_id for t in transform_runner.pipelines_using(s, source["id"], "stations")] == [source["id"]]
+        assert transform_runner.pipelines_using(s, source["id"], "other") == [] and transform_runner.pipelines_using(s, "another-source", "stations") == []
 
 
 def test_a_replaced_index_table_is_used_for_the_next_file_not_a_stale_copy(client, source, _isolated_db, _isolated_harvest_db):
-    table_id = _add_table(_isolated_db)
+    table_id = _add_table(_isolated_db, source["id"])
     _transform(_isolated_db, source["id"])
     _upload(client, source)
     with _isolated_db() as s:
@@ -234,7 +235,7 @@ def test_a_replaced_index_table_is_used_for_the_next_file_not_a_stale_copy(clien
 # -- retention ------------------------------------------------------------------------------------------------
 
 def test_a_transform_output_goes_when_the_file_it_came_from_does(client, source, _isolated_db, _isolated_harvest_db):
-    _add_table(_isolated_db)
+    _add_table(_isolated_db, source["id"])
     _transform(_isolated_db, source["id"])
     _upload(client, source)
     later = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=100)
@@ -246,7 +247,7 @@ def test_a_transform_output_goes_when_the_file_it_came_from_does(client, source,
 
 
 def test_the_outputs_are_kept_when_the_period_has_not_passed(client, source, _isolated_db, _isolated_harvest_db):
-    _add_table(_isolated_db)
+    _add_table(_isolated_db, source["id"])
     _transform(_isolated_db, source["id"])
     _upload(client, source)
     with _isolated_harvest_db() as h:
@@ -288,7 +289,7 @@ def _pipeline(session_factory, source_id, name, steps, output="json", enabled=Tr
 
 
 def test_every_enabled_pipeline_gets_the_arriving_file_and_stores_its_own_output(client, source, _isolated_db, _isolated_harvest_db):
-    _add_table(_isolated_db)
+    _add_table(_isolated_db, source["id"])
     default_id = _transform(_isolated_db, source["id"])  # json, with the lookup
     csv_id = _pipeline(_isolated_db, source["id"], "table", [XML_STEP], output="csv")
     _pipeline(_isolated_db, source["id"], "off", [XML_STEP], enabled=False)

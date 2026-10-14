@@ -201,7 +201,7 @@
 
         {% if kind == "lookup" %}
           {% if not tables %}
-            <div class="problems">There is no index table yet. <a href="/transform">Upload one</a> first.</div>
+            <div class="problems">This source has no index table yet. <a href="/provider/sources/{{ source.id }}/tables">Upload one on the source</a> first.</div>
           {% else %}
             <label for="table">Index table</label>
             <select id="table" name="table" onchange="document.querySelectorAll('.tbl').forEach(function(d){d.hidden = d.dataset.table !== this.value}.bind(this))" style="max-width:20rem;">

@@ -102,11 +102,67 @@ def _migrate_pipelines(engine: Engine) -> None:
             conn.execute(text("CREATE UNIQUE INDEX ix_transform_source_name ON transform (source_id, name)"))
 
 
+def _migrate_lookup_tables(engine: Engine) -> None:
+    """Index tables belong to a source now (``source_id``), and a name is unique per source, not across the service. SQLite cannot drop the
+    old UNIQUE(name), so the table is rebuilt -- once, when that constraint is still there -- and in the same step every existing table
+    is bound: to the one source whose pipelines use it, to each of them when several do (the first keeps the original, the others get
+    a copy, so no source loses a table), and to none when nothing uses it (it is then listed in the Transform Box to bind or delete)."""
+    inspector = inspect(engine)
+    if "lookup_table" not in inspector.get_table_names():
+        return
+    old_unique = any(u.get("column_names") == ["name"] for u in inspector.get_unique_constraints("lookup_table"))
+    with engine.begin() as conn:
+        if not old_unique:
+            if "ix_lookup_table_source_name" not in {ix["name"] for ix in inspector.get_indexes("lookup_table")}:
+                conn.execute(text("CREATE UNIQUE INDEX ix_lookup_table_source_name ON lookup_table (source_id, name)"))
+            return
+        old_columns = [c["name"] for c in inspector.get_columns("lookup_table")]
+        table = Base.metadata.tables["lookup_table"]
+        keep = [c.name for c in table.columns if c.name in old_columns]
+        conn.execute(text("ALTER TABLE lookup_table RENAME TO lookup_table_old"))
+        table.create(conn)
+        values = ["COALESCE(uploaded_at, CURRENT_TIMESTAMP)" if name == "uploaded_at" else name for name in keep]
+        conn.execute(text("INSERT INTO lookup_table (%s) SELECT %s FROM lookup_table_old" % (", ".join(keep), ", ".join(values))))
+        conn.execute(text("DROP TABLE lookup_table_old"))
+    _bind_existing_lookup_tables(engine)
+
+
+def _bind_existing_lookup_tables(engine: Engine) -> None:
+    import json
+    import uuid
+
+    from sqlalchemy import select
+
+    from providerharvest_service.models import LookupTable, Transform
+
+    with Session(engine) as session:
+        users: dict[str, list[str]] = {}  # table name -> source ids whose pipelines use it, in a stable order
+        for pipeline in session.scalars(select(Transform).order_by(Transform.source_id, Transform.name)).all():
+            try:
+                steps = json.loads(pipeline.steps or "[]")
+            except ValueError:
+                continue
+            for step in steps if isinstance(steps, list) else []:
+                if isinstance(step, dict) and step.get("type") == "lookup" and isinstance(step.get("table"), str):
+                    if pipeline.source_id not in users.setdefault(step["table"], []):
+                        users[step["table"]].append(pipeline.source_id)
+        for table in session.scalars(select(LookupTable).where(LookupTable.source_id.is_(None))).all():
+            owners = users.get(table.name) or []
+            if not owners:
+                continue
+            table.source_id = owners[0]
+            for other in owners[1:]:
+                session.add(LookupTable(id=str(uuid.uuid4()), source_id=other, name=table.name, description=table.description, columns=table.columns,
+                                        rows=table.rows, row_count=table.row_count, uploaded_at=table.uploaded_at, uploaded_by=table.uploaded_by))
+        session.commit()
+
+
 def make_engine(url: str) -> Engine:
     engine = create_engine(url, connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     _sync_schema(engine)
     _migrate_pipelines(engine)
+    _migrate_lookup_tables(engine)
     return engine
 
 

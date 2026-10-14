@@ -46,7 +46,6 @@ templates.env.filters["step_label"] = tf.label_of
 templates.env.filters["step_summary"] = tf.summarize
 templates.env.globals["suggest_name"] = tf.suggest_name
 
-_TABLE_NAME = re.compile(r"^[a-z][a-z0-9_]{1,40}$")
 _SECTIONS = {"read": "Read the file", "lookup": "Add columns from an index table", "filter": "Keep only matching records",
              "rename": "Rename fields", "convert": "Convert field types", "select": "Keep only these fields",
              "drop": "Remove fields", "add_field": "Add a field", "utm": "UTM coordinates to latitude / longitude"}
@@ -88,12 +87,10 @@ def _source_or_none(session: Session, source_id: str) -> ProviderSource | None:
     return session.get(ProviderSource, source_id)
 
 
-def _tables(session: Session) -> list[LookupTable]:
-    return list(session.scalars(select(LookupTable).order_by(LookupTable.name)).all())
-
-
-def _table_columns(session: Session) -> dict[str, list[str]]:
-    return {t.name: json.loads(t.columns) for t in _tables(session)}
+def _table_columns(session: Session, source_id: str) -> dict[str, list[str]]:
+    """The index tables of this source (its own -- see ui_source_tables.py) and their columns, for the lookup step's form."""
+    tables = session.scalars(select(LookupTable).where(LookupTable.source_id == source_id).order_by(LookupTable.name)).all()
+    return {t.name: json.loads(t.columns) for t in tables}
 
 
 # -- overview and index tables -------------------------------------------------------------------------------------------------
@@ -113,104 +110,11 @@ def overview(request: Request, session: Session = Depends(get_session), hsession
                 url += "/pipelines/%s" % transform.name
             rows.append({"source": source, "transform": transform, "url": url, "steps": len(transform_runner.steps_of(transform)) if transform else 0,
                          "counts": transform_runner.output_counts(hsession, source.id, transform.id) if transform else None})
-    tables = []
-    for table in _tables(session):
-        tables.append({"table": table, "columns": json.loads(table.columns), "used_by": len(transform_runner.lookups_in_use(session, table.name))})
+    # index tables belong to sources now; only a table no source used when they moved is still listed here, to bind or delete
+    unassigned = [{"table": t, "columns": json.loads(t.columns)} for t in session.scalars(select(LookupTable).where(LookupTable.source_id.is_(None)).order_by(LookupTable.name)).all()]
     return templates.TemplateResponse(request, "transform/overview.html", {
-        "rows": rows, "addable": [(source, sorted(t.name for t in pipelines[source.id])) for source in sources if source.id in pipelines], "tables": tables, "flash": request.query_params.get("flash"), "flash_kind": request.query_params.get("flash_kind", "success"),
+        "rows": rows, "unassigned": unassigned, "sources": sources, "addable": [(source, sorted(t.name for t in pipelines[source.id])) for source in sources if source.id in pipelines], "flash": request.query_params.get("flash"), "flash_kind": request.query_params.get("flash_kind", "success"),
     })
-
-
-async def _read_upload(form, key: str = "file") -> tuple[bytes, str]:
-    upload = form.get(key)
-    if upload is None or not hasattr(upload, "read"):
-        raise te.TransformError("Choose a file to upload.")
-    data = await upload.read(te.MAX_LOOKUP_BYTES + 1)
-    return data, getattr(upload, "filename", "") or ""
-
-
-@router.post("/tables")
-async def upload_table(request: Request, session: Session = Depends(get_session)):
-    form = await request.form()
-    name = str(form.get("name") or "").strip().lower()
-    try:
-        if not _TABLE_NAME.match(name):
-            raise te.TransformError("Name the table with lowercase letters, digits and underscores, starting with a letter (for example stations).")
-        if session.scalar(select(LookupTable).where(LookupTable.name == name)) is not None:
-            raise te.TransformError("There is already a table called %r -- open it to replace its contents." % name)
-        content, filename = await _read_upload(form)
-        columns, rows, note = te.parse_lookup_ex(content, filename, str(form.get("sheet") or "").strip() or None)
-    except te.TransformError as exc:
-        return _go("/transform", str(exc), "error")
-    session.add(LookupTable(name=name, description=str(form.get("description") or "").strip()[:200], columns=json.dumps(columns),
-                            rows=json.dumps(rows), row_count=len(rows), uploaded_by=_who(request)))
-    session.commit()
-    return _go("/transform", ("Index table %s uploaded: %d rows, %d columns. %s" % (name, len(rows), len(columns), note)).strip())
-
-
-def _table_or_none(session: Session, table_id: str) -> LookupTable | None:
-    return session.get(LookupTable, table_id)
-
-
-@router.get("/tables/{table_id}", response_class=HTMLResponse)
-def table_page(table_id: str, request: Request, session: Session = Depends(get_session)):
-    table = _table_or_none(session, table_id)
-    if table is None:
-        return _go("/transform", "No such index table.", "error")
-    rows = json.loads(table.rows)
-    return templates.TemplateResponse(request, "transform/table.html", {
-        "table": table, "columns": json.loads(table.columns), "rows": rows[:25], "used_by": transform_runner.lookups_in_use(session, table.name),
-        "flash": request.query_params.get("flash"), "flash_kind": request.query_params.get("flash_kind", "success"),
-    })
-
-
-@router.post("/tables/{table_id}/replace")
-async def replace_table(table_id: str, request: Request, session: Session = Depends(get_session)):
-    table = _table_or_none(session, table_id)
-    if table is None:
-        return _go("/transform", "No such index table.", "error")
-    back = "/transform/tables/%s" % table_id
-    form = await request.form()
-    try:
-        content, filename = await _read_upload(form)
-        columns, rows, note = te.parse_lookup_ex(content, filename, str(form.get("sheet") or "").strip() or None)
-        # Transforms that use this table keep working only if the columns they need are still there.
-        for source_id in transform_runner.lookups_in_use(session, table.name):
-            for transform in transform_runner.list_pipelines(session, source_id):
-                for step in transform_runner.steps_of(transform):
-                    if step.get("type") == "lookup" and step.get("table") == table.name:
-                        needed = [step.get("table_key")] + [a.get("column") for a in step.get("add") or []]
-                        missing = [c for c in needed if c not in columns]
-                        if missing:
-                            raise te.TransformError("A transform uses column(s) %s, which the new file does not have. Nothing was changed." % ", ".join(map(repr, missing)))
-    except te.TransformError as exc:
-        return _go(back, str(exc), "error")
-    table.columns, table.rows, table.row_count = json.dumps(columns), json.dumps(rows), len(rows)
-    table.uploaded_at, table.uploaded_by = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None), _who(request)
-    session.commit()
-    return _go(back, ("Replaced: %d rows, %d columns. %s Files that arrive from now on use it." % (len(rows), len(columns), note)).replace("  ", " "))
-
-
-@router.post("/tables/{table_id}/delete")
-def delete_table(table_id: str, session: Session = Depends(get_session)):
-    table = _table_or_none(session, table_id)
-    if table is None:
-        return _go("/transform", "No such index table.", "error")
-    if transform_runner.lookups_in_use(session, table.name):
-        return _go("/transform/tables/%s" % table_id, "A transform uses this table. Remove that step first.", "error")
-    name = table.name
-    session.delete(table)
-    session.commit()
-    return _go("/transform", "Index table %s deleted." % name)
-
-
-@router.get("/tables/{table_id}/download")
-def download_table(table_id: str, session: Session = Depends(get_session)):
-    table = _table_or_none(session, table_id)
-    if table is None:
-        return _go("/transform", "No such index table.", "error")
-    data = te.write_output(json.loads(table.rows), "csv")
-    return Response(content=data, media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="%s.csv"' % table.name})
 
 
 # -- one source's transform ---------------------------------------------------------------------------------------------------------------
@@ -491,7 +395,7 @@ def _step_page(request: Request, session: Session, hsession: Session, source: Pr
     steps = transform_runner.steps_of(transform)
     before = steps[:(number - 1) if number else len(steps)]
     ctx = {"tbase": _base(request, source.id), "pipeline_name": _pipeline_name(request), "source": source, "transform": transform, "kind": kind, "number": number, "existing": existing or {}, "available": tf.fields_after(before),
-           "tables": _table_columns(session), "types": te.CONVERT_TYPES, "ops": tf.OP_LABELS, "title": _SECTIONS.get(kind, kind), "rename_rows": range(tf.RENAME_ROWS),
+           "tables": _table_columns(session, source.id), "types": te.CONVERT_TYPES, "ops": tf.OP_LABELS, "title": _SECTIONS.get(kind, kind), "rename_rows": range(tf.RENAME_ROWS),
            "convert_rows": range(tf.CONVERT_ROWS), "error": extra.pop("error", None), "flash": request.query_params.get("flash"), "flash_kind": request.query_params.get("flash_kind", "success")}
     if kind == "read":
         ctx["reader"] = _reader_context(session, hsession, source.id, request, existing)
@@ -546,7 +450,7 @@ async def _submit_step(source_id: str, number: int | None, request: Request, ses
         if kind == "read":
             step = tf.build_reader(str(form.get("format") or ""), form)
         elif kind in te.STEPS:
-            step = tf.build_step(kind, form, tables=_table_columns(session))
+            step = tf.build_step(kind, form, tables=_table_columns(session, source_id))
         else:
             raise te.TransformError("Unknown step.")
         if number is None:

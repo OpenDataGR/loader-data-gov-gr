@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% import "_macros.html" as macros %}
+{% block title %}Index tables -- {{ source.title }} -- loader.data.gov.gr{% endblock %}
+{% block content %}
+  <div class="panel">
+    <h1>Index tables -- {{ source.title }}</h1>
+    <p class="subtitle"><a href="/provider/sources">&larr; back to the Extract Box</a> &middot; <span class="name-slug">{{ source.name }}</span></p>
+    <p class="muted" style="margin-top:0;">
+      A table you upload to this source (Excel, CSV or JSON, one row per item; the first row of a spreadsheet is the header) that the pipelines
+      of this source can look things up in -- for example a station id, with its name and location. Replace a table when its details change.
+    </p>
+    {% if flash %}<div class="flash flash-{{ flash_kind }}">{{ flash }}</div>{% endif %}
+    {% if tables %}
+      <table>
+        <thead><tr><th>Name</th><th>Columns</th><th>Rows</th><th>Uploaded</th><th>Used by</th><th></th></tr></thead>
+        <tbody>
+          {% for t in tables %}
+          <tr>
+            <td><div class="name-title">{{ t.table.name }}</div><span class="muted">{{ t.table.description }}</span></td>
+            <td class="muted">{{ t.columns|join(", ") }}</td>
+            <td>{{ "{:,}".format(t.table.row_count) }}</td>
+            <td class="muted">{{ t.table.uploaded_at|short_utc }} UTC{% if t.table.uploaded_by %} &middot; {{ t.table.uploaded_by }}{% endif %}</td>
+            <td>{{ t.used_by }} pipeline{{ "" if t.used_by == 1 else "s" }}</td>
+            <td><a class="btn btn-secondary btn-sm" href="/provider/sources/{{ source.id }}/tables/{{ t.table.id }}">Open</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+    <form method="post" action="/provider/sources/{{ source.id }}/tables" enctype="multipart/form-data" style="margin-top:1.2rem;">
+      <h2 style="font-size:1rem; margin:0 0 0.5rem;">Upload a new index table</h2>
+      <label for="tname">Name</label>
+      <input type="text" id="tname" name="name" required pattern="[a-z][a-z0-9_]{1,40}" placeholder="stations" style="max-width:18rem;">
+      <label for="tdesc">Description (optional)</label>
+      <input type="text" id="tdesc" name="description" maxlength="200" placeholder="Detector id, name and location" style="max-width:32rem;">
+      <label for="tfile">File (Excel .xlsx, CSV with a header row, or a JSON list of objects)</label>
+      <input type="file" id="tfile" name="file" required accept=".xlsx,.xlsm,.csv,.json,.txt">
+      <label for="tsheet">Excel sheet (optional -- default: the first sheet that has data)</label>
+      <input type="text" id="tsheet" name="sheet" maxlength="80" style="max-width:18rem;">
+      <div style="margin-top:0.9rem;"><button type="submit">Upload</button></div>
+    </form>
+  </div>
+{% endblock %}

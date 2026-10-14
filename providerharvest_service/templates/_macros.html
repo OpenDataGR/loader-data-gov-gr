@@ -139,6 +139,7 @@
         <a href="/provider/sources/{{ s.id }}/readiness">{{ icon("pulse", 14) }} Check readiness</a>
       {% endif %}
       <a href="/provider/sources/{{ s.id }}/runs">{{ icon("history", 14) }} View runs</a>
+      <a href="/provider/sources/{{ s.id }}/tables">{{ icon("queue", 14) }} Index tables</a>
       {% if is_admin %}<a href="{{ action_prefix }}/{{ s.id }}/retention">{{ icon("queue", 14) }} Data retention</a>{% endif %}
       {% if s.transport_type == "push" %}
         {# The one home of a push source's login / API key / allowed senders -- no copies of its controls here. #}

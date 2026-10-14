@@ -32,8 +32,8 @@ def _upload_data(client, source, content=SOAP.encode("utf-8"), name="Detector.xm
     return resp.json()["run_id"]
 
 
-def _upload_table(client, name="stations", content=STATIONS_CSV, filename="stations.csv"):
-    return client.post("/transform/tables", data={"name": name, "description": "Detectors"}, files={"file": (filename, content.encode("utf-8"), "text/csv")}, follow_redirects=False)
+def _upload_table(client, source, name="stations", content=STATIONS_CSV, filename="stations.csv"):
+    return client.post("/provider/sources/%s/tables" % source["id"], data={"name": name, "description": "Detectors"}, files={"file": (filename, content.encode("utf-8"), "text/csv")}, follow_redirects=False)
 
 
 def _flash(resp):
@@ -75,7 +75,7 @@ def _steps(session_factory, source_id):
 
 def test_the_tab_and_overview_list_the_sources_and_their_transform_state(client, source):
     page = client.get("/transform").text
-    assert "Transform Box</a>" in page and "Acme push" in page and "Set up" in page and "Index tables" in page
+    assert "Transform Box</a>" in page and "Acme push" in page and "Set up" in page and 'action="/transform/tables"' not in page and "Upload a new index table" not in page
     _go(client, source, "create")
     page = client.get("/transform").text
     assert "Open" in page and ">off<" in page
@@ -83,22 +83,22 @@ def test_the_tab_and_overview_list_the_sources_and_their_transform_state(client,
 
 def test_the_pages_need_the_admin_login(client, source):
     anonymous = TestClient(app, base_url="https://testserver")
-    for url in ("/transform", "/transform/sources/%s" % source["id"], "/transform/tables/x", "/transform/sources/%s/steps/new?type=read" % source["id"]):
+    for url in ("/transform", "/transform/sources/%s" % source["id"], "/provider/sources/%s/tables" % source["id"], "/transform/sources/%s/steps/new?type=read" % source["id"]):
         assert anonymous.get(url, follow_redirects=False).headers.get("location", "/admin/login").startswith("/admin/login"), url
-    for url in ("/transform/tables", "/transform/sources/%s/create" % source["id"], "/transform/sources/%s/enabled" % source["id"]):
+    for url in ("/provider/sources/%s/tables" % source["id"], "/transform/sources/%s/create" % source["id"], "/transform/sources/%s/enabled" % source["id"]):
         assert anonymous.post(url, follow_redirects=False).headers.get("location", "/admin/login").startswith("/admin/login"), url
 
 
 # -- index tables ----------------------------------------------------------------------------------------------------------------
 
-def test_an_index_table_is_uploaded_listed_viewed_and_downloaded(client, _isolated_db):
-    resp = _upload_table(client)
+def test_an_index_table_is_uploaded_listed_viewed_and_downloaded(client, source, _isolated_db):
+    resp = _upload_table(client, source)
     assert resp.status_code == 303 and "uploaded: 2 rows, 4 columns" in _flash(resp)
-    assert "stations" in client.get("/transform").text
+    assert "stations" in client.get("/provider/sources/%s/tables" % source["id"]).text
     table_id = _table_id(_isolated_db)
-    page = client.get("/transform/tables/%s" % table_id).text
+    page = client.get("/provider/sources/%s/tables/%s" % (source["id"], table_id)).text
     assert "Kifisias" in page and "Replace the contents" in page
-    csv = client.get("/transform/tables/%s/download" % table_id)
+    csv = client.get("/provider/sources/%s/tables/%s/download" % (source["id"], table_id))
     assert csv.status_code == 200 and csv.text.startswith("id,name,lat,lon") and "Mesogeion" in csv.text
 
 
@@ -107,46 +107,46 @@ def test_an_index_table_is_uploaded_listed_viewed_and_downloaded(client, _isolat
     ("empty", "", "s.csv", "header"), ("norows", "id,name\n", "s.csv", "no rows"), ("dupes", "id,id\n1,2\n", "s.csv", "own non-empty name"),
     ("xmlfile", "<a/>", "s.xml", "CSV or JSON"),
 ])
-def test_bad_index_uploads_are_explained_and_store_nothing(client, _isolated_db, name, content, filename, message):
-    resp = _upload_table(client, name=name, content=content, filename=filename)
+def test_bad_index_uploads_are_explained_and_store_nothing(client, source, _isolated_db, name, content, filename, message):
+    resp = _upload_table(client, source, name=name, content=content, filename=filename)
     assert message in _flash(resp) and _table_id(_isolated_db, name) is None
 
 
-def test_a_second_table_with_the_same_name_is_refused(client):
-    _upload_table(client)
-    assert "already a table called" in _flash(_upload_table(client))
+def test_a_second_table_with_the_same_name_is_refused(client, source):
+    _upload_table(client, source)
+    assert "already a table called" in _flash(_upload_table(client, source))
 
 
-def test_a_json_index_is_accepted(client, _isolated_db):
-    resp = _upload_table(client, name="stations", content=json.dumps([{"id": "A", "name": "Alpha"}]), filename="s.json")
+def test_a_json_index_is_accepted(client, source, _isolated_db):
+    resp = _upload_table(client, source, name="stations", content=json.dumps([{"id": "A", "name": "Alpha"}]), filename="s.json")
     assert "uploaded: 1 rows" in _flash(resp)
 
 
 def test_replacing_a_table_updates_it_and_is_stopped_if_a_transform_needs_a_missing_column(client, source, _isolated_db):
-    _upload_table(client)
+    _upload_table(client, source)
     table_id = _table_id(_isolated_db)
-    ok = client.post("/transform/tables/%s/replace" % table_id, files={"file": ("n.csv", b"id,name,lat,lon\nA,Alpha,1,2\n", "text/csv")}, follow_redirects=False)
+    ok = client.post("/provider/sources/%s/tables/%s/replace" % (source["id"], table_id), files={"file": ("n.csv", b"id,name,lat,lon\nA,Alpha,1,2\n", "text/csv")}, follow_redirects=False)
     assert "Replaced: 1 rows" in _flash(ok)
     _upload_data(client, source)
     _build(client, source, READER_FORM, LOOKUP_FORM)  # uses id, name, lat
-    blocked = client.post("/transform/tables/%s/replace" % table_id, files={"file": ("n.csv", b"id,name\nA,Alpha\n", "text/csv")}, follow_redirects=False)
+    blocked = client.post("/provider/sources/%s/tables/%s/replace" % (source["id"], table_id), files={"file": ("n.csv", b"id,name\nA,Alpha\n", "text/csv")}, follow_redirects=False)
     assert "'lat'" in _flash(blocked) and "Nothing was changed" in _flash(blocked)
     with _isolated_db() as s:
         assert json.loads(s.get(LookupTable, table_id).columns) == ["id", "name", "lat", "lon"]
 
 
 def test_a_table_in_use_cannot_be_deleted_but_an_unused_one_can(client, source, _isolated_db):
-    _upload_table(client)
-    _upload_table(client, name="spare")
+    _upload_table(client, source)
+    _upload_table(client, source, name="spare")
     _upload_data(client, source)
     _build(client, source, READER_FORM, LOOKUP_FORM)
     used, spare = _table_id(_isolated_db), _table_id(_isolated_db, "spare")
-    assert "uses this table" in _flash(client.post("/transform/tables/%s/delete" % used, follow_redirects=False)) and _table_id(_isolated_db) is not None
-    assert "deleted" in _flash(client.post("/transform/tables/%s/delete" % spare, follow_redirects=False)) and _table_id(_isolated_db, "spare") is None
+    assert "uses this table" in _flash(client.post("/provider/sources/%s/tables/%s/delete" % (source["id"], used), follow_redirects=False)) and _table_id(_isolated_db) is not None
+    assert "deleted" in _flash(client.post("/provider/sources/%s/tables/%s/delete" % (source["id"], spare), follow_redirects=False)) and _table_id(_isolated_db, "spare") is None
 
 
-def test_unknown_tables_are_handled(client):
-    for method, path in (("get", "/transform/tables/nope"), ("post", "/transform/tables/nope/delete"), ("get", "/transform/tables/nope/download")):
+def test_unknown_tables_are_handled(client, source):
+    for method, path in (("get", "/provider/sources/%s/tables/nope" % source["id"]), ("post", "/provider/sources/%s/tables/nope/delete" % source["id"]), ("get", "/provider/sources/%s/tables/nope/download" % source["id"])):
         assert "No such index table" in _flash(getattr(client, method)(path, follow_redirects=False))
 
 
@@ -191,7 +191,7 @@ def test_a_reader_with_no_fields_or_no_record_is_refused_with_the_form_kept(clie
 
 def test_every_other_step_type_can_be_added_and_is_described_in_words(client, source, _isolated_db):
     _upload_data(client, source)
-    _upload_table(client)
+    _upload_table(client, source)
     _build(client, source, READER_FORM, LOOKUP_FORM,
            {"kind": "filter", "field": "state", "op": "ne", "value": "0"},
            {"kind": "rename", "old0": "count", "new0": "vehicles"},
@@ -220,7 +220,7 @@ def test_every_other_step_type_can_be_added_and_is_described_in_words(client, so
 ])
 def test_a_wrong_step_is_explained_and_not_saved(client, source, _isolated_db, form, message):
     _upload_data(client, source)
-    _upload_table(client)
+    _upload_table(client, source)
     _build(client, source, READER_FORM)
     before = _steps(_isolated_db, source["id"])
     resp = _go(client, source, "steps/new", data=form)
@@ -230,7 +230,7 @@ def test_a_wrong_step_is_explained_and_not_saved(client, source, _isolated_db, f
 
 def test_steps_have_an_order_the_first_always_reads_and_a_step_cannot_move_before_its_fields_exist(client, source, _isolated_db):
     _upload_data(client, source)
-    _upload_table(client)
+    _upload_table(client, source)
     _build(client, source, READER_FORM, {"kind": "add_field", "name": "a", "value": "1"},
            {"kind": "add_field", "name": "b", "value_kind": "template", "value": "{a}"})
     assert "cannot move" in _flash(_go(client, source, "steps/1/move", data={"direction": "down"}))
@@ -242,7 +242,7 @@ def test_steps_have_an_order_the_first_always_reads_and_a_step_cannot_move_befor
 
 def test_a_step_is_edited_removed_and_the_reader_stays_while_others_depend_on_it(client, source, _isolated_db):
     _upload_data(client, source)
-    _upload_table(client)
+    _upload_table(client, source)
     _build(client, source, READER_FORM, LOOKUP_FORM)
     page = client.get("/transform/sources/%s/steps/2/edit" % source["id"]).text
     assert "stations" in page and "latitude" in page  # the saved choices are filled in
@@ -255,7 +255,7 @@ def test_a_step_is_edited_removed_and_the_reader_stays_while_others_depend_on_it
 
 def test_editing_the_reader_so_a_later_step_loses_its_field_is_refused(client, source, _isolated_db):
     _upload_data(client, source)
-    _upload_table(client)
+    _upload_table(client, source)
     _build(client, source, READER_FORM, LOOKUP_FORM)  # the lookup matches on field "id"
     form = {**READER_FORM, "path": ["data/timeline/timestamp"], "name::data/timeline/timestamp": "time"}
     page = _go(client, source, "steps/1/edit", data=form).text
@@ -279,13 +279,13 @@ def test_output_settings(client, source, _isolated_db):
 
 def _ready(client, source):
     _upload_data(client, source)
-    _upload_table(client)
+    _upload_table(client, source)
     _build(client, source, READER_FORM, LOOKUP_FORM, {"kind": "convert", "field0": "count", "to0": "int"})
 
 
 def test_try_it_shows_the_result_counts_and_what_found_no_match(client, source, _isolated_db):
     _upload_data(client, source)
-    _upload_table(client, content="id,name,lat,lon\nMS812,Kifisias,38.03,23.80\n")  # MS810 is not in the index
+    _upload_table(client, source, content="id,name,lat,lon\nMS812,Kifisias,38.03,23.80\n")  # MS810 is not in the index
     _build(client, source, READER_FORM, LOOKUP_FORM)
     page = client.post("/transform/sources/%s/preview" % source["id"]).text
     assert "On <strong>Detector.xml</strong>" in page and "records read" in page and "Kifisias" in page
@@ -294,7 +294,7 @@ def test_try_it_shows_the_result_counts_and_what_found_no_match(client, source, 
 
 def test_try_it_follows_the_steps_with_input_and_output_as_their_ends_and_shows_its_result_in_a_modal(client, source, _isolated_db):
     _upload_data(client, source)
-    _upload_table(client, content="id,name,lat,lon\nMS812,Kifisias,38.03,23.80\n")
+    _upload_table(client, source, content="id,name,lat,lon\nMS812,Kifisias,38.03,23.80\n")
     _build(client, source, READER_FORM, LOOKUP_FORM)
     url = "/transform/sources/%s" % source["id"]
     plain = client.get(url).text
@@ -318,7 +318,7 @@ def test_switching_on_needs_a_transform_that_holds_together_and_turns_off_if_it_
     assert "not ready" in _flash(_go(client, source, "enabled", data={"enabled": "1"}))
     _ready(client, source) if False else None
     _upload_data(client, source)
-    _upload_table(client)
+    _upload_table(client, source)
     _build(client, source, READER_FORM, LOOKUP_FORM)
     assert "switched on" in _flash(_go(client, source, "enabled", data={"enabled": "1"}))
     with _isolated_db() as s:
@@ -346,7 +346,7 @@ def test_a_new_file_is_transformed_once_the_transform_is_on_and_can_be_downloade
 def test_reprocess_runs_earlier_files_and_reports_what_it_did(client, source, _isolated_db, _isolated_harvest_db):
     _upload_data(client, source)
     _upload_data(client, source)
-    _upload_table(client)
+    _upload_table(client, source)
     _build(client, source, READER_FORM, LOOKUP_FORM)
     assert "Processed 2 runs: 2 ok, 0 failed" in _flash(_go(client, source, "reprocess", data={"limit": "10"}))
     for bad in ({"limit": "7"}, {"limit": ""}, {"limit": "abc"}):
@@ -460,7 +460,7 @@ GREEK_INDEX = "MS,ΟΝΟΜΑ,ΔΗΜΟΣ,ΚΑΤ/ΣΗ,\"Χ(WGS84,ZONE 34)\"\nMS812
 
 
 def test_an_index_with_greek_and_symbol_headers_gets_a_usable_form_with_suggested_names_and_works(client, source, _isolated_db):
-    client.post("/transform/tables", data={"name": "stations"}, files={"file": ("s.csv", GREEK_INDEX, "text/csv")})
+    client.post("/provider/sources/%s/tables" % source["id"], data={"name": "stations"}, files={"file": ("s.csv", GREEK_INDEX, "text/csv")})
     _upload_data(client, source)
     _build(client, source, READER_FORM)
     page = client.get("/transform/sources/%s/steps/new?type=lookup" % source["id"]).text
@@ -474,7 +474,7 @@ def test_an_index_with_greek_and_symbol_headers_gets_a_usable_form_with_suggeste
 
 
 def test_leaving_a_name_as_the_suggestion_or_using_greek_ones_both_work(client, source, _isolated_db):
-    client.post("/transform/tables", data={"name": "stations"}, files={"file": ("s.csv", GREEK_INDEX, "text/csv")})
+    client.post("/provider/sources/%s/tables" % source["id"], data={"name": "stations"}, files={"file": ("s.csv", GREEK_INDEX, "text/csv")})
     _upload_data(client, source)
     _build(client, source, READER_FORM)
     form = {"kind": "lookup", "table": "stations", "key": "id", "table_key": "MS", "add": ["ΟΝΟΜΑ"], "as::ΟΝΟΜΑ": "όνομα"}
@@ -510,7 +510,7 @@ def test_a_separator_that_is_not_offered_is_refused_and_nothing_changes(client, 
 
 def test_a_csv_download_says_it_is_utf_8_and_opens_as_greek(client, source, _isolated_db, _isolated_harvest_db):
     _upload_data(client, source)
-    _upload_table(client)
+    _upload_table(client, source)
     _build(client, source, READER_FORM, LOOKUP_FORM)
     _go(client, source, "output", data={"format": "csv", "delimiter": ";", "bom": "1"})
     _go(client, source, "enabled", data={"enabled": "1"})
@@ -526,7 +526,7 @@ def test_a_csv_download_says_it_is_utf_8_and_opens_as_greek(client, source, _iso
 
 def test_every_checkbox_list_in_the_step_forms_has_select_all_and_none(client, source):
     _upload_data(client, source)
-    _upload_table(client)
+    _upload_table(client, source)
     _build(client, source, READER_FORM)
     pages = {
         "the field chooser": client.get("/transform/sources/%s/steps/1/edit" % source["id"]).text,
@@ -610,7 +610,7 @@ def test_a_bad_value_for_the_chosen_format_changes_nothing(client, source, _isol
 
 def test_each_output_row_shows_its_file_type_and_name(client, source, _isolated_db, _isolated_harvest_db):
     _upload_data(client, source)
-    _upload_table(client)
+    _upload_table(client, source)
     _build(client, source, READER_FORM, LOOKUP_FORM)
     _go(client, source, "enabled", data={"enabled": "1"})
     _go(client, source, "output", data={"format": "csv", "delimiter": ";", "bom": "1"})
@@ -627,7 +627,7 @@ def test_each_output_row_shows_its_file_type_and_name(client, source, _isolated_
 
 def _outputs_ready(client, source, n=3):
     _upload_data(client, source)
-    _upload_table(client)
+    _upload_table(client, source)
     _build(client, source, READER_FORM, LOOKUP_FORM)
     _go(client, source, "enabled", data={"enabled": "1"})
     for _ in range(n):
@@ -724,7 +724,7 @@ def test_deleting_needs_the_admin_login_and_a_real_source(client, source, _isola
 
 def test_the_utm_step_is_added_from_its_form_described_and_checked(client, source, _isolated_db):
     _upload_data(client, source)
-    _upload_table(client, content="id,east,north\nMS812,737000,4205000\n")
+    _upload_table(client, source, content="id,east,north\nMS812,737000,4205000\n")
     lookup = {"kind": "lookup", "table": "stations", "key": "id", "table_key": "id", "add": ["east", "north"], "on_missing": "keep"}
     _build(client, source, READER_FORM, lookup)
     url = "/transform/sources/%s" % source["id"]
@@ -755,7 +755,7 @@ def test_the_outputs_say_how_long_they_are_kept_and_where_that_is_set(client, so
 
 def test_the_failed_outputs_can_be_listed_even_when_the_newest_ones_are_fine(client, source, _isolated_db, _isolated_harvest_db):
     _upload_data(client, source)
-    _upload_table(client)
+    _upload_table(client, source)
     _build(client, source, READER_FORM)
     _go(client, source, "enabled", data={"enabled": "1"})
     _upload_data(client, source, content=b"<broken")  # fails: not well-formed

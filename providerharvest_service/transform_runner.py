@@ -71,11 +71,11 @@ def lookup_names(steps: list[dict]) -> set[str]:
 _CACHE: dict[tuple[str, str], dict] = {}  # (table id, uploaded_at) -> parsed table; a new upload is a new key
 
 
-def load_lookups(session: Session, names: set[str]) -> dict[str, dict]:
-    """The index tables a transform needs, parsed once per upload and kept (a tens-of-thousands-row table
-    would otherwise be re-read from JSON for every file)."""
+def load_lookups(session: Session, names: set[str], source_id: str) -> dict[str, dict]:
+    """The index tables a transform of this source needs (the source's own), parsed once per upload and kept (a tens-of-thousands-row
+    table would otherwise be re-read from JSON for every file)."""
     out: dict[str, dict] = {}
-    for table in session.scalars(select(LookupTable).where(LookupTable.name.in_(names))).all() if names else []:
+    for table in session.scalars(select(LookupTable).where(LookupTable.source_id == source_id, LookupTable.name.in_(names))).all() if names else []:
         key = (table.id, str(table.uploaded_at))
         if key not in _CACHE:
             if len(_CACHE) > 20:
@@ -85,16 +85,16 @@ def load_lookups(session: Session, names: set[str]) -> dict[str, dict]:
     return out
 
 
-def lookups_in_use(session: Session, name: str) -> list[str]:
-    """Source ids whose transform uses the index table ``name``."""
-    return [t.source_id for t in session.scalars(select(Transform)).all() if name in lookup_names(steps_of(t))]
+def pipelines_using(session: Session, source_id: str, name: str) -> list[Transform]:
+    """The pipelines of this source that use its index table ``name``."""
+    return [t for t in list_pipelines(session, source_id) if name in lookup_names(steps_of(t))]
 
 
 def apply(session: Session, transform: Transform, content: bytes, filename: str = "") -> engine.Result:
     """Run ``transform`` on ``content``. Raises ``engine.TransformError``."""
     steps = steps_of(transform)
     return engine.run(
-        content, steps, output=transform.output_format, lookups=load_lookups(session, lookup_names(steps)),
+        content, steps, output=transform.output_format, lookups=load_lookups(session, lookup_names(steps), transform.source_id),
         root=transform.root_name, record=transform.record_name,
         delimiter=transform.csv_delimiter or ",", bom=True if transform.csv_bom is None else bool(transform.csv_bom),
         single=bool(transform.output_single),
@@ -298,7 +298,7 @@ def check(config_session: Session, transform: Transform) -> list[str]:
     problems = engine.validate(steps)
     if problems:
         return problems
-    tables = {t.name: json.loads(t.columns) for t in config_session.scalars(select(LookupTable)).all()}
+    tables = {t.name: json.loads(t.columns) for t in config_session.scalars(select(LookupTable).where(LookupTable.source_id == transform.source_id)).all()}
     for number, step in enumerate(steps[1:], 2):
         available = transform_forms.fields_after(steps[:number - 1])
         kind = step.get("type")

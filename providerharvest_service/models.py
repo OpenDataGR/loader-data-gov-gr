@@ -329,13 +329,17 @@ class Transform(Base):
 
 
 class LookupTable(Base):
-    """An index table an admin uploaded (CSV or JSON): rows that a transform's "lookup" step matches
-    against, to add columns to records (for example a station id -> its name and location)."""
+    """An index table an admin uploaded (CSV, JSON or Excel) to a source: rows that a "lookup" step of that source's pipelines matches
+    against, to add columns to records (for example a station id -> its name and location). A name is unique within its source, so two
+    sources can each have a ``stations``. ``source_id`` is empty only for a table that no source used when tables moved to sources (see
+    db._migrate_lookup_tables): it is listed in the Transform Box until it is bound to a source or deleted."""
 
     __tablename__ = "lookup_table"
+    __table_args__ = (Index("ix_lookup_table_source_name", "source_id", "name", unique=True),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_new_id)
-    name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    source_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str] = mapped_column(String, nullable=False, default="")
     columns: Mapped[str] = mapped_column(String, nullable=False, default="[]")  # JSON list of column names
     rows: Mapped[str] = mapped_column(String, nullable=False, default="[]")  # JSON list of {column: value}

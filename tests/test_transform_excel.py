@@ -172,33 +172,33 @@ def test_a_wrong_sheet_in_a_reader_step_is_an_error_message():
 
 # -- the pages ---------------------------------------------------------------------------------------------------------------
 
-def _table(client, content, name="stations", filename="stations.xlsx", sheet=""):
-    return client.post("/transform/tables", data={"name": name, "sheet": sheet}, files={"file": (filename, content, "application/octet-stream")}, follow_redirects=False)
+def _table(client, source, content, name="stations", filename="stations.xlsx", sheet=""):
+    return client.post("/provider/sources/%s/tables" % source["id"], data={"name": name, "sheet": sheet}, files={"file": (filename, content, "application/octet-stream")}, follow_redirects=False)
 
 
-def test_an_excel_index_is_uploaded_and_the_page_says_how_it_was_read(client, _isolated_db):
-    resp = _table(client, xlsx({"Notes": [["x"]], "Stations": [["id", "name"], ["A", "Alpha"]], "Old": [["y"], [1]]}))
+def test_an_excel_index_is_uploaded_and_the_page_says_how_it_was_read(client, source, _isolated_db):
+    resp = _table(client, source, xlsx({"Notes": [["x"]], "Stations": [["id", "name"], ["A", "Alpha"]], "Old": [["y"], [1]]}))
     assert "uploaded: 1 rows, 2 columns" in _flash(resp) and "sheet 'Stations'" in _flash(resp)
     with _isolated_db() as s:
         assert json.loads(s.query(LookupTable).one().rows) == [{"id": "A", "name": "Alpha"}]
 
 
-def test_a_chosen_sheet_and_a_wrong_one_and_a_damaged_file(client, _isolated_db):
+def test_a_chosen_sheet_and_a_wrong_one_and_a_damaged_file(client, source, _isolated_db):
     book = xlsx({"One": [["a"], ["1"]], "Two": [["b"], ["2"]]})
-    assert "sheet 'Two'" in _flash(_table(client, book, sheet="Two"))
-    assert "no sheet 'Nope'" in _flash(_table(client, book, name="other", sheet="Nope"))
-    assert "not a valid .xlsx" in _flash(_table(client, b"PK\x03\x04 broken", name="broken"))
+    assert "sheet 'Two'" in _flash(_table(client, source, book, sheet="Two"))
+    assert "no sheet 'Nope'" in _flash(_table(client, source, book, name="other", sheet="Nope"))
+    assert "not a valid .xlsx" in _flash(_table(client, source, b"PK\x03\x04 broken", name="broken"))
     with _isolated_db() as s:
         assert [t.name for t in s.query(LookupTable).all()] == ["stations"]  # only the good upload was kept
 
 
-def test_an_excel_file_can_replace_a_table_and_the_forms_offer_it(client, _isolated_db):
-    _table(client, xlsx({"S": [["id", "name"], ["A", "Alpha"]]}))
+def test_an_excel_file_can_replace_a_table_and_the_forms_offer_it(client, source, _isolated_db):
+    _table(client, source, xlsx({"S": [["id", "name"], ["A", "Alpha"]]}))
     with _isolated_db() as s:
         table_id = s.query(LookupTable).one().id
-    page = client.get("/transform/tables/%s" % table_id).text
-    assert ".xlsx" in page and 'name="sheet"' in page and ".xlsx" in client.get("/transform").text
-    resp = client.post("/transform/tables/%s/replace" % table_id, data={"sheet": ""}, files={"file": ("n.xlsx", xlsx({"S": [["id", "name"], ["B", "Beta"], ["C", "Gamma"]]}), "application/octet-stream")}, follow_redirects=False)
+    page = client.get("/provider/sources/%s/tables/%s" % (source["id"], table_id)).text
+    assert ".xlsx" in page and 'name="sheet"' in page and ".xlsx" in client.get("/provider/sources/%s/tables" % source["id"]).text
+    resp = client.post("/provider/sources/%s/tables/%s/replace" % (source["id"], table_id), data={"sheet": ""}, files={"file": ("n.xlsx", xlsx({"S": [["id", "name"], ["B", "Beta"], ["C", "Gamma"]]}), "application/octet-stream")}, follow_redirects=False)
     assert "Replaced: 2 rows" in _flash(resp) and "sheet 'S'" in _flash(resp)
 
 
