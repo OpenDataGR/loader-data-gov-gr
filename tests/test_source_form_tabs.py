@@ -76,7 +76,7 @@ def test_delivery_connector_endpoint_and_schedule_come_in_that_order_on_the_conn
 def test_a_new_source_is_registered_step_by_step_and_an_edit_is_just_saved(client, _isolated_db):
     new_page = client.get("/provider/sources/new").text
     assert "var WIZARD = true;" in new_page and 'id="submit-btn"' in new_page and 'id="submit-label">Register source<' in new_page
-    assert "'Next: ' + TAB_LABELS[target]" in new_page and "Still needed here" not in new_page and 'id="submit-hint"' not in new_page
+    assert "'Next: ' + TAB_LABELS[target]" in new_page and "'Fill in ' + TAB_LABELS[target] + ' first'" in new_page and "Still needed here" not in new_page and 'id="submit-hint"' not in new_page
     client.post("/provider/sources/new", data={
         "name": "wiz", "title": "Wiz", "kind": "pull", "transport_type": "http", "endpoint_url": "https://registry.example.gr/api/", "frequency": "DAILY",
         "auth_type": "api_key", "api_key": "k",

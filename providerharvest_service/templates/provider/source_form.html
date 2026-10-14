@@ -425,7 +425,7 @@
 
       <div class="form-actions" style="display:flex; gap:0.6rem; align-items:center;">
         <a class="btn btn-secondary" id="back-btn" href="/provider/sources">{{ macros.icon("arrow-left", 16) }} Back</a>
-        <button type="submit" id="submit-btn">{{ macros.icon(("check" if editing else "plus"), 16) }} <span id="submit-label">{{ "Save changes" if editing else "Register source" }}</span></button>
+        <button type="submit" id="submit-btn"><span id="submit-icon">{{ macros.icon(("check" if editing else "plus"), 16) }}</span><span id="submit-icon-next" hidden>{{ macros.icon("arrow-right", 16) }}</span> <span id="submit-label">{{ "Save changes" if editing else "Register source" }}</span></button>
       </div>
     </form>
   </div>
@@ -553,7 +553,11 @@
         target = (later.length ? later[0] : elsewhere[0])[1];
       }
       button.dataset.next = target;
-      document.getElementById('submit-label').textContent = target ? 'Next: ' + TAB_LABELS[target] : 'Register source';
+      // forward: "Next: Connection"; when what is missing is on an earlier tab, say so instead of calling it "next"
+      var backwards = target && TAB_ORDER.indexOf(target) < TAB_ORDER.indexOf(activeTab);
+      document.getElementById('submit-label').textContent = !target ? 'Register source' : (backwards ? 'Fill in ' + TAB_LABELS[target] + ' first' : 'Next: ' + TAB_LABELS[target]);
+      document.getElementById('submit-icon').hidden = !!target;
+      document.getElementById('submit-icon-next').hidden = !target;
       button.disabled = here.length > 0;
     }
     document.getElementById('submit-btn').addEventListener('click', function (event) {
