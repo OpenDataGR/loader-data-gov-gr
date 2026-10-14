@@ -127,7 +127,7 @@ def test_the_transform_box_lists_each_pipeline_on_its_own_row_with_its_source_as
     page = client.get("/transform").text
     assert page.count('<div class="name-title">default</div>') == 1 and page.count('<div class="name-title">lookup</div>') == 1
     assert 'href="/transform/sources/%s"' % source["id"] in page and 'href="/transform/sources/%s/pipelines/lookup"' % source["id"] in page
-    assert page.count("from ") >= 2 and "Set up</a>" not in page
+    assert page.count('<div class="name-slug">acme-push</div>') == 2 and "Set up</a>" not in page
 
 
 def test_a_pipeline_is_added_from_the_transform_box_empty_or_as_a_copy(client, source, _isolated_db):
@@ -154,7 +154,7 @@ def test_the_transform_box_row_of_every_pipeline_has_a_remove_button(client, sou
     _setup(client, source)
     _add(client, source, "lookup")
     page = client.get("/transform").text
-    assert page.count(">Remove</button>") == 2 and 'action="/transform/sources/%s/pipelines/lookup/delete"' % source["id"] in page and 'pipelines/default/delete"' in page
+    assert page.count("Remove</button>") == 2 and 'action="/transform/sources/%s/pipelines/lookup/delete"' % source["id"] in page and 'pipelines/default/delete"' in page
     resp = client.post("/transform/sources/%s/pipelines/lookup/delete" % source["id"], follow_redirects=False)
     assert resp.headers["location"].startswith("/transform/sources/%s?" % source["id"]) and _names(_isolated_db, source) == ["default"]
 
@@ -201,3 +201,23 @@ def test_the_published_address_is_answered_by_the_default_pipeline_not_by_the_on
     client.post("/load/sources/%s/api" % source["id"], data={"enabled": "1"}, follow_redirects=False)
     resp = TestClient(app, base_url="https://testserver").get("/data/acme-push")
     assert resp.status_code == 200 and resp.headers["content-type"].startswith("application/json")
+
+
+def test_the_transform_box_is_laid_out_like_the_sources_page_with_tiles_and_a_switch_per_row(client, source, _isolated_db):
+    import re
+
+    def tiles(html):
+        return dict((label, int(value)) for value, label in re.findall(r'class="stat-value">(\d+)</div>\s*<div class="stat-label">([^<]+)</div>', html))
+
+    page = client.get("/transform").text
+    assert tiles(page) == {"not set up": 1, "on": 0, "off": 0, "with failed outputs": 0} and "Set up</a>" in page
+    _setup(client, source)
+    _add(client, source, "lookup")
+    _go(client, source, "enabled", data={"enabled": "1"})
+    page = client.get("/transform").text
+    assert tiles(page) == {"not set up": 0, "on": 1, "off": 1, "with failed outputs": 0}
+    assert 'action="/transform/sources/%s/enabled"' % source["id"] in page and "Switch off</button>" in page  # the default is on
+    assert 'action="/transform/sources/%s/pipelines/lookup/enabled"' % source["id"] in page and "Switch on</button>" in page  # lookup is off
+    assert "+ Add a pipeline" not in page and "Add a pipeline</button>" in page and 'id="add-pipeline" hidden' in page
+    switched = client.post("/transform/sources/%s/pipelines/lookup/enabled" % source["id"], data={"enabled": "1"}, follow_redirects=False)
+    assert tiles(client.get("/transform").text)["on"] == 2 and switched.status_code == 303

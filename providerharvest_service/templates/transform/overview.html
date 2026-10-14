@@ -2,46 +2,26 @@
 {% import "_macros.html" as macros %}
 {% block title %}Transform Box -- loader.data.gov.gr{% endblock %}
 {% block content %}
+  <div class="stats">
+    {{ macros.stat_tile("not set up", stats.unset, "pending") }}
+    {{ macros.stat_tile("on", stats.on, "active") }}
+    {{ macros.stat_tile("off", stats.off, "paused") }}
+    {{ macros.stat_tile("with failed outputs", stats.failing, "rejected") }}
+  </div>
+
   <div class="panel">
-    <h1>Transform Box</h1>
+    <div class="top-actions">
+      <h1 style="margin-bottom:0">My pipelines</h1>
+      {% if addable %}<button type="button" class="btn" onclick="var f = document.getElementById('add-pipeline'); f.hidden = !f.hidden;">{{ macros.icon("plus", 16) }} Add a pipeline</button>{% endif %}
+    </div>
     <p class="subtitle">
       What happens to a source's input before it goes anywhere: read the file, add columns from an index table, filter, rename, convert
       -- as a list of steps. The original file is never changed; the result is stored beside it.
     </p>
-    {% if not rows %}
-      <div class="empty-state">{{ macros.icon("inbox", 40) }}<p>No sources yet. Register one in the Extract Box first.</p></div>
-    {% else %}
-      <table>
-        <thead><tr><th>Pipeline</th><th>Status</th><th>Steps</th><th>Outputs</th><th>Latest</th><th></th></tr></thead>
-        <tbody>
-          {% for r in rows %}
-          <tr>
-            <td>
-              {% if r.transform %}<div class="name-title">{{ r.transform.name }}</div><div class="muted" style="font-size:0.85rem;">from {{ r.source.title }} <span class="name-slug">({{ r.source.name }})</span></div>
-              {% else %}<div class="name-title">{{ r.source.title }}</div><span class="name-slug">{{ r.source.name }}</span>{% endif %}
-              {% if r.source.transport_type == "http" %}<div class="muted" style="font-size:0.78rem;">acts on live answers (asked on demand)</div>{% endif %}
-            </td>
-            <td>
-              {% if not r.transform %}<span class="muted">none</span>
-              {% elif r.transform.enabled %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>on</span></span>
-              {% else %}<span class="badge badge-pending"><span>off</span></span>{% endif %}
-            </td>
-            <td>{{ r.steps if r.transform else "" }}</td>
-            <td>
-              {% if r.counts %}{{ r.counts.ok }} ok{% if r.counts.failed %}, <span style="color:var(--status-rejected)">{{ r.counts.failed }} failed</span>{% endif %}{% endif %}
-            </td>
-            <td class="muted">{% if r.counts and r.counts.latest %}{{ r.counts.latest|short_utc }} UTC{% endif %}</td>
-            <td style="white-space:nowrap;"><a class="btn btn-secondary btn-sm" href="{{ r.url }}">{{ "Open" if r.transform else "Set up" }}</a>
-              {% if r.transform %}<form method="post" action="/transform/sources/{{ r.source.id }}/pipelines/{{ r.transform.name }}/delete" style="display:inline; margin:0 0 0 0.3rem;" onsubmit="return confirm('Remove the pipeline {{ r.transform.name }} and the outputs it stored?');"><button type="submit" class="btn-secondary btn-sm">Remove</button></form>{% endif %}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    {% endif %}
+    {% if flash %}<div class="flash flash-{{ flash_kind }}">{{ flash }}</div>{% endif %}
     {% if addable %}
-    <details style="margin-top:1rem;">
-      <summary class="btn btn-secondary btn-sm" style="list-style:none; cursor:pointer; display:inline-block;">+ Add a pipeline</summary>
-      <form method="post" action="/transform/pipelines" class="inline-form" style="margin-top:0.6rem;">
+    <div id="add-pipeline" hidden style="margin:0 0 1rem;">
+      <form method="post" action="/transform/pipelines" class="inline-form">
         <div><label for="np-source">Reads from</label>
           <select id="np-source" name="source_id" required>{% for source, names in addable %}<option value="{{ source.id }}">{{ source.title }}</option>{% endfor %}</select></div>
         <div><label for="np-name">Name</label><input id="np-name" name="name" maxlength="30" placeholder="lookup" required pattern="[a-z][a-z0-9\-]{0,29}"></div>
@@ -59,7 +39,59 @@
           source.addEventListener('change', show); show();
         })();
       </script>
-    </details>
+    </div>
+    {% endif %}
+
+    {% if not rows %}
+      <div class="empty-state">{{ macros.icon("inbox", 40) }}<p>No sources yet. Register one in the Extract Box first.</p></div>
+    {% else %}
+      <table>
+        <thead><tr><th>Pipeline</th><th>Reads from</th><th>Status</th><th>Steps</th><th>Outputs</th><th>Latest</th><th></th></tr></thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td>
+              {% if r.transform %}<div class="name-title">{{ r.transform.name }}</div>{% else %}<span class="muted">none yet</span>{% endif %}
+              {% if r.source.transport_type == "http" %}<div class="muted" style="font-size:0.78rem;">acts on live answers (asked on demand)</div>{% endif %}
+            </td>
+            <td><div class="name-title">{{ r.source.title }}</div><div class="name-slug">{{ r.source.name }}</div></td>
+            <td>
+              {% if not r.transform %}<span class="badge badge-pending">{{ macros.icon("pending", 14) }}<span>not set up</span></span>
+              {% elif r.transform.enabled %}<span class="badge badge-active">{{ macros.icon("active", 14) }}<span>on</span></span>
+              {% else %}<span class="badge badge-paused">{{ macros.icon("paused", 14) }}<span>off</span></span>{% endif %}
+            </td>
+            <td>{{ r.steps if r.transform else "" }}</td>
+            <td>
+              {% if r.counts %}{{ r.counts.ok }} ok{% if r.counts.failed %}, <span style="color:var(--status-rejected)">{{ r.counts.failed }} failed</span>{% endif %}{% endif %}
+            </td>
+            <td class="muted">{% if r.counts and r.counts.latest %}{{ r.counts.latest|short_utc }} UTC{% endif %}</td>
+            <td class="actions-cell">
+              <div class="row-actions">
+                {% if not r.transform %}
+                  <a class="btn btn-sm" href="{{ r.url }}">{{ macros.icon("plus", 14) }} Set up</a>
+                {% else %}
+                  <form class="inline" method="post" action="{{ r.url }}/enabled">
+                    <input type="hidden" name="enabled" value="{{ '0' if r.transform.enabled else '1' }}">
+                    {% if r.transform.enabled %}<button type="submit" class="btn-secondary btn-sm">{{ macros.icon("pause-btn", 14) }} Switch off</button>
+                    {% else %}<button type="submit" class="btn-sm">{{ macros.icon("play", 14) }} Switch on</button>{% endif %}
+                  </form>
+                  <div class="actions-menu">
+                    <button type="button" class="btn-secondary btn-sm actions-menu-toggle" onclick="toggleActionsMenu(this)" aria-label="More actions" aria-haspopup="true">{{ macros.icon("more", 16) }}</button>
+                    <div class="actions-menu-list">
+                      <a href="{{ r.url }}">{{ macros.icon("edit", 14) }} Open</a>
+                      <a href="/provider/sources/{{ r.source.id }}/tables">{{ macros.icon("queue", 14) }} Index tables of the source</a>
+                      <form method="post" action="/transform/sources/{{ r.source.id }}/pipelines/{{ r.transform.name }}/delete" onsubmit="return confirm('Remove the pipeline {{ r.transform.name }} and the outputs it stored?');">
+                        <button type="submit" class="danger">{{ macros.icon("trash", 14) }} Remove</button>
+                      </form>
+                    </div>
+                  </div>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
     {% endif %}
   </div>
 

@@ -110,10 +110,16 @@ def overview(request: Request, session: Session = Depends(get_session), hsession
                 url += "/pipelines/%s" % transform.name
             rows.append({"source": source, "transform": transform, "url": url, "steps": len(transform_runner.steps_of(transform)) if transform else 0,
                          "counts": transform_runner.output_counts(hsession, source.id, transform.id) if transform else None})
+    stats = {
+        "unset": sum(1 for r in rows if r["transform"] is None),
+        "on": sum(1 for r in rows if r["transform"] is not None and r["transform"].enabled),
+        "off": sum(1 for r in rows if r["transform"] is not None and not r["transform"].enabled),
+        "failing": sum(1 for r in rows if r["counts"] and r["counts"]["failed"]),
+    }
     # index tables belong to sources now; only a table no source used when they moved is still listed here, to bind or delete
     unassigned = [{"table": t, "columns": json.loads(t.columns)} for t in session.scalars(select(LookupTable).where(LookupTable.source_id.is_(None)).order_by(LookupTable.name)).all()]
     return templates.TemplateResponse(request, "transform/overview.html", {
-        "rows": rows, "unassigned": unassigned, "sources": sources, "addable": [(source, sorted(t.name for t in pipelines[source.id])) for source in sources if source.id in pipelines], "flash": request.query_params.get("flash"), "flash_kind": request.query_params.get("flash_kind", "success"),
+        "rows": rows, "stats": stats, "unassigned": unassigned, "sources": sources, "addable": [(source, sorted(t.name for t in pipelines[source.id])) for source in sources if source.id in pipelines], "flash": request.query_params.get("flash"), "flash_kind": request.query_params.get("flash_kind", "success"),
     })
 
 
