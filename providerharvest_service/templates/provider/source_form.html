@@ -14,10 +14,20 @@
     .form-tab[hidden], .form-tabs[hidden] { display: none !important; }
     [data-tab].tab-off { display: none !important; }
     .form-actions { margin-top: 1.4rem; padding-top: 1rem; border-top: 1px solid var(--color-border); }
+    .form-head { display: flex; align-items: center; gap: 0.8rem; margin-bottom: 0.2rem; }
+    .form-head h1 { margin: 0; }
+    a.back-arrow { padding: 0.45rem 0.6rem; }
+    .req { color: var(--status-rejected, #c62828); font-weight: 700; }
+    #source-form .is-invalid, #source-form input:has(+ .error), #source-form select:has(+ .error), #source-form textarea:has(+ .error) {
+      border-color: var(--status-rejected, #c62828); box-shadow: 0 0 0 3px rgba(198, 40, 40, 0.18); outline: none;
+    }
     .plain-set { border: 0; padding: 0; margin: 0; min-width: 0; }
   </style>
   <div class="panel">
-    <h1>{{ "Edit source" if editing else "Register a new source" }}</h1>
+    <div class="form-head">
+      <a class="btn btn-secondary btn-sm back-arrow" id="back-btn" href="/provider/sources" aria-label="Back" title="Back">{{ macros.icon("arrow-left", 16) }}</a>
+      <h1>{{ "Edit source" if editing else "Register a new source" }}</h1>
+    </div>
     <p class="subtitle">
       {% if editing %}
         Credential fields below are always left blank -- leave them blank to keep the current one, or type a new value to replace it.
@@ -25,6 +35,8 @@
         Pull data from a provider's API, SFTP/SCP drop or FTP server on a schedule -- or let the provider push files to us as they're produced.
       {% endif %}
     </p>
+
+    <p class="muted" style="margin:-0.4rem 0 0.8rem; font-size:0.85rem;"><span class="req">*</span> marks a required field.</p>
 
     {% if errors %}
       <div class="flash flash-error">
@@ -423,8 +435,7 @@
         </fieldset>
       </div>
 
-      <div class="form-actions" style="display:flex; gap:0.6rem; align-items:center;">
-        <a class="btn btn-secondary" id="back-btn" href="/provider/sources">{{ macros.icon("arrow-left", 16) }} Back</a>
+      <div class="form-actions">
         <button type="submit" id="submit-btn"><span id="submit-icon">{{ macros.icon(("check" if editing else "plus"), 16) }}</span><span id="submit-icon-next" hidden>{{ macros.icon("arrow-right", 16) }}</span> <span id="submit-label">{{ "Save changes" if editing else "Register source" }}</span></button>
       </div>
     </form>
@@ -516,11 +527,12 @@
     var WIZARD = {{ 'false' if editing else 'true' }};
     var TAB_LABELS = {general: 'General', connection: 'Connection', request: 'Request', limits: 'Limits'};
     function requiredFields() {
-      var fields = [['name', 'general'], ['title', 'general']];  // [field id, tab]
+      var fields = WIZARD ? [['name', 'general'], ['title', 'general']] : [['title', 'general']];  // [field id, tab]
       var kind = document.querySelector('input[name="kind"]:checked');
       if ((kind ? kind.value : 'pull') === 'push') return fields;
       fields.push(['endpoint_url', 'connection']);
       var transport = document.getElementById('transport-type-pull').value;
+      if (!WIZARD) return fields;  // editing: a credential left blank keeps the current one, so none is required here
       if (transport === 'http') {
         var auth = document.querySelector('input[name="auth_type"]:checked');
         var needs = {api_key: ['api_key'], basic_auth: ['basic_username', 'basic_password'],
@@ -542,7 +554,30 @@
       return el.type === 'checkbox' ? el.checked : el.value.trim() !== '';
     }
     function missingFields() { return requiredFields().filter(function (f) { return !isFilled(f[0]); }); }
+    function flag(id, on) {
+      var el = document.getElementById(id);
+      if (el) el.classList.toggle('is-invalid', !!on);
+    }
+    function refreshMarks() {
+      // an asterisk on the label of every field that is required for what is chosen now; a red outline only where one was left empty
+      var need = {};
+      requiredFields().forEach(function (f) { need[f[0]] = true; });
+      document.querySelectorAll('#source-form label[for]').forEach(function (label) {
+        var id = label.getAttribute('for'), mark = label.querySelector('.req');
+        if (need[id] && !mark) {
+          var star = document.createElement('span');
+          star.className = 'req'; star.textContent = ' *'; star.setAttribute('aria-hidden', 'true');
+          label.appendChild(star);
+        } else if (!need[id] && mark) {
+          mark.remove();
+        }
+      });
+      document.querySelectorAll('#source-form .is-invalid').forEach(function (el) {
+        if (!need[el.id] || isFilled(el.id)) el.classList.remove('is-invalid');
+      });
+    }
     function updateWizard() {
+      refreshMarks();
       if (!WIZARD) return;
       var missing = missingFields(), button = document.getElementById('submit-btn');
       var here = missing.filter(function (f) { return f[1] === activeTab; });
@@ -558,16 +593,29 @@
       document.getElementById('submit-label').textContent = !target ? 'Register source' : (backwards ? 'Fill in ' + TAB_LABELS[target] + ' first' : 'Next: ' + TAB_LABELS[target]);
       document.getElementById('submit-icon').hidden = !!target;
       document.getElementById('submit-icon-next').hidden = !target;
-      button.disabled = here.length > 0;
     }
     document.getElementById('submit-btn').addEventListener('click', function (event) {
-      if (!WIZARD || !this.dataset.next) return;  // nothing missing elsewhere: this click registers the source
+      if (!WIZARD) return;
+      var missing = missingFields();
+      var here = missing.filter(function (f) { return f[1] === activeTab; });
+      if (here.length) {  // something required on this tab is empty: outline it in red instead of moving on
+        event.preventDefault();
+        here.forEach(function (f) { flag(f[0], true); });
+        var first = document.getElementById(here[0][0]);
+        if (first && first.focus) first.focus();
+        return;
+      }
+      if (!this.dataset.next) return;  // nothing is missing anywhere: this click registers the source
       event.preventDefault();
       var target = this.dataset.next;
       setTab(target);
-      var first = missingFields().filter(function (f) { return f[1] === target; })[0];
-      var field = first && document.getElementById(first[0]);
+      var next = missingFields().filter(function (f) { return f[1] === target; })[0];
+      var field = next && document.getElementById(next[0]);
       if (field && field.focus) field.focus();
+    });
+    document.getElementById('source-form').addEventListener('focusout', function (event) {
+      var id = event.target.id;  // leaving a required field empty outlines it
+      if (WIZARD && id && requiredFields().some(function (f) { return f[0] === id; }) && !isFilled(id)) flag(id, true);
     });
     document.getElementById('source-form').addEventListener('input', updateWizard);
     document.getElementById('source-form').addEventListener('change', updateWizard);

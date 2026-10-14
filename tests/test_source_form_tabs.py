@@ -88,12 +88,25 @@ def test_a_new_source_is_registered_step_by_step_and_an_edit_is_just_saved(clien
 
 def test_the_form_has_a_back_button_that_leaves_without_saving(client, _isolated_db):
     new_page = client.get("/provider/sources/new").text
-    assert '<a class="btn btn-secondary" id="back-btn" href="/provider/sources">' in new_page
-    assert new_page.index('id="back-btn"') < new_page.index('id="submit-btn"')  # Back first, the main action after it
+    assert 'id="back-btn" href="/provider/sources" aria-label="Back" title="Back">' in new_page
+    assert new_page.index('id="back-btn"') < new_page.index("Register a new source</h1>") < new_page.index('id="submit-btn"')  # an arrow above the title, no text, none below
     client.post("/provider/sources/new", data={
         "name": "backed", "title": "Backed", "kind": "pull", "transport_type": "http", "endpoint_url": "https://registry.example.gr/api/", "frequency": "DAILY",
         "auth_type": "api_key", "api_key": "k",
     })
     source_id = re.search(r"/provider/sources/([^/]+)/edit", client.get("/provider/sources").text).group(1)
-    assert 'id="back-btn" href="/provider/sources"' in client.get("/provider/sources/%s/edit" % source_id).text
+    edit_page = client.get("/provider/sources/%s/edit" % source_id).text
+    assert 'id="back-btn" href="/provider/sources"' in edit_page and edit_page.index('id="back-btn"') < edit_page.index("Edit source</h1>")
     assert client.get("/provider/sources", follow_redirects=False).status_code == 200  # (where it goes)
+
+
+def test_required_fields_get_an_asterisk_and_incomplete_ones_a_red_outline(client, _isolated_db):
+    page = client.get("/provider/sources/new").text
+    assert '<span class="req">*</span> marks a required field.' in page
+    assert "function refreshMarks()" in page and "star.className = 'req'" in page  # asterisks follow what is chosen
+    assert ".is-invalid" in page and "box-shadow: 0 0 0 3px rgba(198, 40, 40" in page  # the red outline
+    assert "input:has(+ .error)" in page  # and a field the server rejected is outlined too
+    assert "here.forEach(function (f) { flag(f[0], true); });" in page and "addEventListener('focusout'" in page
+    assert "button.disabled" not in page  # the button is never greyed out: clicking it with a gap outlines the gap
+    resp = client.post("/provider/sources/new", data={"name": "x", "title": "", "kind": "pull", "transport_type": "http", "endpoint_url": "", "frequency": "DAILY", "auth_type": "api_key"})
+    assert resp.status_code == 400 and re.search(r'id="title"[^>]*>\s*<div class="error">', resp.text)  # the error div follows the input: that is what the CSS outlines
