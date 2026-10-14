@@ -14,10 +14,8 @@
       <h1 style="margin-bottom:0">My pipelines</h1>
       {% if addable %}<button type="button" class="btn" onclick="var f = document.getElementById('add-pipeline'); f.hidden = !f.hidden;">{{ macros.icon("plus", 16) }} Add a pipeline</button>{% endif %}
     </div>
-    <p class="subtitle">
-      What happens to a source's input before it goes anywhere: read the file, add columns from an index table, filter, rename, convert
-      -- as a list of steps. The original file is never changed; the result is stored beside it.
-    </p>
+    <p class="subtitle">What happens to a source's input before it goes anywhere.</p>
+    <p class="muted" style="margin:0.8rem 0 1rem;">A pipeline is a list of steps -- read the file, add columns from an index table, filter, rename, convert. The original file is never changed; the result is stored beside it.</p>
     {% if flash %}<div class="flash flash-{{ flash_kind }}">{{ flash }}</div>{% endif %}
     {% if addable %}
     <div id="add-pipeline" hidden style="margin:0 0 1rem;">
@@ -54,7 +52,7 @@
               {% if r.transform %}<div class="name-title">{{ r.transform.name }}</div>{% else %}<span class="muted">none yet</span>{% endif %}
               {% if r.source.transport_type == "http" %}<div class="muted" style="font-size:0.78rem;">acts on live answers (asked on demand)</div>{% endif %}
             </td>
-            <td><div class="name-title">{{ r.source.title }}</div><div class="name-slug">{{ r.source.name }}</div></td>
+            <td><div class="name-title">{{ r.source.title }}</div><div class="name-slug">{{ r.source.name }}</div><div style="margin-top:0.3rem;">{{ macros.type_badges(r.source) }}</div></td>
             <td>
               {% if not r.transform %}<span class="badge badge-pending">{{ macros.icon("pending", 14) }}<span>not set up</span></span>
               {% elif r.transform.enabled %}<span class="badge badge-active">{{ macros.icon("active", 14) }}<span>on</span></span>
