@@ -16,9 +16,9 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from providerharvest_service import admin_session, build_info, harvest_db, load_api, nav, provider_sources, publishing, request_template, transform_forms as tf, transform_runner
+from providerharvest_service import admin_session, build_info, ckan_load, harvest_db, load_api, nav, provider_sources, publishing, request_template, transform_forms as tf, transform_runner
 from providerharvest_service.db import get_session
-from providerharvest_service.models import ProviderSource, Transform
+from providerharvest_service.models import CkanTarget, ProviderSource, Transform
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/load", tags=["load-ui"])
@@ -65,6 +65,7 @@ def _api_of(source: ProviderSource, base: str, pipeline=None) -> dict | None:
 def overview(request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)):
     # the configured public address: behind the gateway the request itself says "http" (see ui_provider._push_upload_url)
     base = (os.environ.get("LOADER_PUBLIC_BASE_URL") or str(request.base_url)).rstrip("/")
+    targets = {t.pipeline_id: t for t in session.scalars(select(CkanTarget)).all()}
     rows = []  # one row per pipeline (what is published is a pipeline); a source with none yet gets one row
     for source in provider_sources.list_all(session):
         for pipeline in transform_runner.list_pipelines(session, source.id) or [None]:
@@ -72,11 +73,11 @@ def overview(request: Request, session: Session = Depends(get_session), hsession
             rows.append({
                 "source": source, "pipeline": pipeline, "published": publishing.is_pipeline_published(pipeline),
                 "latest": load_api.latest_output(hsession, source.id, pipeline.id) if pipeline is not None and source.transport_type != "http" else None,
-                "path": path, "url": base + path, "api": _api_of(source, base, pipeline),
+                "path": path, "url": base + path, "api": _api_of(source, base, pipeline), "ckan": targets.get(pipeline.id) if pipeline is not None else None,
                 "base": ("/load/sources/%s" % source.id) + ("" if pipeline is None or pipeline.name == transform_runner.DEFAULT_PIPELINE else "/pipelines/%s" % pipeline.name),
             })
     return templates.TemplateResponse(request, "load/overview.html", {
-        "rows": rows, "flash": request.query_params.get("flash"), "flash_kind": request.query_params.get("flash_kind", "success"),
+        "rows": rows, "ckan_ready": ckan_load.configured(), "flash": request.query_params.get("flash"), "flash_kind": request.query_params.get("flash_kind", "success"),
     })
 
 
