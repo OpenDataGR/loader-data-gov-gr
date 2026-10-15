@@ -376,6 +376,16 @@
     .changelog-table tr:last-child td { border-bottom: none; }
     .changelog-date { white-space: nowrap; color: var(--color-gray-700); font-size: 0.78rem; padding-right: 1rem; }
     .changelog-empty { color: var(--color-gray-700); font-size: 0.88rem; padding: 0.8rem 0.5rem; }
+
+    /* The in-page dialog that stands in for the browser's own confirm() and prompt() boxes (see the script at the end of the page). */
+    .dialog-backdrop { position: fixed; inset: 0; background: rgba(12, 24, 48, 0.55); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem; }
+    .dialog-backdrop[hidden] { display: none; }
+    .dialog-card { background: var(--color-surface); border-radius: var(--radius); box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35); width: min(30rem, 100%); padding: 1.3rem 1.4rem 1.1rem; }
+    .dialog-text { white-space: pre-wrap; line-height: 1.45; margin: 0 0 1rem; color: var(--color-text); }
+    .dialog-input { margin: 0 0 1rem; width: 100%; }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: 0.6rem; }
+    #dialog-ok.danger { background: var(--status-rejected); }
+    #dialog-ok.danger:hover { background: #b3261e; }
   </style>
 </head>
 <body>
@@ -529,6 +539,86 @@
       if (!menu) return;
       document.addEventListener('click', function (e) { if (menu.open && !menu.contains(e.target)) menu.open = false; });
       document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && menu.open) menu.open = false; });
+    })();
+  </script>
+  <div id="dialog-modal" class="dialog-backdrop" hidden>
+    <div class="dialog-card" role="dialog" aria-modal="true" aria-labelledby="dialog-text">
+      <div id="dialog-text" class="dialog-text"></div>
+      <input type="text" id="dialog-input" class="dialog-input" hidden>
+      <div class="dialog-actions">
+        <button type="button" id="dialog-cancel" class="btn-secondary">Cancel</button>
+        <button type="button" id="dialog-ok">OK</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    // confirm() and prompt() as a dialog inside the page. Every template keeps asking the usual way (onsubmit="return confirm(...)"); the first
+    // call opens the dialog and answers "no", and when the person says OK the same action is triggered once more and this time is let through.
+    (function () {
+      var nativeConfirm = window.confirm, nativePrompt = window.prompt;
+      var backdrop = document.getElementById('dialog-modal'), text = document.getElementById('dialog-text'), input = document.getElementById('dialog-input');
+      var ok = document.getElementById('dialog-ok'), cancel = document.getElementById('dialog-cancel');
+      var approved = new WeakMap();  // the element that asked -> the answer (true, or the text typed for a prompt)
+      var pending = null, returnTo = null;
+
+      function keyOf(ev) {
+        if (!ev || !ev.target) return null;
+        if (ev.type === 'submit') return ev.target;
+        return ev.target.closest ? ev.target.closest('button, a, input, form') : ev.target;
+      }
+      function ask(kind, message, defaultValue) {
+        var ev = window.event, key = keyOf(ev);
+        if (!backdrop || !ev || !key) return kind === 'confirm' ? nativeConfirm.call(window, message) : nativePrompt.call(window, message, defaultValue);
+        if (approved.has(key)) { var answer = approved.get(key); approved.delete(key); return answer; }
+        open(kind, String(message || ''), defaultValue, key, ev);
+        return kind === 'confirm' ? false : null;
+      }
+      window.confirm = function (message) { return ask('confirm', message); };
+      window.prompt = function (message, defaultValue) { return ask('prompt', message, defaultValue); };
+
+      function open(kind, message, defaultValue, key, ev) {
+        pending = {kind: kind, key: key, submitter: ev.submitter || null, type: ev.type};
+        returnTo = document.activeElement;
+        text.textContent = message;
+        input.hidden = kind !== 'prompt';
+        input.value = defaultValue || '';
+        var danger = kind === 'confirm' && /\b(delete|remove|permanently|stop |replace|new api key|cannot be undone)/i.test(message);
+        ok.classList.toggle('danger', danger);
+        backdrop.hidden = false;
+        (kind === 'prompt' ? input : (danger ? cancel : ok)).focus();
+      }
+      function close() {
+        backdrop.hidden = true;
+        var back = returnTo; returnTo = null;
+        if (back && back.focus) back.focus();
+      }
+      function accept() {
+        var asked = pending; pending = null;
+        close();
+        if (!asked) return;
+        approved.set(asked.key, asked.kind === 'confirm' ? true : input.value);
+        if (asked.type === 'submit') {  // run the submit again, with the button that sent it
+          if (asked.key.requestSubmit) asked.key.requestSubmit(asked.submitter || undefined); else asked.key.submit();
+        } else {
+          asked.key.click();
+        }
+      }
+      function dismiss() { pending = null; close(); }
+
+      if (!backdrop) return;
+      ok.addEventListener('click', accept);
+      cancel.addEventListener('click', dismiss);
+      backdrop.addEventListener('mousedown', function (e) { if (e.target === backdrop) dismiss(); });
+      document.addEventListener('keydown', function (e) {
+        if (backdrop.hidden) return;
+        if (e.key === 'Escape') { e.preventDefault(); dismiss(); }
+        else if (e.key === 'Enter' && e.target === input) { e.preventDefault(); accept(); }
+        else if (e.key === 'Tab') {  // keep the focus inside the dialog
+          var items = [input, cancel, ok].filter(function (el) { return !el.hidden; }), first = items[0], last = items[items.length - 1];
+          if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+          else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+        }
+      });
     })();
   </script>
 </body>
