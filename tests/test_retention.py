@@ -211,10 +211,9 @@ def test_the_page_needs_the_admin_login(_isolated_db, harvest, client):
     assert "retention_loader_days" not in _config(_isolated_db, source_id)
 
 
-def test_the_admin_dashboard_links_to_it_and_the_providers_own_list_does_not(client, _isolated_db, harvest):
+def test_the_extract_box_of_a_super_admin_links_to_it(client, _isolated_db, harvest):
     source_id = _source(_isolated_db)
-    assert "/admin/sources/%s/retention" % source_id in client.get("/admin/sources").text
-    assert "/retention" not in client.get("/provider/sources").text
+    assert "/admin/sources/%s/retention" % source_id in client.get("/provider/sources").text
 
 
 # -- an edit keeps it ----------------------------------------------------------------------------

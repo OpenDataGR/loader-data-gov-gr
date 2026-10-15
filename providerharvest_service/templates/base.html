@@ -100,7 +100,7 @@
       color: var(--color-primary);
       font-weight: 600;
     }
-    /* The number of sources awaiting approval, on the Admin dashboard tab. */
+    /* The number of sources awaiting approval, on the Extract Box tab (for a super admin). */
     .nav-count {
       display: inline-flex; align-items: center; justify-content: center;
       min-width: 1.25rem; height: 1.25rem; padding: 0 0.35rem;
@@ -415,13 +415,12 @@
     <nav class="masthead-nav">
       {# No menu on the login page: nothing in it is for someone who has not signed in. #}
       {% if request.url.path != '/admin/login' %}
-      <a href="/provider/sources" class="{{ 'active' if request.url.path.startswith('/provider') else '' }}">{{ macros.icon("provider", 16) }} Extract Box</a>
-      {# Sources waiting for approval, as a number on the dashboard tab. Not on the login page: nothing about the
-         queue is for someone who has not logged in. #}
-      {% set pending_n = pending_approvals() if (pending_approvals is defined and request.url.path != '/admin/login') else 0 %}
+      {# Sources waiting for approval, as a number on the Extract Box tab -- only for a super admin, who is the one to approve them. Not on the login
+         page: nothing about the queue is for someone who has not logged in. #}
+      {% set pending_n = pending_approvals() if (pending_approvals is defined and request.url.path != '/admin/login' and who and who.super) else 0 %}
+      <a href="/provider/sources" class="{{ 'active' if request.url.path.startswith('/provider') else '' }}">{{ macros.icon("provider", 16) }} Extract Box{% if pending_n %}<span class="nav-count" title="{{ pending_n }} source{{ '' if pending_n == 1 else 's' }} awaiting approval" aria-label="{{ pending_n }} awaiting approval">{{ pending_n }}</span>{% endif %}</a>
       <a href="/transform" class="{{ 'active' if request.url.path.startswith('/transform') else '' }}">{{ macros.icon("queue", 16) }} Transform Box</a>
       <a href="/load" class="{{ 'active' if request.url.path.startswith('/load') else '' }}">{{ macros.icon("push", 16) }} Load Box</a>
-      <a href="/admin/sources" class="{{ 'active' if request.url.path == '/admin/sources' else '' }}">{{ macros.icon("admin", 16) }} Admin dashboard{% if pending_n %}<span class="nav-count" title="{{ pending_n }} source{{ '' if pending_n == 1 else 's' }} awaiting approval" aria-label="{{ pending_n }} awaiting approval">{{ pending_n }}</span>{% endif %}</a>
       {% if who and who.super %}
       <a href="/admin/ftp" class="{{ 'active' if request.url.path == '/admin/ftp' else '' }}">{{ macros.icon("push", 16) }} Data boxes</a>
       <a href="/admin/security/failed-logins" class="{{ 'active' if request.url.path.startswith('/admin/security') else '' }}">{{ macros.icon("rejected", 16) }} Security box</a>

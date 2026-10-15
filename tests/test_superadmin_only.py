@@ -34,6 +34,7 @@ def _refused(resp):
     ("/admin/security", True), ("/admin/security/failed-logins", True), ("/admin/security/rules/x/edit", True),
     ("/admin/ftp/some-account-id/set-password", False), ("/admin/ftp/some-account-id/rotate-password", False),
     ("/admin/ftp/some-account-id/allowed-ips", False), ("/admin/ftp-accounts-sync", False), ("/admin/sources", False),
+    ("/admin/sources/some-id/activate", True), ("/admin/sources/some-id/reject", True), ("/admin/sources/some-id/retention", True), ("/admin/sources/pending", True),
     ("/admin/sourcesx", False), ("/admin/ftpx", False), ("/provider/sources", False), ("/transform", False), ("/load", False),
 ])
 def test_which_paths_are_for_super_admins_only(path, locked):
@@ -54,7 +55,9 @@ def test_what_belongs_to_managing_a_source_stays_open_to_them(ckan_rule, keycloa
     ckan_rule.users["user_" + SUB] = {"orgs": ["attica-region"]}
     browser = _browser()
     _sign_in(browser, keycloak)
-    assert browser.get("/provider/sources").status_code == 200 and browser.get("/admin/sources").status_code == 200
+    assert browser.get("/provider/sources").status_code == 200
+    old = browser.get("/admin/sources", follow_redirects=False)  # the old dashboard address just leads to the Extract Box
+    assert old.status_code == 303 and old.headers["location"] == "/provider/sources" and not _refused(old)
     for path in ("/admin/ftp/some-account-id/set-password",):
         assert not _refused(browser.get(path)), path  # (an unknown account: not found, but not turned away as a super-admin matter)
 
@@ -65,8 +68,20 @@ def test_the_menu_hides_the_two_tabs_for_them_and_says_so(ckan_rule, keycloak):
     _sign_in(browser, keycloak)
     page = browser.get("/provider/sources").text
     assert 'href="/admin/ftp"' not in page and 'href="/admin/security/failed-logins"' not in page
-    assert "Extract Box</a>" in page and "Transform Box</a>" in page and "Admin dashboard" in page
+    assert "Extract Box" in page and "Transform Box</a>" in page and "Admin dashboard" not in page  # the dashboard is no tab any more
     assert "<dt>Super admin</dt><dd>No</dd>" in page
+
+
+def test_approving_and_data_retention_are_for_super_admins_only(ckan_rule, keycloak):
+    ckan_rule.users["user_" + SUB] = {"orgs": ["attica-region"]}
+    browser = _browser()
+    _sign_in(browser, keycloak)
+    page = browser.get("/provider/sources").text
+    assert 'id="pending"' not in page and "Awaiting approval" not in page and "/retention" not in page and "Activate</button>" not in page
+    for path in ("/admin/sources/some-id/retention", "/admin/sources/some-id/pending"):
+        assert _refused(browser.get(path)), path
+    for path in ("/admin/sources/some-id/activate", "/admin/sources/some-id/reject", "/admin/sources/some-id/pause", "/admin/sources/some-id/delete"):
+        assert _refused(browser.post(path)), path
 
 
 def test_a_ckan_sysadmin_gets_the_tabs_and_the_pages(ckan_rule, keycloak):

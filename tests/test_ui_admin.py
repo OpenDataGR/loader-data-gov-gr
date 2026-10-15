@@ -72,16 +72,16 @@ def _register(session_factory, **overrides):
 
 
 def _approval_panel(html):
-    """The 'Awaiting approval' panel's markup, or '' when the dashboard has none."""
+    """The 'Awaiting approval' panel's markup, or '' when the page has none."""
     if 'id="pending"' not in html:
         return ""
-    return html.split('id="pending"', 1)[1].split("All registered sources", 1)[0]
+    return html.split('id="pending"', 1)[1].split("My registered sources", 1)[0]
 
 
 def test_the_dashboard_has_an_approval_panel_listing_pending_sources(client, _isolated_db):
     _register(_isolated_db)
-    panel = _approval_panel(client.get("/admin/sources").text)
-    assert "Awaiting approval" in client.get("/admin/sources").text
+    panel = _approval_panel(client.get("/provider/sources").text)
+    assert "Awaiting approval" in client.get("/provider/sources").text
     assert "acme-open-data" in panel
     assert "/activate" in panel and "/reject" in panel  # the buttons moved with it
 
@@ -89,7 +89,7 @@ def test_the_dashboard_has_an_approval_panel_listing_pending_sources(client, _is
 def test_there_is_no_approval_panel_when_nothing_is_pending(client, _isolated_db):
     source_id = _register(_isolated_db)
     client.post("/admin/sources/%s/activate" % source_id)
-    text = client.get("/admin/sources").text
+    text = client.get("/provider/sources").text
     assert 'id="pending"' not in text and "Awaiting approval" not in text
 
 
@@ -97,14 +97,14 @@ def test_only_pending_sources_are_in_the_approval_panel(client, _isolated_db):
     first = _register(_isolated_db)
     _register(_isolated_db, name="second-source")
     client.post("/admin/sources/%s/activate" % first)
-    panel = _approval_panel(client.get("/admin/sources").text)
+    panel = _approval_panel(client.get("/provider/sources").text)
     assert "second-source" in panel and "acme-open-data" not in panel
 
 
 def test_the_old_pending_page_redirects_to_the_dashboard_panel(client):
     resp = client.get("/admin/sources/pending", follow_redirects=False)
     assert resp.status_code == 303
-    assert resp.headers["location"] == "/admin/sources#pending"
+    assert resp.headers["location"] == "/provider/sources#pending"
 
 
 def test_the_old_pending_page_still_needs_the_login(_isolated_db):
@@ -115,9 +115,9 @@ def test_the_old_pending_page_still_needs_the_login(_isolated_db):
 
 def test_there_is_no_pending_approval_tab_any_more(client, _isolated_db):
     _register(_isolated_db)
-    nav_html = client.get("/admin/sources").text.split('<nav class="masthead-nav">', 1)[1].split("</nav>", 1)[0]
+    nav_html = client.get("/provider/sources").text.split('<nav class="masthead-nav">', 1)[1].split("</nav>", 1)[0]
     assert "Pending approval" not in nav_html and 'href="/admin/sources/pending"' not in nav_html
-    assert "Admin dashboard" in nav_html
+    assert "Admin dashboard" not in nav_html and 'href="/admin/sources"' not in nav_html  # no tab of its own: it is on the Extract Box
 
 
 def _nav(html):
@@ -128,16 +128,16 @@ def test_the_dashboard_tab_shows_how_many_sources_await_approval(client, _isolat
     _register(_isolated_db)
     _register(_isolated_db, name="second-source")
     _register(_isolated_db, name="third-source")
-    nav_html = _nav(client.get("/admin/sources").text)
+    nav_html = _nav(client.get("/provider/sources").text)
     assert '<span class="nav-count"' in nav_html and ">3</span>" in nav_html
     assert "3 sources awaiting approval" in nav_html
 
 
 def test_the_count_is_singular_for_one_and_absent_for_none(client, _isolated_db):
     source_id = _register(_isolated_db)
-    assert "1 source awaiting approval" in _nav(client.get("/admin/sources").text)
+    assert "1 source awaiting approval" in _nav(client.get("/provider/sources").text)
     client.post("/admin/sources/%s/activate" % source_id)
-    assert "nav-count" not in _nav(client.get("/admin/sources").text)
+    assert "nav-count" not in _nav(client.get("/provider/sources").text)
 
 
 def test_the_count_appears_on_every_page_not_just_the_dashboard(client, _isolated_db):
@@ -150,7 +150,7 @@ def test_rejecting_a_source_lowers_the_count(client, _isolated_db):
     source_id = _register(_isolated_db)
     _register(_isolated_db, name="second-source")
     client.post("/admin/sources/%s/reject" % source_id, data={"reason": "no"})
-    assert "1 source awaiting approval" in _nav(client.get("/admin/sources").text)
+    assert "1 source awaiting approval" in _nav(client.get("/provider/sources").text)
 
 
 def test_the_login_page_does_not_show_the_queue_count(_isolated_db):
@@ -171,7 +171,7 @@ def test_a_failing_count_costs_the_badge_not_the_page(client, monkeypatch, _isol
 
     monkeypatch.setattr(db, "SessionLocal", lambda: Broken())
     assert nav.pending_approvals() == 0
-    assert client.get("/admin/sources").status_code == 200
+    assert client.get("/provider/sources").status_code == 200
 
 
 def test_activate_moves_source_out_of_pending_queue(client, _isolated_db):
@@ -179,11 +179,11 @@ def test_activate_moves_source_out_of_pending_queue(client, _isolated_db):
 
     resp = client.post("/admin/sources/%s/activate" % source_id, follow_redirects=False)
     assert resp.status_code == 303
-    assert resp.headers["location"].startswith("/admin/sources?")  # back to the dashboard
+    assert resp.headers["location"].startswith("/provider/sources?")  # back to the dashboard
 
-    assert 'id="pending"' not in client.get("/admin/sources").text
+    assert 'id="pending"' not in client.get("/provider/sources").text
 
-    all_sources = client.get("/admin/sources")
+    all_sources = client.get("/provider/sources")
     assert "active" in all_sources.text
 
 
@@ -197,7 +197,7 @@ def test_reject_records_reason_and_shows_it_on_the_dashboard(client, _isolated_d
     )
     assert resp.status_code == 303
 
-    all_sources = client.get("/admin/sources")
+    all_sources = client.get("/provider/sources")
     assert "rejected" in all_sources.text
     assert "endpoint unreachable" in all_sources.text
 
@@ -213,7 +213,7 @@ def test_pause_resume_redirect_defaults_to_all_sources_without_a_recognized_refe
     )
     assert resp.status_code == 303
     # Must never redirect off-site, even if Referer claims otherwise.
-    assert resp.headers["location"].startswith("/admin/sources")
+    assert resp.headers["location"].startswith("/provider/sources")
     assert "evil.example" not in resp.headers["location"]
 
 
@@ -254,7 +254,7 @@ def test_check_connection_persists_health_status(client, _isolated_db, monkeypat
     assert resp.status_code == 303
     assert "flash_kind=success" in resp.headers["location"]
 
-    all_sources = client.get("/admin/sources")
+    all_sources = client.get("/provider/sources")
     assert "reachable" in all_sources.text
 
 
@@ -269,7 +269,7 @@ def test_check_connection_on_unreachable_source_shows_error(client, _isolated_db
     assert resp.status_code == 303
     assert "flash_kind=error" in resp.headers["location"]
 
-    all_sources = client.get("/admin/sources")
+    all_sources = client.get("/provider/sources")
     assert "unreachable" in all_sources.text
 
 
@@ -279,13 +279,13 @@ def test_admin_can_delete_a_source(client, _isolated_db):
     assert resp.status_code == 303
     assert "flash=Source+deleted" in resp.headers["location"]
 
-    all_sources = client.get("/admin/sources")
+    all_sources = client.get("/provider/sources")
     assert "acme-open-data" not in all_sources.text
 
 
 def test_admin_edit_link_points_to_shared_edit_route(client, _isolated_db):
     _register(_isolated_db)
-    resp = client.get("/admin/sources")
+    resp = client.get("/provider/sources")
     assert "/provider/sources/" in resp.text
     assert "/edit" in resp.text
 
@@ -295,7 +295,7 @@ def test_admin_lists_badge_pull_and_push_sources(client, _isolated_db):
     with _isolated_db() as session:
         provider_sources.register(session, {"name": "acme-push", "title": "Push", "transport_type": "push"})
 
-    text = client.get("/admin/sources").text
+    text = client.get("/provider/sources").text
     assert '<span class="badge badge-pull"' in text
     assert '<span class="badge badge-push"' in text
     assert "<span>https</span>" in text

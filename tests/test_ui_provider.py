@@ -168,7 +168,7 @@ def test_check_connection_shows_reachable_health_badge(client, monkeypatch):
     )
     client.post("/provider/sources/new", data=_valid_form())
     listing = client.get("/provider/sources")
-    source_id = re.search(r"/provider/sources/([^/]+)/check-connection", listing.text).group(1)
+    source_id = re.search(r"/(?:provider|admin)/sources/([^/]+)/check-connection", listing.text).group(1)
 
     resp = client.post("/provider/sources/%s/check-connection" % source_id, follow_redirects=False)
     assert resp.status_code == 303
@@ -185,7 +185,7 @@ def test_check_connection_shows_unreachable_health_badge_on_failure(client, monk
     )
     client.post("/provider/sources/new", data=_valid_form())
     listing = client.get("/provider/sources")
-    source_id = re.search(r"/provider/sources/([^/]+)/check-connection", listing.text).group(1)
+    source_id = re.search(r"/(?:provider|admin)/sources/([^/]+)/check-connection", listing.text).group(1)
 
     resp = client.post("/provider/sources/%s/check-connection" % source_id, follow_redirects=False)
     assert resp.status_code == 303
@@ -208,7 +208,7 @@ def test_flash_message_with_special_characters_does_not_break_redirect(client):
 def _register_and_get_id(client):
     client.post("/provider/sources/new", data=_valid_form())
     listing = client.get("/provider/sources")
-    return re.search(r"/provider/sources/([^/]+)/check-connection", listing.text).group(1)
+    return re.search(r"/(?:provider|admin)/sources/([^/]+)/check-connection", listing.text).group(1)
 
 
 def test_edit_form_renders_prefilled_without_the_secret(client):
@@ -350,7 +350,7 @@ def _valid_sftp_form(**overrides):
 def _register_activate_sftp_and_get_id(client):
     client.post("/provider/sources/new", data=_valid_sftp_form())
     listing = client.get("/provider/sources")
-    source_id = re.search(r"/provider/sources/([^/]+)/check-connection", listing.text).group(1)
+    source_id = re.search(r"/(?:provider|admin)/sources/([^/]+)/check-connection", listing.text).group(1)
     client.post("/admin/sources/%s/activate" % source_id)
     return source_id
 
@@ -560,7 +560,7 @@ def test_the_source_list_badges_each_source_as_pull_or_push_with_its_specific_ty
     client.post("/provider/sources/new", data={"name": "push-https", "title": "P1", "transport_type": "push"})
     client.post("/provider/sources/new", data=_ftp_push_form(name="push-ftp", title="P2"))
 
-    text = client.get("/provider/sources").text
+    text = client.get("/provider/sources").text.split("My registered sources", 1)[1]  # (the approval panel above it lists the pending ones too)
     assert text.count('<span class="badge badge-pull"') == 2
     assert text.count('<span class="badge badge-push"') == 2
     # the specific type sits next to the kind: http/sftp for pull, https vs ftp/sftp for push

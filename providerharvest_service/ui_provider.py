@@ -41,6 +41,8 @@ HTTP_AUTH_TYPES = provider_sources.HTTP_AUTH_TYPES
 @router.get("/sources", response_class=HTMLResponse)
 def source_list(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
     sources = provider_sources.list_all(session)
+    # a super admin also sees the approval queue and can approve, reject and set the data retention (what the admin dashboard used to be)
+    is_admin = bool((getattr(request.state, "user", None) or {}).get("super"))
     index_tables: dict[str, list] = {}  # informational: each source's index tables (name, rows)
     for table in session.scalars(select(LookupTable).where(LookupTable.source_id.is_not(None)).order_by(LookupTable.name)).all():
         index_tables.setdefault(table.source_id, []).append(table)
@@ -49,6 +51,9 @@ def source_list(request: Request, session: Session = Depends(get_session)) -> HT
         "provider/source_list.html",
         {
             "sources": sources,
+            "is_admin": is_admin,
+            "pending_sources": provider_sources.list_pending(session) if is_admin else [],
+            "action_prefix": "/admin/sources" if is_admin else "/provider/sources",
             "index_tables": index_tables,
             "counts": provider_sources.status_counts(session),
             "flash": request.query_params.get("flash"),

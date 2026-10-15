@@ -56,7 +56,7 @@ def test_the_form_has_the_field_shows_it_again_on_edit_and_explains_both_methods
     new_page = client.get("/provider/sources/new").text
     assert 'name="test_request"' in new_page and "Test request (optional)" in new_page and "one real POST" in new_page and "one real GET" in new_page
     client.post("/provider/sources/new", data=_valid_form(name="postsrc", proxy_method="POST", test_request=BODY))
-    source_id = re.search(r"/provider/sources/([^/]+)/check-connection", client.get("/provider/sources").text).group(1)
+    source_id = re.search(r"/(?:provider|admin)/sources/([^/]+)/check-connection", client.get("/provider/sources").text).group(1)
     page = client.get("/provider/sources/%s/edit" % source_id).text
     assert re.search(r'<textarea[^>]*id="test_request"[^>]*>[^<]*TEST123', page)
     assert 'errors' not in page

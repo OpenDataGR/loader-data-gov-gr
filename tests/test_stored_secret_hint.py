@@ -40,7 +40,7 @@ def test_a_new_source_shows_no_dots_and_no_badge(client):
 
 def test_only_the_credentials_that_are_really_stored_show_dots(client):
     client.post("/provider/sources/new", data=_valid_form(auth_type="basic_auth", basic_username="u", basic_password="p", api_key=""))
-    source_id = re.search(r"/provider/sources/([^/]+)/check-connection", client.get("/provider/sources").text).group(1)
+    source_id = re.search(r"/(?:provider|admin)/sources/([^/]+)/check-connection", client.get("/provider/sources").text).group(1)
     page = _edit_page(client, source_id)
     for field in ("basic_username", "basic_password"):
         assert DOTS in _field(page, field) and "stored" in _label(page, field)
@@ -50,7 +50,7 @@ def test_only_the_credentials_that_are_really_stored_show_dots(client):
 
 def test_the_word_dropdown_is_in_the_key_row_and_preselects_what_is_stored(client):
     client.post("/provider/sources/new", data=_valid_form(name="keyrow-test", api_key_prefix="Bearer"))
-    source_id = re.search(r"/provider/sources/([^/]+)/check-connection", client.get("/provider/sources").text).group(1)
+    source_id = re.search(r"/(?:provider|admin)/sources/([^/]+)/check-connection", client.get("/provider/sources").text).group(1)
     page = client.get("/provider/sources/%s/edit" % source_id).text
     row = re.search(r'<div class="key-row".*?</div>', page, re.S).group(0)
     assert row.index('id="api_key_prefix"') < row.index('id="api_key_prefix_custom"') < row.index('id="api_key"')  # word, custom box, key

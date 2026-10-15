@@ -32,41 +32,31 @@ templates.env.globals["now"] = datetime.datetime.now
 templates.env.globals["pending_approvals"] = nav.pending_approvals
 
 
-@router.get("", response_class=HTMLResponse)
-def all_sources(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
-    """The admin dashboard: the approval queue first (only when there is
-    something to approve), then every source regardless of status."""
-    sources = provider_sources.list_all(session)
-    return templates.TemplateResponse(
-        request,
-        "admin/all_sources.html",
-        {
-            "sources": sources,
-            "pending_sources": provider_sources.list_pending(session),
-            "counts": provider_sources.status_counts(session),
-            "flash": request.query_params.get("flash"),
-            "flash_kind": request.query_params.get("flash_kind", "success"),
-        },
-    )
+@router.get("")
+def all_sources(request: Request) -> RedirectResponse:
+    """The admin dashboard used to be a page of its own. Its approval queue and its data retention are now on the Extract Box (for a super
+    admin), so this address -- an old bookmark, an old link -- leads there."""
+    query = request.url.query
+    return RedirectResponse("/provider/sources" + ("?" + query if query else ""), status_code=303)
 
 
 @router.get("/pending")
 def pending() -> RedirectResponse:
     """The approval queue used to be its own page and tab; it now sits at the top
-    of the admin dashboard. Kept so old bookmarks and links still land somewhere."""
-    return RedirectResponse("/admin/sources#pending", status_code=303)
+    of the Extract Box. Kept so old bookmarks and links still land somewhere."""
+    return RedirectResponse("/provider/sources#pending", status_code=303)
 
 
 @router.post("/{source_id}/activate")
 def activate(source_id: str, request: Request, session: Session = Depends(get_session)) -> RedirectResponse:
     try:
         provider_sources.activate(session, source_id)
-        return RedirectResponse(_came_from(request, "/admin/sources", "Source activated."), status_code=303)
+        return RedirectResponse(_came_from(request, "/provider/sources", "Source activated."), status_code=303)
     except provider_sources.NotFound:
         flash = "No such source."
     except provider_sources.InvalidTransition as exc:
         flash = str(exc)
-    return RedirectResponse(_came_from(request, "/admin/sources", flash, kind="error"), status_code=303)
+    return RedirectResponse(_came_from(request, "/provider/sources", flash, kind="error"), status_code=303)
 
 
 @router.post("/{source_id}/reject")
@@ -74,36 +64,36 @@ async def reject(source_id: str, request: Request, session: Session = Depends(ge
     form = await request.form()
     try:
         provider_sources.reject(session, source_id, form.get("reason"))
-        return RedirectResponse(_came_from(request, "/admin/sources", "Source rejected."), status_code=303)
+        return RedirectResponse(_came_from(request, "/provider/sources", "Source rejected."), status_code=303)
     except provider_sources.NotFound:
         flash = "No such source."
     except provider_sources.InvalidTransition as exc:
         flash = str(exc)
-    return RedirectResponse(_came_from(request, "/admin/sources", flash, kind="error"), status_code=303)
+    return RedirectResponse(_came_from(request, "/provider/sources", flash, kind="error"), status_code=303)
 
 
 @router.post("/{source_id}/pause")
 def pause(source_id: str, request: Request, session: Session = Depends(get_session)) -> RedirectResponse:
     try:
         provider_sources.pause(session, source_id)
-        return RedirectResponse(_came_from(request, "/admin/sources", "Source paused."), status_code=303)
+        return RedirectResponse(_came_from(request, "/provider/sources", "Source paused."), status_code=303)
     except provider_sources.NotFound:
         flash = "No such source."
     except provider_sources.InvalidTransition as exc:
         flash = str(exc)
-    return RedirectResponse(_came_from(request, "/admin/sources", flash, kind="error"), status_code=303)
+    return RedirectResponse(_came_from(request, "/provider/sources", flash, kind="error"), status_code=303)
 
 
 @router.post("/{source_id}/resume")
 def resume(source_id: str, request: Request, session: Session = Depends(get_session)) -> RedirectResponse:
     try:
         provider_sources.resume(session, source_id)
-        return RedirectResponse(_came_from(request, "/admin/sources", "Source resumed."), status_code=303)
+        return RedirectResponse(_came_from(request, "/provider/sources", "Source resumed."), status_code=303)
     except provider_sources.NotFound:
         flash = "No such source."
     except provider_sources.InvalidTransition as exc:
         flash = str(exc)
-    return RedirectResponse(_came_from(request, "/admin/sources", flash, kind="error"), status_code=303)
+    return RedirectResponse(_came_from(request, "/provider/sources", flash, kind="error"), status_code=303)
 
 
 @router.post("/{source_id}/check-connection")
@@ -112,11 +102,11 @@ def check_connection(source_id: str, request: Request, session: Session = Depend
         source = connection_check.check_connection(session, source_id)
     except provider_sources.NotFound:
         return RedirectResponse(
-            _came_from(request, "/admin/sources", "No such source.", kind="error"), status_code=303
+            _came_from(request, "/provider/sources", "No such source.", kind="error"), status_code=303
         )
     kind = "success" if source.last_check_status == "ok" else "error"
     return RedirectResponse(
-        _came_from(request, "/admin/sources", "Connection check: %s" % source.last_check_message, kind=kind),
+        _came_from(request, "/provider/sources", "Connection check: %s" % source.last_check_message, kind=kind),
         status_code=303,
     )
 
@@ -130,9 +120,9 @@ def delete_source(source_id: str, request: Request, session: Session = Depends(g
         removed = provider_sources.delete(session, source_id)
     except provider_sources.NotFound:
         return RedirectResponse(
-            _came_from(request, "/admin/sources", "No such source.", kind="error"), status_code=303
+            _came_from(request, "/provider/sources", "No such source.", kind="error"), status_code=303
         )
-    return RedirectResponse(_came_from(request, "/admin/sources", " ".join([provider_sources.deletion_summary(removed, stored)] + ckan_warnings)), status_code=303)
+    return RedirectResponse(_came_from(request, "/provider/sources", " ".join([provider_sources.deletion_summary(removed, stored)] + ckan_warnings)), status_code=303)
 
 
 def _size(count: int) -> str:
@@ -177,7 +167,7 @@ def retention_page(source_id: str, request: Request, session: Session = Depends(
     try:
         source = provider_sources.get_or_404(session, source_id)
     except provider_sources.NotFound:
-        return RedirectResponse(_came_from(request, "/admin/sources", "No such source.", kind="error"), status_code=303)
+        return RedirectResponse(_came_from(request, "/provider/sources", "No such source.", kind="error"), status_code=303)
     return templates.TemplateResponse(request, "admin/source_retention.html", _retention_context(source))
 
 
@@ -189,13 +179,13 @@ async def save_retention(source_id: str, request: Request, session: Session = De
     try:
         source = provider_sources.get_or_404(session, source_id)
     except provider_sources.NotFound:
-        return RedirectResponse(_came_from(request, "/admin/sources", "No such source.", kind="error"), status_code=303)
+        return RedirectResponse(_came_from(request, "/provider/sources", "No such source.", kind="error"), status_code=303)
     form = await request.form()
     try:
         loader = retention.parse_choice(form.get("loader"), retention.LOADER_OPTIONS, "files on the loader")
         box = retention.parse_choice(form.get("box"), retention.BOX_OPTIONS, "files on the FTP box")
     except retention.RetentionError as exc:
-        return RedirectResponse(_came_from(request, "/admin/sources", str(exc), kind="error"), status_code=303)
+        return RedirectResponse(_came_from(request, "/provider/sources", str(exc), kind="error"), status_code=303)
 
     old_loader, old_box = retention.loader_days(source), retention.box_days(source)
     loader_shorter = loader != 0 and (old_loader == 0 or loader < old_loader)
@@ -220,10 +210,10 @@ async def save_retention(source_id: str, request: Request, session: Session = De
             return templates.TemplateResponse(request, "admin/source_retention.html", context)
     retention.set_retention(session, source, loader=loader, box=box if retention.applies_to_box(source) else None)
     note = "Retention saved for %s: loader %s%s." % (source.name, retention.label(loader), ", FTP box %s" % retention.label(box) if retention.applies_to_box(source) else "")
-    return RedirectResponse(_came_from(request, "/admin/sources", note), status_code=303)
+    return RedirectResponse(_came_from(request, "/provider/sources", note), status_code=303)
 
 
-_ALLOWED_REDIRECT_PATHS = ("/admin/sources",)
+_ALLOWED_REDIRECT_PATHS = ("/admin/sources", "/provider/sources")
 
 
 def _came_from(request: Request, default: str, flash: str, kind: str = "success") -> str:

@@ -43,7 +43,7 @@ def client():
 
 
 def test_admin_sources_redirects_to_login_when_not_authenticated(client):
-    resp = client.get("/admin/sources", follow_redirects=False)
+    resp = client.get("/provider/sources", follow_redirects=False)
     assert resp.status_code == 303
     assert resp.headers["location"].startswith("/admin/login?next=")
 
@@ -96,7 +96,7 @@ def test_successful_login_grants_access_and_redirects_to_next(client):
     assert resp.headers["location"] == "/admin/ftp"
     assert client.cookies.get("loader_admin_session") is not None
 
-    resp = client.get("/admin/sources", follow_redirects=False)
+    resp = client.get("/provider/sources", follow_redirects=False)
     assert resp.status_code == 200
 
 
@@ -112,10 +112,10 @@ def test_login_rejects_an_open_redirect_via_next(client):
 
 def test_logout_clears_the_session(client):
     client.post("/admin/login", data={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD})
-    assert client.get("/admin/sources", follow_redirects=False).status_code == 200
+    assert client.get("/provider/sources", follow_redirects=False).status_code == 200
 
     client.post("/admin/logout")
-    resp = client.get("/admin/sources", follow_redirects=False)
+    resp = client.get("/provider/sources", follow_redirects=False)
     assert resp.status_code == 303
     assert resp.headers["location"].startswith("/admin/login")
 
@@ -124,16 +124,16 @@ def test_a_tampered_cookie_is_rejected(client):
     client.post("/admin/login", data={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD})
     good_cookie = client.cookies.get("loader_admin_session")
     client.cookies.set("loader_admin_session", good_cookie[:-1] + ("0" if good_cookie[-1] != "0" else "1"))
-    resp = client.get("/admin/sources", follow_redirects=False)
+    resp = client.get("/provider/sources", follow_redirects=False)
     assert resp.status_code == 303
 
 
 def test_rotating_the_session_secret_invalidates_existing_sessions(client, monkeypatch):
     client.post("/admin/login", data={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD})
-    assert client.get("/admin/sources", follow_redirects=False).status_code == 200
+    assert client.get("/provider/sources", follow_redirects=False).status_code == 200
 
     monkeypatch.setenv("LOADER_ADMIN_SESSION_SECRET", "a-different-secret")
-    resp = client.get("/admin/sources", follow_redirects=False)
+    resp = client.get("/provider/sources", follow_redirects=False)
     assert resp.status_code == 303
 
 

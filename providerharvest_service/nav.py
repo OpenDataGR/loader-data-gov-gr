@@ -1,6 +1,6 @@
 """Things the masthead needs on every page, not just the page that owns them.
 
-``pending_approvals`` is the number on the *Admin dashboard* tab: how many
+``pending_approvals`` is the number on the *Extract Box* tab (a super admin sees it): how many
 registered sources are waiting for an admin to approve them. It is a Jinja
 global (see each ``ui_*`` module's ``templates.env.globals``) so every page
 that extends ``base.html`` can show it without each route having to pass it.

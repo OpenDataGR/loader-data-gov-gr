@@ -31,7 +31,7 @@ The service follows an ETL flow, and its tabs follow it: sources come **in**, ma
 | **Extract Box** | the sources: registering them, how they deliver (pull over HTTP/SFTP/FTP, or push by API key or FTP/SFTP login), their runs and files | built (this was "Provider portal") |
 | **Transform Box** | turning what was extracted into what is wanted: read the format, add columns from an index table, filter, rename, convert, output | built (first slice, below) |
 | **Load Box** | sending the result out to data.gov.gr or elsewhere | first slice built (published API address, below); CKAN push planned |
-| Admin dashboard, **Data boxes**, Security box | operating it: approvals and retention; the HTTP and FTP machines; access control | built |
+| **Data boxes**, Security box (super admins) | operating it: the HTTP and FTP machines; access control | built |
 
 Only the tab is renamed for now; the addresses (`/provider/...`) are unchanged so existing links and the providers' own
 bookmarks keep working.
@@ -175,7 +175,7 @@ registration; making them viewable would mean storing them recoverably, and a
 leaked database would then hand over every provider's password. What an admin can
 do instead -- all on the source's **Credentials page**
 (`/provider/sources/{id}/credentials`, linked from the "..." menu of every push
-source in the portal and on the admin dashboard; one home for a push source's
+source in the portal and on the Extract Box; one home for a push source's
 login or API key, its allowed senders and its last activity, with no copies of
 those controls elsewhere: the FTP box page shows a provider's own account
 read-only with a "Manage on the source" link, and only accounts an admin made by
@@ -295,7 +295,7 @@ loader retention: contents emptied, row kept. Only file inputs are transformed s
 filters. A File column shows each run's file name and size, and marks one whose contents retention removed. Anything in the
 address that is not an offered value falls back to the default and is never echoed back.
 
-**Data retention per source** (`retention.py`; Admin dashboard -> a source's "..." menu -> *Data retention*). Two
+**Data retention per source** (`retention.py`; Extract Box, for a super admin -> a source's "..." menu -> *Data retention*). Two
 fixed-choice dropdowns on each source: how long the **loader** keeps a received file's contents (7, 30, 90, 180, 365
 days or forever; default 90) and, for an FTP push source, how long the **FTP box** keeps its archive of forwarded
 files (1, 7, 14, 30, 90 days or forever; default 30). Stored in the source's `config`; an edit keeps it. On the loader
@@ -805,3 +805,5 @@ all passing with zero CKAN present.
 ./.venv/Scripts/python.exe -m providerharvest_service.app   # or: uvicorn providerharvest_service.app:app --reload
 curl http://127.0.0.1:8000/health
 ```
+
+**The admin dashboard is part of the Extract Box.** It used to be a tab of its own that repeated the Extract Box's list and added two things: the approval queue (*Activate* / *Reject* with a reason for a newly registered source) and each source's data retention. Both now sit in the Extract Box and are shown only to a **super admin**: an *Awaiting approval* panel above the list, and *Activate* / *Reject* / *Data retention* in the actions. Everything under `/admin/sources/<id>/...` (approve, reject, pause, resume, delete, retention) is refused to anyone who is not a super admin (`admin_session.needs_superadmin`); `/admin/sources` itself, and the old `/admin/sources/pending`, lead to the Extract Box. The number of sources waiting for approval is on the Extract Box tab, for a super admin.

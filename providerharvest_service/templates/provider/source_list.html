@@ -9,6 +9,40 @@
     {{ macros.stat_tile("rejected", counts.rejected, "rejected") }}
   </div>
 
+  {% if is_admin and pending_sources %}
+  <div class="panel" id="pending" style="border-left:4px solid #e0a100; margin-bottom:1.2rem;">
+    <h1>Awaiting approval <span class="nav-count" style="vertical-align:middle;">{{ pending_sources|length }}</span></h1>
+    <p class="subtitle">New registrations land here first -- activate to let them run, or reject with a reason.</p>
+    <table>
+      <thead>
+        <tr><th>Source</th><th>Type</th><th>Endpoint / sender</th><th>Notification e-mail</th><th>Registered</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for s in pending_sources %}
+        <tr>
+          <td><div class="name-title">{{ s.title }}</div><div class="name-slug">{{ s.name }}</div></td>
+          <td>{{ macros.type_badges(s) }}</td>
+          <td class="muted">{% if s.kind == "push" %}{{ macros.push_origin(s) }}{% else %}{{ s.endpoint_url }}{% endif %}</td>
+          <td class="muted">{{ s.notification_email or "--" }}</td>
+          <td class="muted">{{ s.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+          <td class="actions-cell">
+            <div class="row-actions">
+              <form class="inline" method="post" action="/admin/sources/{{ s.id }}/activate">
+                <button type="submit" class="btn-sm">{{ macros.icon("check", 14) }} Activate</button>
+              </form>
+              <form class="inline" method="post" action="/admin/sources/{{ s.id }}/reject">
+                <input type="text" name="reason" class="small" placeholder="reason (optional)" style="margin:0; max-width:11rem; width:11rem;">
+                <button type="submit" class="btn-danger btn-sm">{{ macros.icon("x", 14) }} Reject</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
   <div class="panel">
     <div class="top-actions">
       <h1 style="margin-bottom:0">My registered sources</h1>
@@ -46,8 +80,8 @@
             <td>{{ macros.health_badge(s) }}</td>
             <td class="actions-cell">
               <div class="row-actions">
-                {{ macros.primary_action(s, "/provider/sources") }}
-                {{ macros.actions_menu(s, "/provider/sources") }}
+                {{ macros.primary_action(s, action_prefix, is_admin=is_admin) }}
+                {{ macros.actions_menu(s, action_prefix, is_admin=is_admin) }}
               </div>
             </td>
           </tr>

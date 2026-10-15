@@ -120,11 +120,12 @@ SUPERADMIN_ONLY_MESSAGE = "Only super admins can open the Data boxes and the Sec
 
 
 def needs_superadmin(path: str) -> bool:
-    """The pages (and their actions) only a super admin may use: the Data boxes page with its box actions and log
-    viewers, and everything in the Security box. The per-account FTP actions under /admin/ftp/<account>/... are part
+    """The pages (and their actions) only a super admin may use: approving, rejecting and the data retention of a source (they are
+    on the Extract Box for a super admin), the Data boxes page with its box actions and log viewers, and everything in the Security box. The per-account FTP actions under /admin/ftp/<account>/... are part
     of managing a source and stay open to everyone who is signed in."""
     return (
-        path == "/admin/ftp" or path.startswith(("/admin/ftp/http-box", "/admin/ftp/boxes/"))
+        path.startswith("/admin/sources/")  # approving or rejecting a source, its data retention, and the other actions of the old admin dashboard
+        or path == "/admin/ftp" or path.startswith(("/admin/ftp/http-box", "/admin/ftp/boxes/"))
         or path == "/admin/security" or path.startswith("/admin/security/")
     )
 

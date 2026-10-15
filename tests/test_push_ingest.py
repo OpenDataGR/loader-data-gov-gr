@@ -469,7 +469,7 @@ def test_the_sources_menu_links_to_credentials_for_push_sources_only_and_holds_n
     page = client.get("/provider/sources").text
     assert page.count("/credentials") == 2 and 'href="/provider/sources/%s/credentials"' % https_id in page  # both push sources, not the pull one
     assert "/rotate-key" not in page and "rotate-password" not in page  # one home: the Credentials page
-    admin_page = client.get("/admin/sources").text
+    admin_page = client.get("/provider/sources").text
     assert admin_page.count("/credentials") == 2 and "/rotate-key" not in admin_page
 
 
