@@ -36,6 +36,7 @@ from providerharvest_service.ftp_relay_ingest import router as ftp_relay_ingest_
 from providerharvest_service.load_api import router as load_api_router
 from providerharvest_service.ui_load import router as load_ui_router
 from providerharvest_service.ui_ckan import router as ckan_ui_router
+from providerharvest_service.ui_overview import router as overview_ui_router
 from providerharvest_service.ui_source_tables import router as source_tables_ui_router
 from providerharvest_service.push_ingest import router as push_ingest_router
 from providerharvest_service.ui_admin import router as admin_sources_ui_router
@@ -90,6 +91,7 @@ app.include_router(oidc_login_router)
 app.include_router(load_api_router)
 app.include_router(load_ui_router)
 app.include_router(ckan_ui_router)
+app.include_router(overview_ui_router)
 app.include_router(push_ingest_router)
 app.include_router(ftp_relay_ingest_router)
 

@@ -425,6 +425,7 @@
     <nav class="masthead-nav">
       {# No menu on the login page: nothing in it is for someone who has not signed in. #}
       {% if request.url.path != '/admin/login' %}
+      <a href="/overview" class="{{ 'active' if request.url.path.startswith('/overview') else '' }}">{{ macros.icon("flow", 16) }} Overview</a>
       {# Sources waiting for approval, as a number on the Extract Box tab -- only for a super admin, who is the one to approve them. Not on the login
          page: nothing about the queue is for someone who has not logged in. #}
       {% set pending_n = pending_approvals() if (pending_approvals is defined and request.url.path != '/admin/login' and who and who.super) else 0 %}

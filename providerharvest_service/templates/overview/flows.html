@@ -1,0 +1,247 @@
+{% extends "base.html" %}
+{% import "_macros.html" as macros %}
+{% block title %}Overview -- loader.data.gov.gr{% endblock %}
+{% block content %}
+  <style>
+    .ov { --c-input: #0b7a75; --c-transform: #4a4fb5; --c-output: #2e7d32; --c-dest: #b26a00; --c-ckan: #0a4d8c; --line-live: #1b6ec2; --line-idle: #b6bfcc; }
+    .ov-bar { display: flex; flex-wrap: wrap; gap: 0.6rem 1rem; align-items: center; margin: 0.4rem 0 0.2rem; }
+    .ov-bar input[type="search"] { width: 19rem; max-width: 100%; margin: 0; border: 1px solid var(--color-border); border-radius: 6px; padding: 0.5rem 0.8rem; font: inherit; background: var(--color-surface); }
+    .ov-bar select { width: auto; margin: 0; }
+    .ov-chips { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+    .ov-chip { background: var(--color-surface); color: var(--color-text); border: 1px solid var(--color-border); border-radius: 999px; padding: 0.25rem 0.8rem; font-size: 0.82rem; font-weight: 600; cursor: pointer; }
+    .ov-chip:hover { border-color: var(--color-primary-mid); }
+    .ov-chip[aria-pressed="true"] { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
+    .ov-chip .n { opacity: 0.7; font-weight: 500; margin-left: 0.25rem; }
+    .ov-legend { display: flex; gap: 1.1rem; flex-wrap: wrap; font-size: 0.8rem; color: var(--color-gray-700); margin-top: 0.6rem; }
+    .ov-legend i { display: inline-block; width: 0.7rem; height: 0.7rem; border-radius: 3px; margin-right: 0.35rem; vertical-align: -0.05rem; }
+    .ov-legend .flowline { display: inline-block; width: 2rem; height: 0; border-top: 2px dashed var(--line-live); margin-right: 0.35rem; vertical-align: 0.25rem; }
+    .ov-legend .idleline { border-top-color: var(--line-idle); }
+    .org-group { margin-top: 1.6rem; }
+    .org-group > h2 { font-size: 1.05rem; margin: 0 0 0.5rem; display: flex; align-items: center; gap: 0.5rem; }
+    .org-group > h2 .count { font-size: 0.78rem; font-weight: 600; color: var(--color-gray-700); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 999px; padding: 0 0.55rem; }
+    .org-group.unassigned > h2 { color: var(--color-gray-700); }
+
+    .flow { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: calc(var(--radius) + 4px); box-shadow: 0 1px 3px rgba(20, 40, 80, 0.06); margin-bottom: 1.1rem; overflow-x: auto; }
+    .flow[hidden] { display: none; }
+    .flow-inner { position: relative; padding: 1.2rem 1.4rem; min-width: 56rem; }
+    .flow-lines { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+    .flow-lines path { fill: none; stroke-width: 2.2; stroke-linecap: round; }
+    .flow-lines .idle { stroke: var(--line-idle); stroke-dasharray: 3 6; }
+    .flow-lines .live { stroke: var(--line-live); stroke-dasharray: 7 9; animation: ovflow 1.15s linear infinite; opacity: 0.85; }
+    .flow-lines circle { fill: var(--line-idle); }
+    .flow-lines circle.live { fill: var(--line-live); }
+    @keyframes ovflow { to { stroke-dashoffset: -16; } }
+    @media (prefers-reduced-motion: reduce) { .flow-lines .live { animation: none; } }
+    .flow-grid { position: relative; display: grid; grid-template-columns: 14.5rem 1fr; column-gap: 2.6rem; align-items: center; }
+    .flow-rows { display: flex; flex-direction: column; gap: 1rem; }
+    .flow-row { display: grid; grid-template-columns: 14.5rem 10.5rem minmax(11rem, 1fr); column-gap: 2.4rem; align-items: center; }
+    .dests { display: flex; flex-direction: column; gap: 0.55rem; min-width: 0; }
+
+    .node { display: block; position: relative; background: #fff; color: var(--color-text); border: 1px solid var(--color-border); border-left: 5px solid var(--accent, #999); border-radius: 10px;
+            padding: 0.6rem 0.8rem 0.65rem; text-decoration: none; box-shadow: 0 1px 2px rgba(20, 40, 80, 0.07); transition: transform 0.12s ease, box-shadow 0.12s ease; }
+    .node:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(20, 40, 80, 0.16); }
+    .node:focus-visible { outline: 3px solid var(--color-primary-mid); outline-offset: 2px; }
+    .node-input { --accent: var(--c-input); }
+    .node-transform { --accent: var(--c-transform); }
+    .node-output { --accent: var(--c-output); }
+    .node-dest { --accent: var(--c-dest); padding: 0.45rem 0.7rem 0.5rem; }
+    .node-ckan { --accent: var(--c-ckan); padding: 0.45rem 0.7rem 0.5rem; }
+    .node.ghost { background: transparent; border-style: dashed; border-left-style: dashed; color: var(--color-gray-700); box-shadow: none; }
+    .node.dim { opacity: 0.62; }
+    .node-kind { display: block; font-size: 0.66rem; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--accent); }
+    .node-title { display: block; font-weight: 700; font-size: 0.95rem; line-height: 1.25; margin-top: 0.1rem; word-break: break-word; }
+    .node-sub { display: block; font-size: 0.76rem; color: var(--color-gray-700); font-family: ui-monospace, Consolas, monospace; overflow-wrap: anywhere; }
+    .node-line { display: flex; flex-wrap: wrap; gap: 0.25rem; align-items: center; margin-top: 0.4rem; }
+    .node-meta { display: block; font-size: 0.78rem; color: var(--color-gray-700); margin-top: 0.3rem; }
+    .node .bad { color: var(--status-rejected); font-weight: 600; }
+    .chip { display: inline-block; background: #eef0fb; color: #3b3f93; border-radius: 6px; padding: 0.05rem 0.45rem; font-size: 0.72rem; font-weight: 600; line-height: 1.5; }
+    .chip.soft { background: #eef2f6; color: #4a5565; }
+    .chip.warn { background: #fff3cd; color: #7a5b00; }
+    .state { display: inline-block; border-radius: 999px; padding: 0 0.5rem; font-size: 0.7rem; font-weight: 700; line-height: 1.55; white-space: nowrap; }
+    .state.on { background: #dff3e4; color: #1e6b34; }
+    .state.off { background: #e6e9ef; color: #46505e; }
+    .state.err { background: #fde3e1; color: #9b1c14; }
+    .state.wait { background: #fff3cd; color: #7a5b00; }
+    .ov-empty { text-align: center; padding: 2.2rem 1rem; color: var(--color-gray-700); }
+    .ov-none { display: none; text-align: center; color: var(--color-gray-700); padding: 1.5rem 0; }
+  </style>
+
+  <div class="panel ov">
+    <h1>Overview</h1>
+    <p class="subtitle">
+      {% if is_super %}Every source and its pipelines, from the input to where the data goes.
+      {% elif scope.organizations %}The pipelines of the organizations you administer ({{ scope.organizations|join(", ") }}), from the input to where the data goes.
+      {% else %}The pipelines of your organizations, from the input to where the data goes.{% endif %}
+      {{ flows|length }} source{{ "" if flows|length == 1 else "s" }}, {{ pipeline_count }} pipeline{{ "" if pipeline_count == 1 else "s" }}.
+    </p>
+    {% if scope.notice %}<div class="flash flash-error">{{ scope.notice }}</div>{% endif %}
+
+    {% if flows %}
+    <div class="ov-bar">
+      <input type="search" id="ov-q" placeholder="Search a source, pipeline or dataset" aria-label="Search">
+      <div class="ov-chips" role="group" aria-label="Show">
+        <button type="button" class="ov-chip" data-flag="" aria-pressed="true">All<span class="n">{{ flows|length }}</span></button>
+        <button type="button" class="ov-chip" data-flag="running" aria-pressed="false">Running<span class="n">{{ flags.running }}</span></button>
+        <button type="button" class="ov-chip" data-flag="attention" aria-pressed="false">Needs attention<span class="n">{{ flags.attention }}</span></button>
+        <button type="button" class="ov-chip" data-flag="paused" aria-pressed="false">Paused or waiting<span class="n">{{ flags.paused }}</span></button>
+        <button type="button" class="ov-chip" data-flag="idle" aria-pressed="false">Not delivering<span class="n">{{ flags.idle }}</span></button>
+      </div>
+      {% if groups|length > 1 %}
+      <select id="ov-org" aria-label="Organization"><option value="">All organizations</option>{% for g in groups %}<option value="{{ g.title }}">{{ g.title }}</option>{% endfor %}</select>
+      {% endif %}
+    </div>
+    <div class="ov-legend" aria-hidden="true">
+      <span><i style="background:var(--c-input)"></i>Input (the source)</span><span><i style="background:var(--c-transform)"></i>Transform (the steps)</span>
+      <span><i style="background:var(--c-output)"></i>Output</span><span><i style="background:var(--c-dest)"></i>Published address</span><span><i style="background:var(--c-ckan)"></i>CKAN</span>
+      <span><span class="flowline"></span>live</span><span><span class="flowline idleline"></span>not running</span>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if not flows %}
+    <div class="panel ov" style="margin-top:1.2rem;"><div class="ov-empty">{{ macros.icon("inbox", 40) }}<p>{% if scope.notice %}Nothing to show.{% else %}No sources yet. Register one in the Extract Box first.{% endif %}</p></div></div>
+  {% endif %}
+
+  <div class="ov" id="ov-groups">
+  {% for g in groups %}
+  <section class="org-group{{ '' if g.assigned else ' unassigned' }}" data-org="{{ g.title }}">
+    <h2>{{ g.title }} <span class="count">{{ g.flows|length }}</span>{% if not g.assigned %}<span class="muted" style="font-weight:400; font-size:0.8rem;">only super admins see these</span>{% endif %}</h2>
+    {% for f in g.flows %}
+    {% set s = f.source %}
+    <article class="flow" data-flag="{{ f.flag }}" data-text="{{ f.text }}" id="flow-{{ s.id }}">
+      <div class="flow-inner">
+        <svg class="flow-lines" aria-hidden="true"></svg>
+        <div class="flow-grid">
+          <a class="node node-input{{ '' if s.status == 'active' else ' dim' }}" href="{{ f.edit_url }}" data-node="s"
+             data-to="{% for p in f.pipelines %}p{{ loop.index0 }}t {% endfor %}{% if not f.pipelines %}x0 {% endif %}" data-live="{{ 1 if s.status == 'active' else 0 }}" aria-label="Input: {{ s.title }}">
+            <span class="node-kind">Input</span>
+            <span class="node-title">{{ s.title }}</span>
+            <span class="node-sub">{{ s.name }}</span>
+            <span class="node-line">{{ macros.type_badges(s) }}</span>
+            <span class="node-line">{{ macros.status_badge(s.status) }} {{ macros.health_badge(s) }}</span>
+            <span class="node-meta">{% if s.transport_type == "push" %}files arrive when the provider sends them{% elif s.transport_type == "http" and s.proxy_method == "POST" %}asked on demand, when someone calls{% else %}pulled {{ s.frequency|lower }}{% endif %}</span>
+          </a>
+          <div class="flow-rows">
+            {% for p in f.pipelines %}
+            {% set i = loop.index0 %}
+            <div class="flow-row">
+              <a class="node node-transform{{ '' if p.live else ' dim' }}" href="{{ p.transform_url }}" data-node="p{{ i }}t" data-to="p{{ i }}o" data-live="{{ 1 if p.live else 0 }}" aria-label="Transform: {{ p.name }}">
+                <span class="node-kind">Transform</span>
+                <span class="node-title">{{ p.name }} <span class="state {{ 'on' if p.enabled else 'off' }}">{{ "on" if p.enabled else "off" }}</span></span>
+                <span class="node-line">
+                  {% if p.steps %}{% for c in p.steps %}<span class="chip" title="{{ c.what }}">{{ c.label }}</span>{% endfor %}
+                  {% else %}<span class="chip soft">no steps: passes it through</span>{% endif %}
+                  {% if p.turned %}<span class="chip warn" title="{{ p.request }}">request turned around</span>{% endif %}
+                </span>
+              </a>
+              <a class="node node-output{{ '' if p.live else ' dim' }}" href="{{ p.output_url }}" data-node="p{{ i }}o" data-to="{% if p.published %}p{{ i }}d0 {% endif %}{% if p.ckan %}p{{ i }}d{{ 1 if p.published else 0 }} {% endif %}{% if not p.published and not p.ckan %}p{{ i }}g{% endif %}" data-live="{{ 1 if p.live else 0 }}" aria-label="Output: {{ p.output }}">
+                <span class="node-kind">Output</span>
+                <span class="node-title">{{ p.output }}</span>
+                <span class="node-meta">{% if s.transport_type == "http" %}built when someone calls{% else %}{{ "{:,}".format(p.ok) }} ok{% if p.failed %}, <span class="bad">{{ "{:,}".format(p.failed) }} failed</span>{% endif %}{% if p.latest %} &middot; {{ p.latest|short_utc }} UTC{% endif %}{% endif %}</span>
+              </a>
+              <div class="dests">
+                {% if p.published %}
+                <a class="node node-dest" href="{{ p.url }}" target="_blank" rel="noopener" data-node="p{{ i }}d0" data-live="1" aria-label="Published at {{ p.path }}">
+                  <span class="node-kind">Published</span>
+                  <span class="node-sub">{{ p.path }}</span>
+                  <span class="node-line"><span class="state on">live</span></span>
+                </a>
+                {% endif %}
+                {% if p.ckan %}
+                <a class="node node-ckan" href="{{ p.ckan_link }}" data-node="p{{ i }}d{{ 1 if p.published else 0 }}" data-live="{{ 1 if p.ckan.state == 'ok' else 0 }}" aria-label="CKAN: {{ p.ckan.title }}">
+                  <span class="node-kind">CKAN &middot; {{ p.ckan.mode_label }}</span>
+                  <span class="node-title" style="font-size:0.85rem;">{{ p.ckan.title or "(not pushed yet)" }}</span>
+                  <span class="node-line"><span class="state {{ 'on' if p.ckan.state == 'ok' else ('err' if p.ckan.state == 'error' else 'wait') }}" title="{{ p.ckan.text }}">{{ "in CKAN" if p.ckan.state == 'ok' else ("failed" if p.ckan.state == 'error' else "not in CKAN") }}</span></span>
+                </a>
+                {% endif %}
+                {% if not p.published and not p.ckan %}
+                <a class="node node-dest ghost" href="{{ p.load_url }}" data-node="p{{ i }}g" data-live="0" aria-label="Not delivered anywhere yet">
+                  <span class="node-kind">Not delivered yet</span>
+                  <span class="node-meta" style="margin-top:0.1rem;">Publish it in the Load Box</span>
+                </a>
+                {% endif %}
+              </div>
+            </div>
+            {% endfor %}
+            {% if not f.pipelines %}
+            <div class="flow-row" style="grid-template-columns: 14.5rem;">
+              <a class="node node-transform ghost" href="{{ f.setup_url }}" data-node="x0" data-live="0" aria-label="Set up a transform"><span class="node-kind">Transform</span><span class="node-title">No pipeline yet</span><span class="node-meta">Set one up in the Transform Box</span></a>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </article>
+    {% endfor %}
+  </section>
+  {% endfor %}
+  </div>
+  <p class="ov-none" id="ov-none">Nothing matches.</p>
+
+  <script>
+    (function () {
+      var SVG = 'http://www.w3.org/2000/svg';
+      function el(name, attrs) { var e = document.createElementNS(SVG, name); Object.keys(attrs).forEach(function (k) { e.setAttribute(k, attrs[k]); }); return e; }
+
+      // A curved connector from the right edge of one box to the left edge of the next; live (animated) when both ends are running.
+      function curve(x1, y1, x2, y2) {
+        var dx = Math.max(24, (x2 - x1) / 2);
+        return 'M' + x1 + ' ' + y1 + ' C' + (x1 + dx) + ' ' + y1 + ' ' + (x2 - dx) + ' ' + y2 + ' ' + x2 + ' ' + y2;
+      }
+      function drawFlow(flow) {
+        var inner = flow.querySelector('.flow-inner'), svg = flow.querySelector('.flow-lines');
+        if (!inner || !svg || flow.hidden) return;
+        while (svg.firstChild) svg.removeChild(svg.firstChild);
+        var base = inner.getBoundingClientRect();
+        svg.setAttribute('viewBox', '0 0 ' + base.width + ' ' + base.height);
+        flow.querySelectorAll('[data-to]').forEach(function (from) {
+          from.getAttribute('data-to').split(/\s+/).filter(Boolean).forEach(function (id) {
+            var to = flow.querySelector('[data-node="' + id + '"]');
+            if (!to) return;
+            var a = from.getBoundingClientRect(), b = to.getBoundingClientRect();
+            var x1 = a.right - base.left, y1 = a.top + a.height / 2 - base.top, x2 = b.left - base.left - 3, y2 = b.top + b.height / 2 - base.top;
+            var live = from.getAttribute('data-live') === '1' && to.getAttribute('data-live') === '1';
+            svg.appendChild(el('path', {d: curve(x1, y1, x2, y2), 'class': live ? 'live' : 'idle'}));
+            svg.appendChild(el('circle', {cx: x2, cy: y2, r: 3.4, 'class': live ? 'live' : 'idle'}));
+          });
+        });
+      }
+      function drawAll() { document.querySelectorAll('.flow').forEach(drawFlow); }
+
+      // filters: search text, the state of the source, the organization
+      var q = document.getElementById('ov-q'), chips = document.querySelectorAll('.ov-chip'), org = document.getElementById('ov-org');
+      var flag = '';
+      function apply() {
+        var term = q ? q.value.trim().toLowerCase() : '', wanted = org ? org.value : '', shown = 0;
+        document.querySelectorAll('.org-group').forEach(function (group) {
+          var any = false;
+          group.querySelectorAll('.flow').forEach(function (flow) {
+            var f = flow.getAttribute('data-flag'), match = true;
+            if (flag === 'paused') match = f === 'paused' || f === 'pending' || f === 'rejected'; else if (flag) match = f === flag;
+            if (term && flow.getAttribute('data-text').indexOf(term) < 0) match = false;
+            if (wanted && group.getAttribute('data-org') !== wanted) match = false;
+            flow.hidden = !match;
+            if (match) { any = true; shown++; }
+          });
+          group.hidden = !any;
+        });
+        var none = document.getElementById('ov-none'); if (none) none.style.display = shown ? 'none' : 'block';
+        drawAll();
+      }
+      if (q) q.addEventListener('input', apply);
+      if (org) org.addEventListener('change', apply);
+      chips.forEach(function (chip) {
+        chip.addEventListener('click', function () {
+          flag = chip.getAttribute('data-flag');
+          chips.forEach(function (c) { c.setAttribute('aria-pressed', c === chip ? 'true' : 'false'); });
+          apply();
+        });
+      });
+
+      window.addEventListener('resize', drawAll);
+      if (window.ResizeObserver) { var ro = new ResizeObserver(drawAll); document.querySelectorAll('.flow-inner').forEach(function (n) { ro.observe(n); }); }
+      if (document.fonts && document.fonts.ready) document.fonts.ready.then(drawAll);
+      drawAll();
+    })();
+  </script>
+{% endblock %}
