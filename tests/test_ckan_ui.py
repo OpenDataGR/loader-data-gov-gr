@@ -16,7 +16,7 @@ from tests.test_transform_ui import (  # noqa: F401  (fixtures and helpers share
 @pytest.fixture
 def ckan(monkeypatch):
     """CKAN is configured, the signed-in person is user_abc, and every CKAN call goes to one fake."""
-    fake = FakeCkan()
+    fake = FakeCkan()  # (which also empties the little cache of organizations)
     monkeypatch.setenv("CKAN_BASE_URL", "https://ckan.example.gr")
     monkeypatch.setenv("CKAN_SYSADMIN_API_TOKEN", "sysadmin-token")
     monkeypatch.setenv("LOADER_PUBLIC_BASE_URL", BASE)
@@ -221,6 +221,8 @@ def test_the_organizations_are_listed_for_the_first_step(client, source, ckan):
     found = client.get("/load/ckan/organizations")
     assert found.status_code == 200 and found.json()["organizations"] == [{"id": "org2", "name": "air", "title": "Air", "package_count": None},
                                                                      {"id": "org1", "name": "traffic", "title": "Traffic", "package_count": None}]
+    assert client.get("/load/ckan/organizations").status_code == 200 and len(ckan.calls) == 1  # asked once, then kept for a while
+    ckan_load._ORG_CACHE.clear()
     ckan.fail["organization_list_for_user"] = ckan_client.CKANActionError("organization_list_for_user", "boom")
     failed = client.get("/load/ckan/organizations")
     assert failed.status_code == 502 and "could not be reached" in failed.json()["error"]
@@ -229,8 +231,7 @@ def test_the_organizations_are_listed_for_the_first_step(client, source, ckan):
 def test_the_datasets_are_searched_within_the_chosen_organization(client, source, ckan):
     found = client.get("/load/ckan/datasets", params={"q": "air", "org": "org2"})
     assert found.status_code == 200 and ckan.calls[-1][1]["fq"] == "owner_org:(org2)"
-    refused = client.get("/load/ckan/datasets", params={"org": "org-not-mine"})
-    assert refused.status_code == 502 and "may not add datasets to that organization" in refused.json()["error"]
+    assert [c[0] for c in ckan.calls] == ["package_search"]  # (the person's organizations are not asked for again)
 
 
 def test_the_organization_endpoints_are_refused_without_a_ckan_identity(client, source, monkeypatch):
@@ -254,6 +255,7 @@ def test_the_dataset_must_be_in_the_chosen_organization_and_the_organization_one
 def test_the_page_script_loads_organizations_first_then_searches_the_datasets_of_the_one_chosen(client, source, ckan):
     _setup(client, source)
     page = client.get(_page(source["id"])).text
+    assert "b.textContent = 'Retry'" in page and "say(dsResults, data.error, searchDatasets)" in page  # an error comes with a Retry button
     assert "fetch('/load/ckan/organizations'" in page and "'/load/ckan/datasets?org=' + encodeURIComponent(orgField.value)" in page
     assert 'id="ds-q" placeholder="Search the datasets of the chosen organization' in page and "disabled" in page.split('id="ds-q"')[1].split(">")[0]  # off until an organization is chosen
 

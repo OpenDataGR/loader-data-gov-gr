@@ -16,6 +16,7 @@ class FakeCkan:
     """Just enough of CKAN's Action API: organizations, a dataset search, resource create / update / delete."""
 
     def __init__(self):
+        ckan_load._ORG_CACHE.clear()
         self.calls, self.resources, self.fail = [], {}, {}
 
     def call(self, action, data, files=None):
@@ -213,12 +214,45 @@ def test_the_organizations_are_those_the_person_may_add_to_sorted_by_title():
     assert [(o.id, o.title) for o in found] == [("org2", "Air"), ("org1", "Traffic")]
 
 
-def test_a_dataset_search_can_be_limited_to_one_organization_but_never_to_one_the_person_may_not_use():
+def test_a_dataset_search_within_one_organization_does_not_ask_for_the_persons_organizations_again():
     ckan = FakeCkan()
     ckan_load.search_datasets(ckan, "user_abc", "x", organization_id="org2")
-    assert ckan.calls[-1][1]["fq"] == "owner_org:(org2)"
-    with pytest.raises(ckan_load.CkanLoadError, match="may not add datasets to that organization"):
-        ckan_load.search_datasets(ckan, "user_abc", organization_id="org-not-mine")
+    assert [c[0] for c in ckan.calls] == ["package_search"] and ckan.calls[-1][1]["fq"] == "owner_org:(org2)"  # the slow call is not repeated per search
+
+
+def test_the_organizations_are_kept_for_a_short_while_and_asked_again_after(monkeypatch):
+    ckan = FakeCkan()
+    ckan_load.list_organizations(ckan, "user_abc")
+    ckan_load.list_organizations(ckan, "user_abc")
+    assert [c[0] for c in ckan.calls] == ["organization_list_for_user"]  # the second came from the cache
+    monkeypatch.setattr(ckan_load, "ORG_CACHE_SECONDS", 0.0)
+    ckan_load.list_organizations(ckan, "user_abc")
+    assert [c[0] for c in ckan.calls] == ["organization_list_for_user", "organization_list_for_user"]
+    ckan_load.list_organizations(ckan, "someone-else")  # another person's list is theirs
+    assert len(ckan.calls) == 3
+
+
+def test_a_read_that_gets_a_server_error_is_tried_once_more_but_a_refusal_is_not():
+    class Flaky(FakeCkan):
+        def call(self, action, data, files=None):
+            self.calls.append((action, data, files))
+            if action == "package_search" and sum(1 for c in self.calls if c[0] == "package_search") == 1:
+                raise ckan_client.CKANActionError(action, "non-JSON response (HTTP 500)", status_code=500)
+            return {"results": []} if action == "package_search" else FakeCkan.call(self, action, data, files)
+
+    flaky = Flaky()
+    assert ckan_load.search_datasets(flaky, "user_abc", organization_id="org1") == []
+    assert [c[0] for c in flaky.calls] == ["package_search", "package_search"]  # the second try worked
+    refused = FakeCkan()
+    refused.fail["package_search"] = ckan_client.CKANNotAuthorized("package_search", "no")
+    with pytest.raises(ckan_load.CkanLoadError):
+        ckan_load.search_datasets(refused, "user_abc", organization_id="org1")
+    assert [c[0] for c in refused.calls] == ["package_search"]  # not tried again
+    down = FakeCkan()
+    down.fail["package_search"] = ckan_client.CKANActionError("package_search", "non-JSON response (HTTP 500)", status_code=500)
+    with pytest.raises(ckan_load.CkanLoadError, match="could not be reached or failed"):
+        ckan_load.search_datasets(down, "user_abc", organization_id="org1")
+    assert [c[0] for c in down.calls] == ["package_search", "package_search"]  # tried twice, then explained
 
 
 def test_a_failing_organization_list_is_explained():

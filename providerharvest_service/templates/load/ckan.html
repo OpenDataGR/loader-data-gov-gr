@@ -89,7 +89,11 @@
       var dsField = document.getElementById('dataset_id'), dsChosen = document.getElementById('ds-chosen'), dsQ = document.getElementById('ds-q'), dsResults = document.getElementById('ds-results');
       var organizations = null, timer = null;
 
-      function say(box, text) { box.textContent = ''; var p = document.createElement('p'); p.className = 'muted'; p.textContent = text; box.appendChild(p); }
+      function say(box, text, retry) {
+        box.textContent = ''; var p = document.createElement('p'); p.className = 'muted'; p.textContent = text + ' ';
+        if (retry) { var b = document.createElement('button'); b.type = 'button'; b.className = 'btn-secondary btn-sm'; b.textContent = 'Retry'; b.addEventListener('click', retry); p.appendChild(b); }
+        box.appendChild(p);
+      }
       function pill(text, kind) { var s = document.createElement('span'); s.className = 'pill pill-' + kind; s.textContent = text; return s; }
       function hit(box, title, detail, onClick, pills) {
         var b = document.createElement('button'); b.type = 'button'; b.className = 'dataset-hit';
@@ -124,9 +128,9 @@
       function loadOrganizations() {
         if (organizations !== null) { showOrganizations(); return; }
         fetch('/load/ckan/organizations', {credentials: 'same-origin'}).then(function (r) { return r.json(); }).then(function (data) {
-          if (data.error) { say(orgResults, data.error); return; }
+          if (data.error) { say(orgResults, data.error, loadOrganizations); return; }
           organizations = data.organizations; showOrganizations();
-        }).catch(function () { say(orgResults, 'The search failed.'); });
+        }).catch(function () { say(orgResults, 'The search failed.', loadOrganizations); });
       }
       function chooseOrganization(o) {
         var changed = orgField.value !== o.id;
@@ -143,13 +147,13 @@
         if (!orgField.value) return;
         fetch('/load/ckan/datasets?org=' + encodeURIComponent(orgField.value) + '&q=' + encodeURIComponent(dsQ.value), {credentials: 'same-origin'})
           .then(function (r) { return r.json(); }).then(function (data) {
-            if (data.error) { say(dsResults, data.error); return; }
+            if (data.error) { say(dsResults, data.error, searchDatasets); return; }
             dsResults.textContent = '';
             if (!data.datasets.length) { say(dsResults, 'No dataset found in this organization.'); return; }
             data.datasets.forEach(function (d) {
               hit(dsResults, d.title, datasetDetail(d), function () { dsField.value = d.id; chosenText(dsChosen, 'Chosen:', d.title + (d.private ? ' (private)' : ' (public)')); dsResults.textContent = ''; }, datasetPills(d));
             });
-          }).catch(function () { say(dsResults, 'The search failed.'); });
+          }).catch(function () { say(dsResults, 'The search failed.', searchDatasets); });
       }
       dsQ.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(searchDatasets, 300); });
       dsQ.addEventListener('focus', function () { if (!dsResults.children.length) searchDatasets(); });

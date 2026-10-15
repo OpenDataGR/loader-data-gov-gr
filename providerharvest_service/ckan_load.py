@@ -19,6 +19,8 @@ import dataclasses
 import datetime
 import logging
 import os
+import threading
+import time
 
 from sqlalchemy.orm import Session
 
@@ -30,6 +32,12 @@ logger = logging.getLogger(__name__)
 MODES = ("link", "upload")
 MAX_UPLOAD_BYTES = 100 * 1000 * 1000
 _FORMAT_BY_EXTENSION = {".csv": "CSV", ".tsv": "TSV", ".json": "JSON", ".jsonl": "JSON", ".xml": "XML", ".xlsx": "XLSX", ".xls": "XLS"}
+
+
+#: A person's organizations, kept for a short while: asking CKAN for them is the slow call (a sysadmin has hundreds), and the page asks twice.
+_ORG_CACHE: dict[str, tuple[float, list]] = {}
+_ORG_CACHE_LOCK = threading.Lock()
+ORG_CACHE_SECONDS = 120.0
 
 
 class CkanLoadError(Exception):
@@ -85,34 +93,52 @@ def _explain(exc: ckan_client.CKANActionError) -> str:
     return "CKAN could not be reached or failed (%s)." % exc
 
 
+def _read(client: ckan_client.CKANActionClient, action: str, data: dict):
+    """A call that only reads. CKAN now and then answers one of its heavier actions with a server error (HTTP 5xx, or something that is not
+    JSON); the second try nearly always works, so a read gets one."""
+    try:
+        return client.call(action, data)
+    except ckan_client.CKANActionError as exc:
+        if isinstance(exc, (ckan_client.CKANNotAuthorized, ckan_client.CKANNotFound, ckan_client.CKANValidationError)) or not (getattr(exc, "status_code", None) or 0) >= 500:
+            raise
+        logger.info("ckan: %s answered %s, trying once more", action, exc.status_code)
+        return client.call(action, data)
+
+
 # -- finding the dataset -------------------------------------------------------------------------------------------------------------------------------
 
 def list_organizations(client: ckan_client.CKANActionClient, ckan_user: str) -> list[OrganizationChoice]:
-    """The organizations the person may add datasets to (an editor included; a sysadmin gets all of them), by title."""
+    """The organizations the person may add datasets to (an editor included; a sysadmin gets all of them), by title. Kept for two minutes."""
+    now = time.monotonic()
+    with _ORG_CACHE_LOCK:
+        cached = _ORG_CACHE.get(ckan_user)
+        if cached and now - cached[0] < ORG_CACHE_SECONDS:
+            return list(cached[1])
     try:
-        organizations = client.call("organization_list_for_user", {"id": ckan_user, "permission": "create_dataset"}) or []
+        organizations = _read(client, "organization_list_for_user", {"id": ckan_user, "permission": "create_dataset"}) or []
     except ckan_client.CKANActionError as exc:
         raise CkanLoadError(_explain(exc)) from exc
-    found = [OrganizationChoice(id=str(o["id"]), name=str(o.get("name") or ""), title=str(o.get("title") or o.get("display_name") or o.get("name") or ""),
-                                package_count=o.get("package_count") if isinstance(o.get("package_count"), int) else None)
-             for o in organizations if isinstance(o, dict) and o.get("id")]
-    return sorted(found, key=lambda o: o.title.lower())
+    found = sorted((OrganizationChoice(id=str(o["id"]), name=str(o.get("name") or ""), title=str(o.get("title") or o.get("display_name") or o.get("name") or ""),
+                                       package_count=o.get("package_count") if isinstance(o.get("package_count"), int) else None)
+                    for o in organizations if isinstance(o, dict) and o.get("id")), key=lambda o: o.title.lower())
+    with _ORG_CACHE_LOCK:
+        _ORG_CACHE[ckan_user] = (now, found)
+    return list(found)
 
 
 def search_datasets(client: ckan_client.CKANActionClient, ckan_user: str, query: str = "", limit: int = 20, organization_id: str | None = None) -> list[DatasetChoice]:
-    """Datasets the person may add a resource to, found by a text search: those of the organization given (which must be one they may add to),
-    or else of all the organizations they can create datasets in. Nothing here changes anything."""
+    """Datasets found by a text search: those of the organization given, or else of all the organizations the person can create datasets in.
+    Which datasets CKAN lets the person *see* is CKAN's to decide (private ones only for those who may); what they may *add to* is checked
+    when the resource is saved. Nothing here changes anything."""
     try:
-        organizations = client.call("organization_list_for_user", {"id": ckan_user, "permission": "create_dataset"}) or []
-        ids = [str(o.get("id")) for o in organizations if isinstance(o, dict) and o.get("id")]
         if organization_id:
-            if organization_id not in ids:
-                raise CkanLoadError("You may not add datasets to that organization.")
-            ids = [organization_id]
+            ids = [organization_id]  # (no look-up of the person's organizations here: it is the slow call, and the page already made it)
+        else:
+            ids = [o.id for o in list_organizations(client, ckan_user)]
         if not ids:
             return []
-        found = client.call("package_search", {"q": query.strip() or "*:*", "fq": "owner_org:(%s)" % " OR ".join(ids), "rows": limit, "include_private": True,
-                                               "sort": "metadata_modified desc"}) or {}
+        found = _read(client, "package_search", {"q": query.strip() or "*:*", "fq": "owner_org:(%s)" % " OR ".join(ids), "rows": limit, "include_private": True,
+                                                 "sort": "metadata_modified desc"}) or {}
     except ckan_client.CKANActionError as exc:
         raise CkanLoadError(_explain(exc)) from exc
     return [_dataset_choice(d) for d in found.get("results", []) if isinstance(d, dict) and d.get("id")]
@@ -130,7 +156,7 @@ def _dataset_choice(d: dict) -> DatasetChoice:
 
 def get_dataset(client: ckan_client.CKANActionClient, dataset_id: str) -> DatasetChoice:
     try:
-        d = client.call("package_show", {"id": dataset_id})
+        d = _read(client, "package_show", {"id": dataset_id})
     except ckan_client.CKANActionError as exc:
         raise CkanLoadError(_explain(exc)) from exc
     return _dataset_choice(d)
