@@ -70,7 +70,7 @@ def test_unpublishing_removes_the_resource_and_publishing_again_puts_it_back(cli
     assert "no longer published" in flash and "Its CKAN resource was removed." in flash
     assert ckan.resources == {} and _targets(_isolated_db)[0].resource_id is None  # the connection stays, the resource is gone
     page = client.get(_page(source["id"])).text
-    assert "not in CKAN" in page and "it is unpublished, so its resource was taken out of CKAN" in page
+    assert "not in CKAN" in page and "it is unpublished, so it was taken out of CKAN" in page
     flash = _flash(_publish(client, source["id"]))
     assert "Its CKAN resource is back." in flash and ckan.resources["res1"]["url"] == BASE + "/data/acme-push"
 

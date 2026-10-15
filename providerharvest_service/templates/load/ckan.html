@@ -19,6 +19,9 @@
     .pill-private { background: #fff3cd; color: #7a5b00; }
     .pill-public { background: #dff3e4; color: #1e6b34; }
     .pill-other { background: #e6e9ef; color: #46505e; }
+    .checks { display: flex; flex-wrap: wrap; gap: 0.2rem 1.1rem; margin: 0.2rem 0 0.5rem; }
+    .check { font-weight: 400; display: inline-flex; align-items: center; gap: 0.35rem; margin: 0; font-size: 0.88rem; }
+    .check input { width: auto; margin: 0; }
     .ckan-status { border: 1px solid var(--color-border); border-radius: var(--radius); padding: 0.8rem 1rem; margin: 0 0 1.2rem; max-width: 46rem; }
   </style>
   <div class="panel">
@@ -26,7 +29,7 @@
       <a class="btn btn-secondary btn-sm back-arrow" href="/load" aria-label="Back" title="Back">{{ macros.icon("arrow-left", 16) }}</a>
       <h1>CKAN</h1>
     </div>
-    <p class="subtitle">{{ source.title }} <span class="name-slug">({{ source.name }})</span> / pipeline <strong>{{ pipeline.name }}</strong> -- add it to a dataset in data.gov.gr as a resource.</p>
+    <p class="subtitle">{{ source.title }} <span class="name-slug">({{ source.name }})</span> / pipeline <strong>{{ pipeline.name }}</strong> -- put it in data.gov.gr as a resource of a dataset, or describe it as a data service.</p>
     {% if flash %}<div class="flash flash-{{ flash_kind }}">{{ flash }}</div>{% endif %}
     {% if problem %}<div class="flash flash-error">{{ problem }}</div>{% endif %}
 
@@ -34,15 +37,15 @@
       <div class="ckan-status">
         <div style="font-weight:600;">Connected to
           {% if dataset_url %}<a href="{{ dataset_url }}" target="_blank" rel="noopener">{{ target.dataset_title or target.dataset_name }}</a>{% else %}{{ target.dataset_title or target.dataset_name }}{% endif %}
-          <span class="muted">-- {{ "a link to the published address" if target.mode == "link" else "an uploaded copy of the newest output" }}</span></div>
+          <span class="muted">-- {{ {"link": "a link to the published address", "upload": "an uploaded copy of the newest output", "service": "as a data service"}[target.mode] }}</span></div>
         <div style="margin-top:0.3rem;">
           {% if target.last_status == "ok" and target.resource_id %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>in CKAN</span></span> <span class="muted">pushed {{ target.last_pushed_at|short_utc }} UTC</span>
           {% elif target.last_status == "error" %}<span class="badge badge-error">{{ macros.icon("rejected", 13) }}<span>failed</span></span> <span class="muted">{{ target.last_error }}</span>
-          {% else %}<span class="badge badge-pending"><span>not in CKAN</span></span> <span class="muted">{% if not published and target.mode == "link" %}it is unpublished, so its resource was taken out of CKAN; publish it again and push{% else %}not pushed yet{% endif %}</span>{% endif %}
+          {% else %}<span class="badge badge-pending"><span>not in CKAN</span></span> <span class="muted">{% if not published and target.mode in ("link", "service") %}it is unpublished, so it was taken out of CKAN; publish it again and push{% else %}not pushed yet{% endif %}</span>{% endif %}
         </div>
         <div style="display:flex; gap:0.5rem; margin-top:0.7rem;">
           <form method="post" action="{{ base }}/ckan/push" style="margin:0;"><button type="submit" class="btn-sm"{% if problem %} disabled{% endif %}>{{ macros.icon("push", 14) }} Push now</button></form>
-          <form method="post" action="{{ base }}/ckan/disconnect" style="margin:0;" onsubmit="return confirm('Remove this resource from CKAN and disconnect the pipeline?');"><button type="submit" class="btn-secondary btn-sm"{% if problem %} disabled{% endif %}>{{ macros.icon("trash", 14) }} Disconnect</button></form>
+          <form method="post" action="{{ base }}/ckan/disconnect" style="margin:0;" onsubmit="return confirm('Remove this from CKAN and disconnect the pipeline?');"><button type="submit" class="btn-secondary btn-sm"{% if problem %} disabled{% endif %}>{{ macros.icon("trash", 14) }} Disconnect</button></form>
         </div>
       </div>
     {% endif %}
@@ -52,14 +55,16 @@
 
       <label>What goes into CKAN</label>
       <div class="segmented">
-        <span><input type="radio" id="mode-link" name="mode" value="link"{% if not target or target.mode == "link" %} checked{% endif %}><label for="mode-link">A link to the published address</label></span>
-        <span><input type="radio" id="mode-upload" name="mode" value="upload"{% if target and target.mode == "upload" %} checked{% endif %}{% if is_http %} disabled{% endif %}><label for="mode-upload">An uploaded copy of the newest output</label></span>
+        <span><input type="radio" id="mode-link" name="mode" value="link"{% if mode == "link" %} checked{% endif %}><label for="mode-link">A link to the published address</label></span>
+        <span><input type="radio" id="mode-upload" name="mode" value="upload"{% if mode == "upload" %} checked{% endif %}{% if is_http %} disabled{% endif %}><label for="mode-upload">An uploaded copy of the newest output</label></span>
+        <span><input type="radio" id="mode-service" name="mode" value="service"{% if mode == "service" %} checked{% endif %}><label for="mode-service">A data service</label></span>
       </div>
       <p class="muted" id="mode-note" style="margin:0.4rem 0 0.8rem;">
-        <span id="note-link"><strong>Link</strong>: the resource points to <code>{{ link }}</code>, which always answers with the current data. Nothing is copied; the pipeline must be published{% if not published %} (it is not yet){% endif %}.
+        <span id="note-link"><strong>Link</strong>: a resource in a dataset that points to <code>{{ link }}</code>, which always answers with the current data. Nothing is copied; the pipeline must be published{% if not published %} (it is not yet){% endif %}.
         {% if not has_public_base %}<br><strong>LOADER_PUBLIC_BASE_URL is not set</strong>, so the address cannot be built.{% endif %}</span>
-        <span id="note-upload" hidden><strong>Upload</strong>: the newest output is uploaded into CKAN's own storage, and again each time a new one is made.
+        <span id="note-upload" hidden><strong>Upload</strong>: a resource whose file is the newest output, kept in CKAN's own storage and replaced each time a new one is made.
           {% if is_http %}Not available for an API source: it stores nothing.{% elif newest %}Newest now: {{ newest.filename }}.{% else %}There is no output yet.{% endif %}</span>
+        <span id="note-service" hidden><strong>Data service</strong>: an entry in the data-services catalogue of data.gov.gr that describes the endpoint <code>{{ link }}</code> -- how to call it, what it answers, the licence and who to ask. It has no dataset and no resources of its own. The pipeline must be published{% if not published %} (it is not yet){% endif %}.</span>
       </p>
 
       <label for="org-q">Organization <span class="req" style="color:var(--status-rejected);">*</span></label>
@@ -68,6 +73,7 @@
       <input type="text" id="org-q" placeholder="Search the organizations you can add datasets to" autocomplete="off"{% if problem %} disabled{% endif %}>
       <div id="org-results" class="pick-list" aria-live="polite"></div>
 
+      <div id="section-dataset">
       <label for="ds-q">Dataset <span class="req" style="color:var(--status-rejected);">*</span></label>
       <input type="hidden" id="dataset_id" name="dataset_id" value="{{ target.dataset_id if target else '' }}">
       <div id="ds-chosen" class="muted" style="margin:0.2rem 0;">{% if target %}Now: <strong>{{ target.dataset_title or target.dataset_name }}</strong>. Search to choose another.{% else %}Choose the organization first.{% endif %}</div>
@@ -78,6 +84,57 @@
       <input type="text" id="resource_name" name="resource_name" maxlength="200" value="{{ target.resource_name if target else default_name }}">
       <label for="description">Description (optional)</label>
       <input type="text" id="description" name="description" maxlength="1000" value="{{ target.description if target else '' }}">
+      </div>
+
+      <div id="section-service" hidden>
+        <label for="svc_title">Name of the service <span class="req" style="color:var(--status-rejected);">*</span></label>
+        <input type="text" id="svc_title" name="svc_title" maxlength="200" value="{{ meta.title }}">
+        <label for="svc_description">Description</label>
+        <textarea id="svc_description" name="svc_description" rows="3">{{ meta.description }}</textarea>
+        <label for="svc_endpoint_description">Endpoint description -- how to call it</label>
+        <textarea id="svc_endpoint_description" name="svc_endpoint_description" rows="5">{{ meta.endpoint_description }}</textarea>
+        <p class="muted" style="margin:0.2rem 0 0.6rem;">Written for you from the pipeline's request settings (method, parameters), its output and the per-caller limit. Edit it freely.</p>
+        <div style="display:flex; gap:1.2rem; flex-wrap:wrap;">
+          <div><label for="svc_format">Format of the answer</label>
+            <select id="svc_format" name="svc_format">{% for code, text in vocab.FORMATS %}<option value="{{ code }}"{% if meta.format == code %} selected{% endif %}>{{ text }}</option>{% endfor %}</select></div>
+          <div><label for="svc_access_rights">Access rights</label>
+            <select id="svc_access_rights" name="svc_access_rights">{% for code, text in vocab.ACCESS_RIGHTS %}<option value="{{ code }}"{% if meta.access_rights == code %} selected{% endif %}>{{ text }}</option>{% endfor %}</select></div>
+          <div><label for="svc_license">Licence</label>
+            <select id="svc_license" name="svc_license">{% for code, text in vocab.LICENCES %}<option value="{{ code }}"{% if meta.license == code %} selected{% endif %}>{{ text }}</option>{% endfor %}<option value="__other__"{% if not known_license %} selected{% endif %}>Other (a link)...</option></select>
+            <input type="text" id="svc_license_other" name="svc_license_other" placeholder="https://..." value="{{ '' if known_license else meta.license }}"{% if known_license %} hidden{% endif %}></div>
+        </div>
+
+        <label>Themes</label>
+        <div class="checks">{% for code, text in vocab.THEMES %}<label class="check"><input type="checkbox" name="svc_themes" value="{{ code }}"{% if code in meta.themes %} checked{% endif %}> {{ text }}</label>{% endfor %}</div>
+        <label>Applicable legislation</label>
+        <div class="checks">{% for uri, text in vocab.LEGISLATION %}<label class="check"><input type="checkbox" name="svc_legislation" value="{{ uri }}"{% if uri in legislation_known %} checked{% endif %}> {{ text }}</label>{% endfor %}</div>
+        <textarea id="svc_legislation_other" name="svc_legislation_other" rows="2" placeholder="Other legislation, one per line">{{ legislation_other|join("\n") }}</textarea>
+        <label>High-value dataset category (only if it is one)</label>
+        <div class="checks">{% for code, text in vocab.HVD_CATEGORIES %}<label class="check"><input type="checkbox" name="svc_hvd" value="{{ code }}"{% if code in meta.hvd_categories %} checked{% endif %}> {{ text }}</label>{% endfor %}</div>
+
+        <h3 style="font-size:0.95rem; margin:1.1rem 0 0;">Who to ask</h3>
+        <div style="display:flex; gap:1.2rem; flex-wrap:wrap;">
+          <div><label for="svc_contact_name">Contact name</label><input type="text" id="svc_contact_name" name="svc_contact_name" value="{{ meta.contact_name }}"></div>
+          <div><label for="svc_contact_email">Contact e-mail</label><input type="email" id="svc_contact_email" name="svc_contact_email" value="{{ meta.contact_email }}"></div>
+        </div>
+        <h3 style="font-size:0.95rem; margin:1.1rem 0 0;">Publisher</h3>
+        <div style="display:flex; gap:1.2rem; flex-wrap:wrap;">
+          <div><label for="svc_publisher_name">Name</label><input type="text" id="svc_publisher_name" name="svc_publisher_name" value="{{ meta.publisher_name }}"></div>
+          <div><label for="svc_publisher_email">E-mail</label><input type="email" id="svc_publisher_email" name="svc_publisher_email" value="{{ meta.publisher_email }}"></div>
+          <div><label for="svc_publisher_identifier">Identifier (a link, e.g. a ROR id)</label><input type="text" id="svc_publisher_identifier" name="svc_publisher_identifier" value="{{ meta.publisher_identifier }}"></div>
+          <div><label for="svc_publisher_type">Type</label>
+            <select id="svc_publisher_type" name="svc_publisher_type">{% for code, text in vocab.PUBLISHER_TYPES %}<option value="{{ code }}"{% if meta.publisher_type == code %} selected{% endif %}>{{ text }}</option>{% endfor %}</select></div>
+        </div>
+
+        <label for="svc_documentation">Documentation (links, one per line)</label>
+        <textarea id="svc_documentation" name="svc_documentation" rows="2">{{ meta.documentation|join("\n") }}</textarea>
+        <label for="svc_landing_page">Landing page (links, one per line)</label>
+        <textarea id="svc_landing_page" name="svc_landing_page" rows="2">{{ meta.landing_page|join("\n") }}</textarea>
+        <label for="svc_rights">Rights statement</label>
+        <input type="text" id="svc_rights" name="svc_rights" value="{{ meta.rights }}">
+        <label for="svc_tags">Keywords (comma-separated)</label>
+        <input type="text" id="svc_tags" name="svc_tags" value="{{ meta.tags|join(', ') }}">
+      </div>
 
       <div style="margin-top:1.2rem;"><button type="submit"{% if problem %} disabled{% endif %}>{{ macros.icon("push", 16) }} {{ "Save and push" if target else "Connect and push" }}</button></div>
     </form>
@@ -138,6 +195,7 @@
         dsQ.disabled = false;
         if (changed) { dsField.value = ''; dsQ.value = ''; dsChosen.textContent = 'Now choose the dataset.'; }
         searchDatasets();
+        loadedFor = null; if (typeof loadServiceDefaults === 'function' && currentMode() === 'service') loadServiceDefaults();
       }
       orgQ.addEventListener('input', function () { loadOrganizations(); });
       orgQ.addEventListener('focus', loadOrganizations);
@@ -166,10 +224,37 @@
       });
       dsQ.addEventListener('focus', function () { if (!dsResults.children.length) searchDatasets(); });
 
+      var FILL_DEFAULTS = {{ 'true' if fill_defaults else 'false' }};
+      function currentMode() { var r = document.querySelector('input[name="mode"]:checked'); return r ? r.value : 'link'; }
       function modeNote() {
-        var upload = document.getElementById('mode-upload').checked;
-        document.getElementById('note-link').hidden = upload; document.getElementById('note-upload').hidden = !upload;
+        var mode = currentMode();
+        document.getElementById('note-link').hidden = mode !== 'link'; document.getElementById('note-upload').hidden = mode !== 'upload'; document.getElementById('note-service').hidden = mode !== 'service';
+        document.getElementById('section-dataset').hidden = mode === 'service'; document.getElementById('section-service').hidden = mode !== 'service';
+        if (mode === 'service') loadServiceDefaults();
       }
+      var loadedFor = null;
+      function loadServiceDefaults() {  // an organization's services start from what the last one chose (only for a service that is not connected yet)
+        if (!FILL_DEFAULTS || !orgField.value || loadedFor === orgField.value) return;
+        loadedFor = orgField.value;
+        fetch('/load/ckan/service-defaults?org=' + encodeURIComponent(orgField.value), {credentials: 'same-origin'}).then(function (r) { return r.json(); }).then(function (data) {
+          if (!data.defaults) return;
+          var d = data.defaults, form = document.getElementById('ckan-form');
+          function setValue(name, value) { var el = form.elements[name]; if (el && value !== undefined && value !== null) el.value = value; }
+          function setChecks(name, values) { form.querySelectorAll('input[name="' + name + '"]').forEach(function (c) { c.checked = values.indexOf(c.value) >= 0; }); }
+          setValue('svc_access_rights', d.access_rights); setValue('svc_contact_name', d.contact_name); setValue('svc_contact_email', d.contact_email);
+          setValue('svc_publisher_name', d.publisher_name); setValue('svc_publisher_email', d.publisher_email); setValue('svc_publisher_identifier', d.publisher_identifier);
+          setValue('svc_publisher_type', d.publisher_type); setValue('svc_rights', d.rights); setValue('svc_tags', (d.tags || []).join(', '));
+          setValue('svc_documentation', (d.documentation || []).join('\n')); setValue('svc_landing_page', (d.landing_page || []).join('\n'));
+          setChecks('svc_themes', d.themes || []); setChecks('svc_hvd', d.hvd_categories || []);
+          var known = Array.prototype.map.call(form.querySelectorAll('input[name="svc_legislation"]'), function (c) { return c.value; });
+          setChecks('svc_legislation', d.legislation || []); setValue('svc_legislation_other', (d.legislation || []).filter(function (u) { return known.indexOf(u) < 0; }).join('\n'));
+          var lic = form.elements['svc_license'], options = Array.prototype.map.call(lic.options, function (o) { return o.value; });
+          if (options.indexOf(d.license) >= 0) { lic.value = d.license; } else { lic.value = '__other__'; setValue('svc_license_other', d.license); }
+          licenceBox();
+        });
+      }
+      function licenceBox() { var other = document.getElementById('svc_license').value === '__other__'; document.getElementById('svc_license_other').hidden = !other; }
+      document.getElementById('svc_license').addEventListener('change', licenceBox);
       document.querySelectorAll('input[name="mode"]').forEach(function (r) { r.addEventListener('change', modeNote); });
       modeNote();
     })();

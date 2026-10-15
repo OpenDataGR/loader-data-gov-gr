@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime
+import json
 import logging
 import os
 from urllib.parse import urlencode
@@ -16,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from providerharvest_service import build_info, ckan_access, ckan_load, harvest_db, load_api, nav, publishing, transform_runner
+from providerharvest_service import build_info, ckan_access, ckan_load, ckan_vocab, harvest_db, load_api, nav, publishing, transform_runner
 from providerharvest_service.db import get_session
 from providerharvest_service.models import CkanTarget, ProviderSource, Transform
 
@@ -69,8 +70,30 @@ def _target(session: Session, pipeline: Transform | None) -> CkanTarget | None:
     return session.scalar(select(CkanTarget).where(CkanTarget.pipeline_id == pipeline.id)) if pipeline is not None else None
 
 
-def _ckan_dataset_url(name: str) -> str:
-    return "%s/dataset/%s" % (os.environ.get("CKAN_BASE_URL", "").rstrip("/"), name) if name else ""
+def _ckan_dataset_url(name: str, mode: str = "link") -> str:
+    """Where the person can look at it on the portal: a dataset page, or (a data service) the data-service page."""
+    return "%s/%s/%s" % (os.environ.get("CKAN_BASE_URL", "").rstrip("/"), "data-service" if mode == "service" else "dataset", name) if name else ""
+
+
+def _lines(value: str) -> list[str]:
+    return [v.strip() for v in str(value or "").replace("\r", "").split("\n") if v.strip()]
+
+
+def _meta_from_form(form) -> dict:
+    """The details of a data service as the form sent them (checked later by ckan_load.normalise_meta)."""
+    many = lambda name: [str(v) for v in form.getlist(name)]  # noqa: E731
+    licence = str(form.get("svc_license") or "")
+    if licence == "__other__":
+        licence = str(form.get("svc_license_other") or "").strip()
+    return {
+        "title": form.get("svc_title"), "description": form.get("svc_description"), "endpoint_description": form.get("svc_endpoint_description"),
+        "format": form.get("svc_format"), "license": licence, "access_rights": form.get("svc_access_rights"), "themes": many("svc_themes"),
+        "legislation": many("svc_legislation") + _lines(form.get("svc_legislation_other")), "hvd_categories": many("svc_hvd"),
+        "contact_name": form.get("svc_contact_name"), "contact_email": form.get("svc_contact_email"), "publisher_name": form.get("svc_publisher_name"),
+        "publisher_email": form.get("svc_publisher_email"), "publisher_identifier": form.get("svc_publisher_identifier"),
+        "publisher_type": form.get("svc_publisher_type"), "documentation": _lines(form.get("svc_documentation")),
+        "landing_page": _lines(form.get("svc_landing_page")), "rights": form.get("svc_rights"), "tags": form.get("svc_tags"),
+    }
 
 
 @router.get("/ckan/organizations")
@@ -101,6 +124,16 @@ def find_datasets(request: Request, q: str = "", org: str = "", session: Session
     return JSONResponse({"datasets": [dataclasses.asdict(d) for d in found]})
 
 
+@router.get("/ckan/service-defaults")
+def service_defaults(request: Request, org: str = "", session: Session = Depends(get_session)):
+    """What this organization's data services last used (licence, themes, contact ...), for the form to start from (JSON)."""
+    problem = _problem_with_identity(request)
+    if problem:
+        return JSONResponse({"error": problem}, status_code=403)
+    values = ckan_load.get_defaults(session, org) if org else dict(ckan_load.META_DEFAULTS)
+    return JSONResponse({"defaults": {k: values[k] for k in ckan_load.DEFAULT_KEYS}})
+
+
 @router.get("/sources/{source_id}/ckan", response_class=HTMLResponse)
 @router.get("/sources/{source_id}/pipelines/{pipeline}/ckan", response_class=HTMLResponse)
 def ckan_page(source_id: str, request: Request, pipeline: str = transform_runner.DEFAULT_PIPELINE, session: Session = Depends(get_session),
@@ -111,12 +144,28 @@ def ckan_page(source_id: str, request: Request, pipeline: str = transform_runner
     target = _target(session, found)
     base = ckan_load.public_base_url()
     newest = load_api.latest_output(hsession, source.id, found.id) if source.transport_type != "http" else None
+    default_name = ("%s / %s" % (source.title, found.name)) if found.name != transform_runner.DEFAULT_PIPELINE else source.title
+    # the details of a data service: those of the connection, else what the organization's services last used, over the built-in defaults
+    try:
+        meta = json.loads(target.service_meta) if target is not None and target.service_meta else None
+    except ValueError:
+        meta = None
+    if meta is None:
+        meta = ckan_load.get_defaults(session, target.organization_id) if target is not None and target.organization_id else dict(ckan_load.META_DEFAULTS)
+        meta["title"] = default_name
+        meta["format"] = {"xml": "XML", "csv": "CSV"}.get(found.output_format or "json", "JSON")
+        meta["endpoint_description"] = ckan_load.describe_endpoint(source, found, ckan_load.link_url(source, found, base))
+    mode = target.mode if target is not None else ("service" if source.transport_type == "http" else "link")
+    known_license = ckan_vocab.is_known("license", str(meta.get("license") or ""))
     return templates.TemplateResponse(request, "load/ckan.html", {
         "source": source, "pipeline": found, "target": target, "base": _base(source_id, pipeline), "problem": _problem_with_identity(request),
         "link": ckan_load.link_url(source, found, base), "has_public_base": bool(base), "published": publishing.is_pipeline_published(found),
-        "is_http": source.transport_type == "http", "newest": newest, "modes": ckan_load.MODES,
-        "default_name": ("%s / %s" % (source.title, found.name)) if found.name != transform_runner.DEFAULT_PIPELINE else source.title,
-        "dataset_url": _ckan_dataset_url(target.dataset_name) if target else "",
+        "is_http": source.transport_type == "http", "newest": newest, "modes": ckan_load.MODES, "mode": mode,
+        "default_name": default_name, "meta": meta, "known_license": known_license, "vocab": ckan_vocab,
+        "legislation_known": [u for u in meta.get("legislation", []) if any(u == k for k, _ in ckan_vocab.LEGISLATION)],
+        "legislation_other": [u for u in meta.get("legislation", []) if not any(u == k for k, _ in ckan_vocab.LEGISLATION)],
+        "fill_defaults": not (target is not None and target.service_meta),
+        "dataset_url": _ckan_dataset_url(target.dataset_name, target.mode) if target else "",
         "flash": request.query_params.get("flash"), "flash_kind": request.query_params.get("flash_kind", "success"),
     })
 
@@ -133,7 +182,8 @@ def _push_now(session: Session, hsession: Session, target: CkanTarget, source: P
 @router.post("/sources/{source_id}/pipelines/{pipeline}/ckan")
 async def ckan_save(source_id: str, request: Request, pipeline: str = transform_runner.DEFAULT_PIPELINE, session: Session = Depends(get_session),
                     hsession: Session = Depends(harvest_db.get_session)):
-    """Connect the pipeline to a dataset (or change how/where) and push it."""
+    """Connect the pipeline to CKAN -- as a resource in a dataset (a link, or an uploaded copy), or as a data service of an organization -- or
+    change how or where, and push it."""
     source, found = _found(session, source_id, pipeline)
     back = _base(source_id, pipeline) + "/ckan"
     if source is None or found is None:
@@ -147,48 +197,67 @@ async def ckan_save(source_id: str, request: Request, pipeline: str = transform_
     dataset_id = str(form.get("dataset_id") or "").strip()
     name = str(form.get("resource_name") or "").strip()[:200]
     if mode not in ckan_load.MODES:
-        return _go(back, "Choose link or upload.", "error")
+        return _go(back, "Choose link, upload or data service.", "error")
     if mode == "upload" and source.transport_type == "http":
-        return _go(back, "An API source stores nothing, so there is no file to upload: use a link.", "error")
+        return _go(back, "An API source stores nothing, so there is no file to upload: use a link or a data service.", "error")
     if not organization_id:
         return _go(back, "Choose the organization first.", "error")
-    if not dataset_id:
-        return _go(back, "Choose the dataset first (it is listed once the organization is chosen; click it).", "error")
-    if not name:
-        return _go(back, "Give the resource a name.", "error")
+    meta = None
+    if mode == "service":
+        try:
+            meta = ckan_load.normalise_meta(_meta_from_form(form))
+        except ckan_load.CkanLoadError as exc:
+            return _go(back, str(exc), "error")
+    else:
+        if not dataset_id:
+            return _go(back, "Choose the dataset first (it is listed once the organization is chosen; click it).", "error")
+        if not name:
+            return _go(back, "Give the resource a name.", "error")
     ident = _identity(request)
     try:
         client = ckan_load.user_client(session, ident)
         organization = next((o for o in ckan_load.list_organizations(client, ident) if o.id == organization_id), None)
         if organization is None:
             return _go(back, "You may not add datasets to that organization.", "error")
-        dataset = ckan_load.get_dataset(client, dataset_id)
+        dataset = ckan_load.get_dataset(client, dataset_id) if mode != "service" else None
     except ckan_load.CkanLoadError as exc:
         return _go(back, str(exc), "error")
-    if dataset.owner_org != organization.id:
+    if dataset is not None and dataset.owner_org != organization.id:
         return _go(back, "%s is not in %s." % (dataset.title, organization.title), "error")
     target = _target(session, found)
-    if target is not None and target.resource_id and target.dataset_id != dataset.id:
-        # moving to another dataset: the resource in the old one goes first, so the pipeline is never listed in two places
+    moving = target is not None and bool(target.resource_id) and (
+        target.mode != mode or (mode == "service" and target.organization_id != organization.id) or (dataset is not None and target.dataset_id != dataset.id))
+    if moving:
+        # to another dataset, another organization or another way: what is in CKAN goes first, so the pipeline is never listed in two places
         try:
-            ckan_load.remove(target, ckan_load.user_client(session, ident))
+            ckan_load.remove(target, client)
         except ckan_load.CkanLoadError as exc:
-            return _go(back, "The resource in the old dataset could not be removed: %s" % exc, "error")
+            return _go(back, "What was in CKAN before could not be removed: %s" % exc, "error")
     if target is None:
-        target = CkanTarget(source_id=source_id, pipeline_id=found.id)
+        target = CkanTarget(source_id=source_id, pipeline_id=found.id, dataset_id="")
         session.add(target)
-    target.mode, target.dataset_id, target.dataset_name, target.dataset_title = mode, dataset.id, dataset.name, dataset.title
+    target.mode = mode
     target.organization_id, target.organization_title = organization.id, organization.title
-    target.resource_name, target.description = name, str(form.get("description") or "").strip()[:1000]
+    if mode == "service":
+        target.service_meta = json.dumps(meta, ensure_ascii=False)
+        target.resource_name, target.description = meta["title"], ""
+        target.dataset_title = meta["title"]
+        label = "%s is now a data service in CKAN." % meta["title"]
+    else:
+        target.dataset_id, target.dataset_name, target.dataset_title = dataset.id, dataset.name, dataset.title
+        target.resource_name, target.description = name, str(form.get("description") or "").strip()[:1000]
+        label = "%s is now a resource of %s in CKAN." % (name, dataset.title)
     target.ckan_user, target.connected_by = ident, _who(request)
     try:
         _push_now(session, hsession, target, source, found, ident)
     except ckan_load.CkanLoadError as exc:
         session.commit()  # the connection is kept, with the reason, so it can be fixed and pushed again
         return _go(back, "Saved, but not pushed: %s" % exc, "error")
+    if meta is not None:
+        ckan_load.save_defaults(session, organization.id, meta, _who(request))  # the next service of this organization starts from these
     session.commit()
-    logger.info("ckan: %s connected %s / %s to dataset %s (%s)", _who(request) or "?", source.name, found.name, dataset.name, mode)
-    return _go(back, "%s is now a resource of %s in CKAN." % (name, dataset.title))
+    logger.info("ckan: %s connected %s / %s as %s (%s)", _who(request) or "?", source.name, found.name, mode, organization.title)
+    return _go(back, label)
 
 
 @router.post("/sources/{source_id}/ckan/push")

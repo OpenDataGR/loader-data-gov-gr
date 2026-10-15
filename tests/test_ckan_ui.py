@@ -5,7 +5,8 @@ from sqlalchemy import select
 
 from providerharvest_service import ckan_client, ckan_load, ui_ckan
 from providerharvest_service.models import CkanTarget
-from tests.test_ckan_load import BASE, FakeCkan
+from tests.test_ckan_load import BASE
+from tests.test_ckan_service import ServiceCkan
 from tests.test_pipeline_publishing import _publish
 from tests.test_pipelines_ui import _add, _pipeline, _setup
 from tests.test_transform_ui import (  # noqa: F401  (fixtures and helpers shared with the Transform Box tests)
@@ -16,7 +17,7 @@ from tests.test_transform_ui import (  # noqa: F401  (fixtures and helpers share
 @pytest.fixture
 def ckan(monkeypatch):
     """CKAN is configured, the signed-in person is user_abc, and every CKAN call goes to one fake."""
-    fake = FakeCkan()  # (which also empties the little cache of organizations)
+    fake = ServiceCkan()  # (a fake CKAN that also knows data services; creating it empties the little cache of organizations)
     monkeypatch.setenv("CKAN_BASE_URL", "https://ckan.example.gr")
     monkeypatch.setenv("CKAN_SYSADMIN_API_TOKEN", "sysadmin-token")
     monkeypatch.setenv("LOADER_PUBLIC_BASE_URL", BASE)
@@ -143,7 +144,7 @@ def test_what_is_missing_is_explained_before_anything_is_sent_to_ckan(client, so
     assert "Choose the organization first" in _flash(_connect(client, source["id"], organization_id=""))
     assert "Choose the dataset first" in _flash(_connect(client, source["id"], dataset_id=""))
     assert "Give the resource a name" in _flash(_connect(client, source["id"], resource_name=" "))
-    assert "Choose link or upload" in _flash(_connect(client, source["id"], mode="teleport"))
+    assert "Choose link, upload or data service" in _flash(_connect(client, source["id"], mode="teleport"))
     assert [c[0] for c in ckan.calls] == []
 
 
