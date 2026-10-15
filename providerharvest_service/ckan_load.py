@@ -17,19 +17,21 @@ from __future__ import annotations
 
 import dataclasses
 import datetime
+import json
 import logging
 import os
+import re
 import threading
 import time
 
 from sqlalchemy.orm import Session
 
-from providerharvest_service import ckan_access, ckan_client, ckan_tokens, publishing
-from providerharvest_service.models import CkanTarget, ProviderSource, Transform
+from providerharvest_service import ckan_access, ckan_client, ckan_tokens, ckan_vocab, publishing
+from providerharvest_service.models import CkanServiceDefaults, CkanTarget, ProviderSource, Transform
 
 logger = logging.getLogger(__name__)
 
-MODES = ("link", "upload")
+MODES = ("link", "upload", "service")
 MAX_UPLOAD_BYTES = 100 * 1000 * 1000
 _FORMAT_BY_EXTENSION = {".csv": "CSV", ".tsv": "TSV", ".json": "JSON", ".jsonl": "JSON", ".xml": "XML", ".xlsx": "XLSX", ".xls": "XLS"}
 
@@ -210,6 +212,9 @@ def push(target: CkanTarget, source: ProviderSource, pipeline: Transform, client
 def _push(target: CkanTarget, source: ProviderSource, pipeline: Transform, client, output, base_url) -> None:
     if target.mode not in MODES:
         raise CkanLoadError("Unknown way of pushing: %r." % target.mode)
+    if target.mode == "service":
+        _push_service(target, source, pipeline, client, base_url)
+        return
     fields = {"name": target.resource_name or pipeline.name, "description": target.description or ""}
     files = None
     if target.mode == "link":
@@ -243,11 +248,12 @@ def _push(target: CkanTarget, source: ProviderSource, pipeline: Transform, clien
 
 
 def remove(target: CkanTarget, client: ckan_client.CKANActionClient) -> bool:
-    """Delete the pipeline's resource from CKAN. True when there was one (and it is gone now); a resource CKAN no longer has counts as gone."""
+    """Delete the pipeline's resource (or, for a data service, the entry) from CKAN. True when there was one (and it is gone now); one CKAN no
+    longer has counts as gone."""
     if not target.resource_id:
         return False
     try:
-        _call(client, "resource_delete", {"id": target.resource_id})
+        _call(client, "package_delete" if target.mode == "service" else "resource_delete", {"id": target.resource_id})
     except ckan_client.CKANNotFound:
         pass
     except ckan_client.CKANActionError as exc:
@@ -255,6 +261,179 @@ def remove(target: CkanTarget, client: ckan_client.CKANActionClient) -> bool:
     target.resource_id = None
     target.last_output_id = None
     return True
+
+
+# -- a data service: an entry of its own (a dataset of type ``data-service``) instead of a resource in a dataset ----------------------------------------------
+
+#: What one organization's services share, remembered for the next one (the title, description and endpoint text belong to one service).
+DEFAULT_KEYS = ("tags", "access_rights", "license", "themes", "legislation", "hvd_categories", "contact_name", "contact_email", "publisher_name",
+                "publisher_email", "publisher_identifier", "publisher_type", "documentation", "landing_page", "rights")
+META_DEFAULTS = {
+    "title": "", "description": "", "endpoint_description": "", "tags": ["API"], "access_rights": "PUBLIC", "license": "CC_BY_4_0", "format": "JSON", "themes": [],
+    "legislation": [ckan_vocab.LEGISLATION[0][0]], "hvd_categories": [], "contact_name": "", "contact_email": "", "publisher_name": "", "publisher_email": "",
+    "publisher_identifier": "", "publisher_type": "NationalAuthority", "documentation": [], "landing_page": [], "rights": "",
+}
+_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_URL = re.compile(r"^https?://\S+$")
+
+
+def _lines(value) -> list[str]:
+    """A list the form sent as text (one per line or comma-separated), or already a list."""
+    if isinstance(value, str):
+        value = re.split(r"[\n,]+", value)
+    return [str(v).strip() for v in (value or []) if str(v).strip()]
+
+
+def normalise_meta(raw: dict) -> dict:
+    """The details of a data service, checked and cleaned. Raises ``CkanLoadError`` with a sentence for the person."""
+    meta = dict(META_DEFAULTS)
+    meta.update({k: v for k, v in (raw or {}).items() if k in META_DEFAULTS})
+    meta["title"] = str(meta["title"] or "").strip()
+    if not meta["title"]:
+        raise CkanLoadError("Give the service a name.")
+    if len(meta["title"]) > 200:
+        raise CkanLoadError("The name of the service is longer than 200 characters.")
+    for key, limit in (("description", 4000), ("endpoint_description", 4000), ("rights", 2000)):
+        meta[key] = str(meta[key] or "").strip()
+        if len(meta[key]) > limit:
+            raise CkanLoadError("%s is longer than %d characters." % (key.replace("_", " ").capitalize(), limit))
+    meta["tags"] = [t[:100] for t in _lines(meta["tags"])][:20]
+    for key, kind, label in (("access_rights", "access_rights", "access rights"), ("format", "format", "format"), ("publisher_type", "publisher_type", "publisher type")):
+        if not ckan_vocab.is_known(kind, str(meta[key])):
+            raise CkanLoadError("Choose the %s from the list." % label)
+    meta["license"] = str(meta["license"] or "").strip()
+    if not (ckan_vocab.is_known("license", meta["license"]) or _URL.match(meta["license"])):
+        raise CkanLoadError("Choose the licence from the list, or give its address (a link).")
+    meta["themes"] = _lines(meta["themes"])
+    if any(not ckan_vocab.is_known("theme", t) for t in meta["themes"]):
+        raise CkanLoadError("A theme is not one of the listed ones.")
+    meta["hvd_categories"] = _lines(meta["hvd_categories"])
+    if any(not (ckan_vocab.is_known("hvd_category", c) or _URL.match(c)) for c in meta["hvd_categories"]):
+        raise CkanLoadError("A high-value-dataset category is not one of the listed ones (or a link).")
+    meta["legislation"] = [v[:500] for v in _lines(meta["legislation"])]
+    for key in ("documentation", "landing_page"):
+        meta[key] = _lines(meta[key])
+        if any(not _URL.match(u) for u in meta[key]):
+            raise CkanLoadError("%s must be links (starting with http:// or https://)." % key.replace("_", " ").capitalize())
+    for key in ("contact_email", "publisher_email"):
+        meta[key] = str(meta[key] or "").strip()
+        if meta[key] and not _EMAIL.match(meta[key]):
+            raise CkanLoadError("%r is not an e-mail address." % meta[key])
+    for key in ("contact_name", "publisher_name", "publisher_identifier"):
+        meta[key] = str(meta[key] or "").strip()[:200]
+    return meta
+
+
+def describe_endpoint(source: ProviderSource, pipeline: Transform, url: str) -> str:
+    """What the endpoint description of the service says, from what the loader knows: how to call it, with what, what comes back, how often."""
+    from providerharvest_service import proxy, request_template
+
+    method = proxy.consumer_method(source, pipeline)
+    try:
+        limit = json.loads(source.config or "{}").get("proxy_rate_limit_per_ip", 30)
+    except ValueError:
+        limit = 30
+    written = {"json": "JSON", "jsonl": "JSON Lines", "xml": "XML", "csv": "CSV"}.get(pipeline.output_format or "json", "JSON")
+    answer = written if pipeline.enabled else "the provider's own answer (JSON)"
+    lines = []
+    if proxy.request_is_swapped(pipeline) and method == "GET":
+        names = request_template.placeholders(pipeline.request_template)
+        lines.append("Call it with HTTP GET: %s?%s" % (url, "&".join("%s=<%s>" % (n, n) for n in names)))
+        lines.append("Parameters (all required): %s." % ", ".join(names))
+    elif method == "POST":
+        lines.append("Call it with HTTP POST to %s, sending the request as a JSON body (Content-Type: application/json)." % url)
+    else:
+        lines.append("Call it with HTTP GET: %s (query parameters are passed on to the service)." % url)
+    lines.append("It answers with %s, as it is produced at the moment of the call." % answer)
+    lines.append("Free to call, without a key; at most %d requests per minute from one address." % limit)
+    return "\n".join(lines)
+
+
+def service_slug_candidates(source: ProviderSource, pipeline: Transform) -> list[str]:
+    base = re.sub(r"[^a-z0-9_-]+", "-", (source.name or "service").lower()).strip("-") or "service"
+    if pipeline.name != "default":
+        base += "-" + pipeline.name
+    return [base] + ["%s-%d" % (base, n) for n in range(2, 7)]
+
+
+def service_payload(meta: dict, url: str, owner_org: str) -> dict:
+    """The CKAN dataset of type ``data-service`` that stands for the endpoint (no name: that is chosen when it is created)."""
+    payload = {
+        "type": "data-service", "title": meta["title"], "notes": meta["description"], "owner_org": owner_org, "private": False,
+        "tags": [{"name": t} for t in meta["tags"]], "endpoint_url": [url],
+        "endpoint_description": [meta["endpoint_description"]] if meta["endpoint_description"] else [],
+        "access_rights": ckan_vocab.uri("access_rights", meta["access_rights"]), "license": ckan_vocab.uri("license", meta["license"]),
+        "format": ckan_vocab.uri("format", meta["format"]), "theme": [ckan_vocab.uri("theme", t) for t in meta["themes"]],
+        "hvd_category": [ckan_vocab.uri("hvd_category", c) for c in meta["hvd_categories"]], "applicable_legislation": meta["legislation"],
+        "documentation": meta["documentation"], "landing_page": meta["landing_page"], "rights": meta["rights"],
+        "contact": [{"name": meta["contact_name"], "email": meta["contact_email"], "uri": "", "url": ""}] if meta["contact_name"] or meta["contact_email"] else [],
+        "publisher": [{"name": meta["publisher_name"], "email": meta["publisher_email"], "identifier": meta["publisher_identifier"],
+                       "type": ckan_vocab.uri("publisher_type", meta["publisher_type"])}] if meta["publisher_name"] else [],
+    }
+    return payload
+
+
+def _push_service(target: CkanTarget, source: ProviderSource, pipeline: Transform, client, base_url) -> None:
+    if not publishing.is_pipeline_published(pipeline):
+        raise CkanLoadError("Publish the pipeline first: the data service would point at an address that does not answer.")
+    url = link_url(source, pipeline, base_url)
+    if not url.startswith("http"):
+        raise CkanLoadError("The public address of this loader is not configured (LOADER_PUBLIC_BASE_URL), so there is no endpoint to describe.")
+    if not target.organization_id:
+        raise CkanLoadError("Choose the organization the service belongs to.")
+    try:
+        meta = normalise_meta(json.loads(target.service_meta or "{}"))
+    except ValueError as exc:
+        raise CkanLoadError("The details of the service are unreadable: %s" % exc) from exc
+    payload = service_payload(meta, url, target.organization_id)
+    try:
+        if target.resource_id:
+            try:
+                _call(client, "package_patch", {"id": target.resource_id, **{k: v for k, v in payload.items() if k != "type"}})
+                target.dataset_title = meta["title"]
+                return
+            except ckan_client.CKANNotFound:
+                target.resource_id = None  # it was deleted in CKAN: make it again
+        created = None
+        for name in service_slug_candidates(source, pipeline):
+            try:
+                created = _call(client, "package_create", {**payload, "name": name})
+                break
+            except ckan_client.CKANValidationError as exc:
+                if "already in use" not in str(exc).lower() and "url" not in str(exc).lower():
+                    raise
+        if created is None:
+            raise CkanLoadError("CKAN says every address it could use for this service is taken.")
+        target.resource_id = target.dataset_id = str(created["id"])
+        target.dataset_name, target.dataset_title = str(created.get("name") or ""), meta["title"]
+    except ckan_client.CKANActionError as exc:
+        raise CkanLoadError(_explain(exc)) from exc
+
+
+def get_defaults(session: Session, organization_id: str) -> dict:
+    """The details this organization's services last used (what the form starts from), over the built-in defaults."""
+    from sqlalchemy import select
+
+    values = dict(META_DEFAULTS)
+    row = session.scalar(select(CkanServiceDefaults).where(CkanServiceDefaults.organization_id == organization_id))
+    if row is not None:
+        try:
+            values.update({k: v for k, v in json.loads(row.values or "{}").items() if k in DEFAULT_KEYS})
+        except ValueError:
+            pass
+    return values
+
+
+def save_defaults(session: Session, organization_id: str, meta: dict, who: str = "") -> None:
+    """Remember what was chosen for this organization (the caller commits). Only what its services share: not a title or an endpoint text."""
+    from sqlalchemy import select
+
+    row = session.scalar(select(CkanServiceDefaults).where(CkanServiceDefaults.organization_id == organization_id))
+    if row is None:
+        row = CkanServiceDefaults(organization_id=organization_id)
+        session.add(row)
+    row.values = json.dumps({k: meta[k] for k in DEFAULT_KEYS if k in meta}, ensure_ascii=False)
+    row.updated_by, row.updated_at = who, _now()
 
 
 # -- keeping CKAN in step with the pipeline --------------------------------------------------------------------------------------------------------------

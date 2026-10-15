@@ -512,7 +512,8 @@ class CkanTarget(Base):
     dataset_id: Mapped[str] = mapped_column(String, nullable=False)
     dataset_name: Mapped[str] = mapped_column(String, nullable=False, default="")
     dataset_title: Mapped[str] = mapped_column(String, nullable=False, default="")
-    resource_id: Mapped[str | None] = mapped_column(String, nullable=True)  # empty while the resource is not in CKAN (not yet pushed, or removed)
+    resource_id: Mapped[str | None] = mapped_column(String, nullable=True)  # the id of the thing in CKAN (the resource; for a data service the entry itself); empty while it is not there
+    service_meta: Mapped[str | None] = mapped_column(String, nullable=True)  # a data service's own details (licence, themes, contact ...), as JSON
     resource_name: Mapped[str] = mapped_column(String, nullable=False, default="")
     description: Mapped[str] = mapped_column(String, nullable=False, default="")
     ckan_user: Mapped[str] = mapped_column(String, nullable=False, default="")
@@ -522,4 +523,17 @@ class CkanTarget(Base):
     last_pushed_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
     last_output_id: Mapped[str | None] = mapped_column(String, nullable=True)  # the output an upload last sent (so the same one is not sent twice)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class CkanServiceDefaults(Base):
+    """What was last chosen for the details of a data service in one CKAN organization (licence, themes, legislation, contact, publisher ...),
+    so the next service of the same organization starts from the same values."""
+
+    __tablename__ = "ckan_service_defaults"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_new_id)
+    organization_id: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    values: Mapped[str] = mapped_column(String, nullable=False, default="{}")
+    updated_by: Mapped[str] = mapped_column(String, nullable=False, default="")
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
