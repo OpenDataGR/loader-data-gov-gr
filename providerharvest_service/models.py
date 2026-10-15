@@ -507,6 +507,8 @@ class CkanTarget(Base):
     source_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     pipeline_id: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
     mode: Mapped[str] = mapped_column(String, nullable=False, default="link")
+    organization_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    organization_title: Mapped[str | None] = mapped_column(String, nullable=True)
     dataset_id: Mapped[str] = mapped_column(String, nullable=False)
     dataset_name: Mapped[str] = mapped_column(String, nullable=False, default="")
     dataset_title: Mapped[str] = mapped_column(String, nullable=False, default="")

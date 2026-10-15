@@ -73,15 +73,29 @@ def _ckan_dataset_url(name: str) -> str:
     return "%s/dataset/%s" % (os.environ.get("CKAN_BASE_URL", "").rstrip("/"), name) if name else ""
 
 
-@router.get("/ckan/datasets")
-def find_datasets(request: Request, q: str = "", session: Session = Depends(get_session)):
-    """The datasets the signed-in person may add a resource to, for the search box on the connect page (JSON)."""
+@router.get("/ckan/organizations")
+def find_organizations(request: Request, session: Session = Depends(get_session)):
+    """The organizations the signed-in person may add datasets to, for the first step of the connect page (JSON)."""
     problem = _problem_with_identity(request)
     if problem:
         return JSONResponse({"error": problem}, status_code=403)
     ident = _identity(request)
     try:
-        found = ckan_load.search_datasets(ckan_load.user_client(session, ident), ident, q)
+        found = ckan_load.list_organizations(ckan_load.user_client(session, ident), ident)
+    except ckan_load.CkanLoadError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    return JSONResponse({"organizations": [dataclasses.asdict(o) for o in found]})
+
+
+@router.get("/ckan/datasets")
+def find_datasets(request: Request, q: str = "", org: str = "", session: Session = Depends(get_session)):
+    """The datasets of one organization (or of all the person's) the signed-in person may add a resource to, for the second step (JSON)."""
+    problem = _problem_with_identity(request)
+    if problem:
+        return JSONResponse({"error": problem}, status_code=403)
+    ident = _identity(request)
+    try:
+        found = ckan_load.search_datasets(ckan_load.user_client(session, ident), ident, q, organization_id=org or None)
     except ckan_load.CkanLoadError as exc:
         return JSONResponse({"error": str(exc)}, status_code=502)
     return JSONResponse({"datasets": [dataclasses.asdict(d) for d in found]})
@@ -129,21 +143,30 @@ async def ckan_save(source_id: str, request: Request, pipeline: str = transform_
         return _go(back, problem, "error")
     form = await request.form()
     mode = str(form.get("mode") or "link")
+    organization_id = str(form.get("organization_id") or "").strip()
     dataset_id = str(form.get("dataset_id") or "").strip()
     name = str(form.get("resource_name") or "").strip()[:200]
     if mode not in ckan_load.MODES:
         return _go(back, "Choose link or upload.", "error")
     if mode == "upload" and source.transport_type == "http":
         return _go(back, "An API source stores nothing, so there is no file to upload: use a link.", "error")
+    if not organization_id:
+        return _go(back, "Choose the organization first.", "error")
     if not dataset_id:
-        return _go(back, "Choose the CKAN dataset first (search for it, then click it).", "error")
+        return _go(back, "Choose the dataset first (it is listed once the organization is chosen; click it).", "error")
     if not name:
         return _go(back, "Give the resource a name.", "error")
     ident = _identity(request)
     try:
-        dataset = ckan_load.get_dataset(ckan_load.user_client(session, ident), dataset_id)
+        client = ckan_load.user_client(session, ident)
+        organization = next((o for o in ckan_load.list_organizations(client, ident) if o.id == organization_id), None)
+        if organization is None:
+            return _go(back, "You may not add datasets to that organization.", "error")
+        dataset = ckan_load.get_dataset(client, dataset_id)
     except ckan_load.CkanLoadError as exc:
         return _go(back, str(exc), "error")
+    if dataset.owner_org != organization.id:
+        return _go(back, "%s is not in %s." % (dataset.title, organization.title), "error")
     target = _target(session, found)
     if target is not None and target.resource_id and target.dataset_id != dataset.id:
         # moving to another dataset: the resource in the old one goes first, so the pipeline is never listed in two places
@@ -155,6 +178,7 @@ async def ckan_save(source_id: str, request: Request, pipeline: str = transform_
         target = CkanTarget(source_id=source_id, pipeline_id=found.id)
         session.add(target)
     target.mode, target.dataset_id, target.dataset_name, target.dataset_title = mode, dataset.id, dataset.name, dataset.title
+    target.organization_id, target.organization_title = organization.id, organization.title
     target.resource_name, target.description = name, str(form.get("description") or "").strip()[:1000]
     target.ckan_user, target.connected_by = ident, _who(request)
     try:

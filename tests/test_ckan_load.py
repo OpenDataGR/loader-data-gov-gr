@@ -23,11 +23,13 @@ class FakeCkan:
         if action in self.fail:
             raise self.fail[action]
         if action == "organization_list_for_user":
-            return [{"id": "org1", "name": "traffic"}, {"id": "org2", "name": "air"}]
+            return [{"id": "org2", "name": "air", "title": "Air"}, {"id": "org1", "name": "traffic", "title": "Traffic"}]
         if action == "package_search":
-            return {"results": [{"id": "ds1", "name": "attica-traffic", "title": "Attica traffic", "organization": {"title": "Traffic"}}, {"id": "ds2", "name": "air"}]}
+            return {"results": [{"id": "ds1", "name": "attica-traffic", "title": "Attica traffic", "organization": {"title": "Traffic"}, "owner_org": "org1"},
+                                {"id": "ds2", "name": "air", "owner_org": "org2"}]}
         if action == "package_show":
-            return {"id": data["id"], "name": "attica-traffic", "title": "Attica traffic", "organization": {"title": "Traffic"}}
+            return {"id": data["id"], "name": "attica-traffic", "title": "Attica traffic", "organization": {"title": "Traffic"},
+                    "owner_org": "org2" if data["id"] == "ds2" else "org1"}
         if action == "resource_create":
             rid = "res%d" % (len(self.resources) + 1)
             self.resources[rid] = dict(data, id=rid)
@@ -66,10 +68,10 @@ def _output(content=b'{"a": 1}', filename="Detector.json"):
 def test_the_search_is_limited_to_the_organizations_the_person_can_add_datasets_to():
     ckan = FakeCkan()
     found = ckan_load.search_datasets(ckan, "user_abc", "traffic")
-    assert [(d.id, d.title, d.organization) for d in found] == [("ds1", "Attica traffic", "Traffic"), ("ds2", "air", "")]
+    assert [(d.id, d.title, d.organization, d.owner_org) for d in found] == [("ds1", "Attica traffic", "Traffic", "org1"), ("ds2", "air", "", "org2")]
     (_, orgs_call, _), (_, search_call, _) = ckan.calls
     assert orgs_call == {"id": "user_abc", "permission": "create_dataset"}  # an editor counts, not only an administrator
-    assert search_call["fq"] == "owner_org:(org1 OR org2)" and search_call["q"] == "traffic" and search_call["include_private"] is True
+    assert search_call["fq"] == "owner_org:(org2 OR org1)" and search_call["q"] == "traffic" and search_call["include_private"] is True
 
 
 def test_a_person_with_no_organization_finds_nothing_and_nothing_is_searched():
@@ -198,3 +200,25 @@ def test_a_call_with_a_file_is_sent_as_a_multipart_form_and_a_plain_call_as_json
     assert kwargs["data"] == {"package_id": "ds1", "url": "", "name": "x"} and kwargs["headers"] == {"Authorization": "tok"}
     client.call("package_show", {"id": "ds1"})
     assert session.calls[1][1]["json"] == {"id": "ds1"} and "files" not in session.calls[1][1]
+
+
+# -- organization first, then the dataset within it ----------------------------------------------------------------------------------------------------
+
+def test_the_organizations_are_those_the_person_may_add_to_sorted_by_title():
+    found = ckan_load.list_organizations(FakeCkan(), "user_abc")
+    assert [(o.id, o.title) for o in found] == [("org2", "Air"), ("org1", "Traffic")]
+
+
+def test_a_dataset_search_can_be_limited_to_one_organization_but_never_to_one_the_person_may_not_use():
+    ckan = FakeCkan()
+    ckan_load.search_datasets(ckan, "user_abc", "x", organization_id="org2")
+    assert ckan.calls[-1][1]["fq"] == "owner_org:(org2)"
+    with pytest.raises(ckan_load.CkanLoadError, match="may not add datasets to that organization"):
+        ckan_load.search_datasets(ckan, "user_abc", organization_id="org-not-mine")
+
+
+def test_a_failing_organization_list_is_explained():
+    ckan = FakeCkan()
+    ckan.fail["organization_list_for_user"] = ckan_client.CKANActionError("organization_list_for_user", "boom")
+    with pytest.raises(ckan_load.CkanLoadError, match="could not be reached or failed"):
+        ckan_load.list_organizations(ckan, "user_abc")

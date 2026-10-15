@@ -53,10 +53,16 @@
           {% if is_http %}Not available for an API source: it stores nothing.{% elif newest %}Newest now: {{ newest.filename }}.{% else %}There is no output yet.{% endif %}</span>
       </p>
 
+      <label for="org-q">Organization <span class="req" style="color:var(--status-rejected);">*</span></label>
+      <input type="hidden" id="organization_id" name="organization_id" value="{{ target.organization_id if target and target.organization_id else '' }}">
+      <div id="org-chosen" class="muted" style="margin:0.2rem 0;">{% if target and target.organization_title %}Now: <strong>{{ target.organization_title }}</strong>. Search to choose another.{% else %}Nothing chosen yet.{% endif %}</div>
+      <input type="text" id="org-q" placeholder="Search the organizations you can add datasets to" autocomplete="off"{% if problem %} disabled{% endif %}>
+      <div id="org-results" aria-live="polite"></div>
+
       <label for="ds-q">Dataset <span class="req" style="color:var(--status-rejected);">*</span></label>
       <input type="hidden" id="dataset_id" name="dataset_id" value="{{ target.dataset_id if target else '' }}">
-      <div id="ds-chosen" class="muted" style="margin:0.2rem 0;">{% if target %}Now: <strong>{{ target.dataset_title or target.dataset_name }}</strong>. Search to choose another.{% else %}Nothing chosen yet.{% endif %}</div>
-      <input type="text" id="ds-q" placeholder="Search the datasets you can add to (title or words)" autocomplete="off"{% if problem %} disabled{% endif %}>
+      <div id="ds-chosen" class="muted" style="margin:0.2rem 0;">{% if target %}Now: <strong>{{ target.dataset_title or target.dataset_name }}</strong>. Search to choose another.{% else %}Choose the organization first.{% endif %}</div>
+      <input type="text" id="ds-q" placeholder="Search the datasets of the chosen organization (title or words)" autocomplete="off"{% if problem or not (target and target.organization_id) %} disabled{% endif %}>
       <div id="ds-results" aria-live="polite"></div>
 
       <label for="resource_name">Resource name <span class="req" style="color:var(--status-rejected);">*</span></label>
@@ -70,29 +76,60 @@
 
   <script>
     (function () {
-      var results = document.getElementById('ds-results'), q = document.getElementById('ds-q'), chosen = document.getElementById('ds-chosen'), idField = document.getElementById('dataset_id');
-      var timer = null;
-      function render(list) {
-        results.textContent = '';
-        if (!list.length) { results.innerHTML = '<p class="muted">No dataset found that you may add to.</p>'; return; }
-        list.forEach(function (d) {
-          var b = document.createElement('button'); b.type = 'button'; b.className = 'dataset-hit';
-          b.textContent = d.title; var s = document.createElement('small'); s.textContent = (d.organization ? d.organization + ' -- ' : '') + d.name; b.appendChild(s);
-          b.addEventListener('click', function () {
-            idField.value = d.id; chosen.innerHTML = ''; chosen.append('Chosen: '); var st = document.createElement('strong'); st.textContent = d.title; chosen.appendChild(st);
-            results.textContent = '';
-          });
-          results.appendChild(b);
-        });
+      var orgField = document.getElementById('organization_id'), orgChosen = document.getElementById('org-chosen'), orgQ = document.getElementById('org-q'), orgResults = document.getElementById('org-results');
+      var dsField = document.getElementById('dataset_id'), dsChosen = document.getElementById('ds-chosen'), dsQ = document.getElementById('ds-q'), dsResults = document.getElementById('ds-results');
+      var organizations = null, timer = null;
+
+      function say(box, text) { box.textContent = ''; var p = document.createElement('p'); p.className = 'muted'; p.textContent = text; box.appendChild(p); }
+      function hit(box, title, detail, onClick) {
+        var b = document.createElement('button'); b.type = 'button'; b.className = 'dataset-hit'; b.textContent = title;
+        if (detail) { var s = document.createElement('small'); s.textContent = detail; b.appendChild(s); }
+        b.addEventListener('click', onClick); box.appendChild(b);
       }
-      function search() {
-        fetch('/load/ckan/datasets?q=' + encodeURIComponent(q.value), {credentials: 'same-origin'}).then(function (r) { return r.json(); }).then(function (data) {
-          if (data.error) { results.innerHTML = ''; var p = document.createElement('p'); p.className = 'muted'; p.textContent = data.error; results.appendChild(p); return; }
-          render(data.datasets);
-        }).catch(function () { results.textContent = 'The search failed.'; });
+      function chosenText(box, label, title) { box.textContent = label + ' '; var st = document.createElement('strong'); st.textContent = title; box.appendChild(st); }
+
+      // 1. the organization: all of them are loaded once and filtered as you type
+      function showOrganizations() {
+        if (organizations === null) return;
+        var term = orgQ.value.trim().toLowerCase();
+        var list = organizations.filter(function (o) { return !term || o.title.toLowerCase().indexOf(term) >= 0 || o.name.toLowerCase().indexOf(term) >= 0; }).slice(0, 30);
+        orgResults.textContent = '';
+        if (!list.length) { say(orgResults, 'No organization found that you may add datasets to.'); return; }
+        list.forEach(function (o) { hit(orgResults, o.title, o.name, function () { chooseOrganization(o); }); });
       }
-      q.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(search, 300); });
-      q.addEventListener('focus', function () { if (!results.children.length) search(); });
+      function loadOrganizations() {
+        if (organizations !== null) { showOrganizations(); return; }
+        fetch('/load/ckan/organizations', {credentials: 'same-origin'}).then(function (r) { return r.json(); }).then(function (data) {
+          if (data.error) { say(orgResults, data.error); return; }
+          organizations = data.organizations; showOrganizations();
+        }).catch(function () { say(orgResults, 'The search failed.'); });
+      }
+      function chooseOrganization(o) {
+        var changed = orgField.value !== o.id;
+        orgField.value = o.id; chosenText(orgChosen, 'Chosen:', o.title); orgResults.textContent = ''; orgQ.value = '';
+        dsQ.disabled = false;
+        if (changed) { dsField.value = ''; dsQ.value = ''; dsChosen.textContent = 'Now choose the dataset.'; }
+        searchDatasets();
+      }
+      orgQ.addEventListener('input', function () { loadOrganizations(); });
+      orgQ.addEventListener('focus', loadOrganizations);
+
+      // 2. the dataset: searched within the chosen organization
+      function searchDatasets() {
+        if (!orgField.value) return;
+        fetch('/load/ckan/datasets?org=' + encodeURIComponent(orgField.value) + '&q=' + encodeURIComponent(dsQ.value), {credentials: 'same-origin'})
+          .then(function (r) { return r.json(); }).then(function (data) {
+            if (data.error) { say(dsResults, data.error); return; }
+            dsResults.textContent = '';
+            if (!data.datasets.length) { say(dsResults, 'No dataset found in this organization.'); return; }
+            data.datasets.forEach(function (d) {
+              hit(dsResults, d.title, d.name, function () { dsField.value = d.id; chosenText(dsChosen, 'Chosen:', d.title); dsResults.textContent = ''; });
+            });
+          }).catch(function () { say(dsResults, 'The search failed.'); });
+      }
+      dsQ.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(searchDatasets, 300); });
+      dsQ.addEventListener('focus', function () { if (!dsResults.children.length) searchDatasets(); });
+
       function modeNote() {
         var upload = document.getElementById('mode-upload').checked;
         document.getElementById('note-link').hidden = upload; document.getElementById('note-upload').hidden = !upload;

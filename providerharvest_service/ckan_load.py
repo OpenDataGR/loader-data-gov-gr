@@ -37,11 +37,19 @@ class CkanLoadError(Exception):
 
 
 @dataclasses.dataclass(frozen=True)
+class OrganizationChoice:
+    id: str
+    name: str
+    title: str
+
+
+@dataclasses.dataclass(frozen=True)
 class DatasetChoice:
     id: str
     name: str
     title: str
     organization: str
+    owner_org: str = ""
 
 
 def configured() -> bool:
@@ -74,12 +82,27 @@ def _explain(exc: ckan_client.CKANActionError) -> str:
 
 # -- finding the dataset -------------------------------------------------------------------------------------------------------------------------------
 
-def search_datasets(client: ckan_client.CKANActionClient, ckan_user: str, query: str = "", limit: int = 20) -> list[DatasetChoice]:
-    """Datasets the person may add a resource to: those of the organizations they can create datasets in (an editor included), found by a text
-    search. Nothing here changes anything."""
+def list_organizations(client: ckan_client.CKANActionClient, ckan_user: str) -> list[OrganizationChoice]:
+    """The organizations the person may add datasets to (an editor included; a sysadmin gets all of them), by title."""
+    try:
+        organizations = client.call("organization_list_for_user", {"id": ckan_user, "permission": "create_dataset"}) or []
+    except ckan_client.CKANActionError as exc:
+        raise CkanLoadError(_explain(exc)) from exc
+    found = [OrganizationChoice(id=str(o["id"]), name=str(o.get("name") or ""), title=str(o.get("title") or o.get("display_name") or o.get("name") or ""))
+             for o in organizations if isinstance(o, dict) and o.get("id")]
+    return sorted(found, key=lambda o: o.title.lower())
+
+
+def search_datasets(client: ckan_client.CKANActionClient, ckan_user: str, query: str = "", limit: int = 20, organization_id: str | None = None) -> list[DatasetChoice]:
+    """Datasets the person may add a resource to, found by a text search: those of the organization given (which must be one they may add to),
+    or else of all the organizations they can create datasets in. Nothing here changes anything."""
     try:
         organizations = client.call("organization_list_for_user", {"id": ckan_user, "permission": "create_dataset"}) or []
         ids = [str(o.get("id")) for o in organizations if isinstance(o, dict) and o.get("id")]
+        if organization_id:
+            if organization_id not in ids:
+                raise CkanLoadError("You may not add datasets to that organization.")
+            ids = [organization_id]
         if not ids:
             return []
         found = client.call("package_search", {"q": query.strip() or "*:*", "fq": "owner_org:(%s)" % " OR ".join(ids), "rows": limit, "include_private": True,
@@ -87,7 +110,8 @@ def search_datasets(client: ckan_client.CKANActionClient, ckan_user: str, query:
     except ckan_client.CKANActionError as exc:
         raise CkanLoadError(_explain(exc)) from exc
     return [DatasetChoice(id=str(d["id"]), name=str(d.get("name") or ""), title=str(d.get("title") or d.get("name") or ""),
-                          organization=str((d.get("organization") or {}).get("title") or (d.get("organization") or {}).get("name") or ""))
+                          organization=str((d.get("organization") or {}).get("title") or (d.get("organization") or {}).get("name") or ""),
+                          owner_org=str(d.get("owner_org") or ""))
             for d in found.get("results", []) if isinstance(d, dict) and d.get("id")]
 
 
@@ -97,7 +121,7 @@ def get_dataset(client: ckan_client.CKANActionClient, dataset_id: str) -> Datase
     except ckan_client.CKANActionError as exc:
         raise CkanLoadError(_explain(exc)) from exc
     return DatasetChoice(id=str(d["id"]), name=str(d.get("name") or ""), title=str(d.get("title") or d.get("name") or ""),
-                         organization=str((d.get("organization") or {}).get("title") or ""))
+                         organization=str((d.get("organization") or {}).get("title") or ""), owner_org=str(d.get("owner_org") or ""))
 
 
 # -- the resource -----------------------------------------------------------------------------------------------------------------------------------------

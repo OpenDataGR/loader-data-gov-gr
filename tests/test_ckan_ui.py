@@ -30,7 +30,7 @@ def _page(source_id, pipeline=None, tail="ckan"):
 
 
 def _connect(client, source_id, pipeline=None, **form):
-    data = {"mode": "link", "dataset_id": "ds1", "resource_name": "Traffic", "description": ""}
+    data = {"mode": "link", "organization_id": "org1", "dataset_id": "ds1", "resource_name": "Traffic", "description": ""}
     data.update(form)
     return client.post(_page(source_id, pipeline), data=data, follow_redirects=False)
 
@@ -78,14 +78,15 @@ def test_the_page_shows_what_will_be_created_and_unknown_pipelines_are_refused(c
     _add(client, source, "table")
     page = client.get(_page(source["id"], "table")).text
     assert "pipeline <strong>table</strong>" in page and "<code>%s/data/acme-push/table</code>" % BASE in page and "Connect and push" in page
-    assert 'name="dataset_id"' in page and 'name="resource_name"' in page and "Acme push / table" in page
+    assert 'name="organization_id"' in page and 'name="dataset_id"' in page and 'name="resource_name"' in page and "Acme push / table" in page
+    assert page.index('name="organization_id"') < page.index('name="dataset_id"') < page.index('name="resource_name"')  # organization, dataset, resource
     assert "No such pipeline" in _flash(client.get(_page(source["id"], "ghost"), follow_redirects=False))
 
 
 def test_the_dataset_search_returns_the_datasets_the_person_may_use(client, source, ckan):
     found = client.get("/load/ckan/datasets", params={"q": "traffic"})
-    assert found.status_code == 200 and found.json()["datasets"][0] == {"id": "ds1", "name": "attica-traffic", "title": "Attica traffic", "organization": "Traffic"}
-    assert ckan.calls[-1][1]["q"] == "traffic"
+    assert found.status_code == 200 and found.json()["datasets"][0] == {"id": "ds1", "name": "attica-traffic", "title": "Attica traffic", "organization": "Traffic", "owner_org": "org1"}
+    assert ckan.calls[-1][1]["q"] == "traffic" and ckan.calls[-1][1]["fq"] == "owner_org:(org2 OR org1)"  # (all the person's organizations, when none is chosen)
     ckan.fail["package_search"] = ckan_client.CKANActionError("package_search", "boom")
     failed = client.get("/load/ckan/datasets")
     assert failed.status_code == 502 and "could not be reached" in failed.json()["error"]
@@ -138,7 +139,8 @@ def test_connecting_an_unpublished_pipeline_keeps_the_connection_and_says_what_t
 
 def test_what_is_missing_is_explained_before_anything_is_sent_to_ckan(client, source, ckan):
     _ready(client, source)
-    assert "Choose the CKAN dataset" in _flash(_connect(client, source["id"], dataset_id=""))
+    assert "Choose the organization first" in _flash(_connect(client, source["id"], organization_id=""))
+    assert "Choose the dataset first" in _flash(_connect(client, source["id"], dataset_id=""))
     assert "Give the resource a name" in _flash(_connect(client, source["id"], resource_name=" "))
     assert "Choose link or upload" in _flash(_connect(client, source["id"], mode="teleport"))
     assert [c[0] for c in ckan.calls] == []
@@ -181,7 +183,7 @@ def test_upload_mode_without_an_output_yet_says_so(client, source, ckan, _isolat
 def test_moving_to_another_dataset_takes_the_resource_out_of_the_old_one_first(client, source, ckan, _isolated_db):
     _ready(client, source)
     _connect(client, source["id"])
-    assert "is now a resource" in _flash(_connect(client, source["id"], dataset_id="ds2"))
+    assert "is now a resource" in _flash(_connect(client, source["id"], organization_id="org2", dataset_id="ds2"))
     actions = [c[0] for c in ckan.calls if c[0].startswith("resource_")]
     assert actions == ["resource_create", "resource_delete", "resource_create"]  # the old one goes, a new one is made in the other dataset
     assert [r["package_id"] for r in ckan.resources.values()] == ["ds2"]  # exactly one resource, in the new dataset
@@ -212,3 +214,43 @@ def test_a_disconnect_ckan_refuses_keeps_the_connection(client, source, ckan, _i
     ckan.fail["resource_delete"] = ckan_client.CKANNotAuthorized("resource_delete", "no")
     assert "still connected" in _flash(client.post(_page(source["id"], tail="ckan/disconnect"), follow_redirects=False))
     assert len(_targets(_isolated_db)) == 1 and "res1" in ckan.resources
+
+
+def test_the_organizations_are_listed_for_the_first_step(client, source, ckan):
+    found = client.get("/load/ckan/organizations")
+    assert found.status_code == 200 and found.json()["organizations"] == [{"id": "org2", "name": "air", "title": "Air"}, {"id": "org1", "name": "traffic", "title": "Traffic"}]
+    ckan.fail["organization_list_for_user"] = ckan_client.CKANActionError("organization_list_for_user", "boom")
+    failed = client.get("/load/ckan/organizations")
+    assert failed.status_code == 502 and "could not be reached" in failed.json()["error"]
+
+
+def test_the_datasets_are_searched_within_the_chosen_organization(client, source, ckan):
+    found = client.get("/load/ckan/datasets", params={"q": "air", "org": "org2"})
+    assert found.status_code == 200 and ckan.calls[-1][1]["fq"] == "owner_org:(org2)"
+    refused = client.get("/load/ckan/datasets", params={"org": "org-not-mine"})
+    assert refused.status_code == 502 and "may not add datasets to that organization" in refused.json()["error"]
+
+
+def test_the_organization_endpoints_are_refused_without_a_ckan_identity(client, source, monkeypatch):
+    monkeypatch.setenv("CKAN_BASE_URL", "https://ckan.example.gr")
+    monkeypatch.setenv("CKAN_SYSADMIN_API_TOKEN", "t")
+    assert client.get("/load/ckan/organizations").status_code == 403
+
+
+def test_the_dataset_must_be_in_the_chosen_organization_and_the_organization_one_the_person_may_use(client, source, ckan, _isolated_db):
+    _ready(client, source)
+    assert "is not in Air" in _flash(_connect(client, source["id"], organization_id="org2", dataset_id="ds1"))  # ds1 is in Traffic
+    assert "may not add datasets to that organization" in _flash(_connect(client, source["id"], organization_id="org-not-mine"))
+    assert _targets(_isolated_db) == [] and [c for c in ckan.calls if c[0].startswith("resource_")] == []
+    assert "is now a resource of Attica traffic" in _flash(_connect(client, source["id"], organization_id="org1", dataset_id="ds1"))
+    (target,) = _targets(_isolated_db)
+    assert (target.organization_id, target.organization_title) == ("org1", "Traffic")
+    page = client.get(_page(source["id"])).text
+    assert "Now: <strong>Traffic</strong>" in page and "Now: <strong>Attica traffic</strong>" in page
+
+
+def test_the_page_script_loads_organizations_first_then_searches_the_datasets_of_the_one_chosen(client, source, ckan):
+    _setup(client, source)
+    page = client.get(_page(source["id"])).text
+    assert "fetch('/load/ckan/organizations'" in page and "'/load/ckan/datasets?org=' + encodeURIComponent(orgField.value)" in page
+    assert 'id="ds-q" placeholder="Search the datasets of the chosen organization' in page and "disabled" in page.split('id="ds-q"')[1].split(">")[0]  # off until an organization is chosen
