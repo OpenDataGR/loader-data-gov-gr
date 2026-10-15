@@ -7,9 +7,18 @@
     .form-head h1 { margin: 0; }
     .form-head + .subtitle { margin: 0.5rem 0 1.1rem; }
     a.back-arrow { padding: 0.45rem 0.6rem; }
-    .dataset-hit { display: block; width: 100%; text-align: left; background: var(--color-surface); color: var(--color-text); border: 1px solid var(--color-border); border-radius: 6px; padding: 0.5rem 0.8rem; margin: 0.25rem 0; cursor: pointer; font-weight: 400; }
-    .dataset-hit:hover, .dataset-hit.chosen { border-color: var(--color-primary-mid); background: #f2f6fc; }
-    .dataset-hit small { color: var(--color-gray-700); display: block; }
+    .pick-list { max-height: 15rem; overflow-y: auto; margin: 0.35rem 0 0.2rem; border: 1px solid var(--color-border); border-radius: 6px; padding: 0.2rem; background: var(--color-surface); }
+    .pick-list:empty { display: none; }
+    .pick-list > p { margin: 0.4rem 0.6rem; }
+    .dataset-hit { display: block; width: 100%; text-align: left; background: transparent; color: var(--color-text); border: 0; border-radius: 4px; padding: 0.4rem 0.6rem; margin: 0; cursor: pointer; font-weight: 400; font-size: 0.88rem; }
+    .dataset-hit:hover, .dataset-hit:focus-visible { background: #f2f6fc; }
+    .dataset-hit .line { display: flex; align-items: baseline; gap: 0.5rem; justify-content: space-between; }
+    .dataset-hit .what { font-weight: 600; }
+    .dataset-hit small { color: var(--color-gray-700); display: block; font-size: 0.78rem; }
+    .pill { display: inline-block; border-radius: 999px; padding: 0 0.5rem; font-size: 0.7rem; font-weight: 700; white-space: nowrap; }
+    .pill-private { background: #fff3cd; color: #7a5b00; }
+    .pill-public { background: #dff3e4; color: #1e6b34; }
+    .pill-other { background: #e6e9ef; color: #46505e; }
     .ckan-status { border: 1px solid var(--color-border); border-radius: var(--radius); padding: 0.8rem 1rem; margin: 0 0 1.2rem; max-width: 46rem; }
   </style>
   <div class="panel">
@@ -57,13 +66,13 @@
       <input type="hidden" id="organization_id" name="organization_id" value="{{ target.organization_id if target and target.organization_id else '' }}">
       <div id="org-chosen" class="muted" style="margin:0.2rem 0;">{% if target and target.organization_title %}Now: <strong>{{ target.organization_title }}</strong>. Search to choose another.{% else %}Nothing chosen yet.{% endif %}</div>
       <input type="text" id="org-q" placeholder="Search the organizations you can add datasets to" autocomplete="off"{% if problem %} disabled{% endif %}>
-      <div id="org-results" aria-live="polite"></div>
+      <div id="org-results" class="pick-list" aria-live="polite"></div>
 
       <label for="ds-q">Dataset <span class="req" style="color:var(--status-rejected);">*</span></label>
       <input type="hidden" id="dataset_id" name="dataset_id" value="{{ target.dataset_id if target else '' }}">
       <div id="ds-chosen" class="muted" style="margin:0.2rem 0;">{% if target %}Now: <strong>{{ target.dataset_title or target.dataset_name }}</strong>. Search to choose another.{% else %}Choose the organization first.{% endif %}</div>
       <input type="text" id="ds-q" placeholder="Search the datasets of the chosen organization (title or words)" autocomplete="off"{% if problem or not (target and target.organization_id) %} disabled{% endif %}>
-      <div id="ds-results" aria-live="polite"></div>
+      <div id="ds-results" class="pick-list" aria-live="polite"></div>
 
       <label for="resource_name">Resource name <span class="req" style="color:var(--status-rejected);">*</span></label>
       <input type="text" id="resource_name" name="resource_name" maxlength="200" value="{{ target.resource_name if target else default_name }}">
@@ -81,10 +90,25 @@
       var organizations = null, timer = null;
 
       function say(box, text) { box.textContent = ''; var p = document.createElement('p'); p.className = 'muted'; p.textContent = text; box.appendChild(p); }
-      function hit(box, title, detail, onClick) {
-        var b = document.createElement('button'); b.type = 'button'; b.className = 'dataset-hit'; b.textContent = title;
+      function pill(text, kind) { var s = document.createElement('span'); s.className = 'pill pill-' + kind; s.textContent = text; return s; }
+      function hit(box, title, detail, onClick, pills) {
+        var b = document.createElement('button'); b.type = 'button'; b.className = 'dataset-hit';
+        var line = document.createElement('span'); line.className = 'line';
+        var what = document.createElement('span'); what.className = 'what'; what.textContent = title; line.appendChild(what);
+        if (pills && pills.length) { var side = document.createElement('span'); pills.forEach(function (p) { side.appendChild(p); side.appendChild(document.createTextNode(' ')); }); line.appendChild(side); }
+        b.appendChild(line);
         if (detail) { var s = document.createElement('small'); s.textContent = detail; b.appendChild(s); }
         b.addEventListener('click', onClick); box.appendChild(b);
+      }
+      function datasetPills(d) {
+        var pills = [d.private ? pill('Private', 'private') : pill('Public', 'public')];
+        if (d.state && d.state !== 'active') pills.push(pill(d.state.charAt(0).toUpperCase() + d.state.slice(1), 'other'));
+        return pills;
+      }
+      function datasetDetail(d) {
+        var parts = [d.name, d.num_resources + (d.num_resources === 1 ? ' resource' : ' resources')];
+        if (d.modified) parts.push('updated ' + d.modified);
+        return parts.join(' \u00b7 ');
       }
       function chosenText(box, label, title) { box.textContent = label + ' '; var st = document.createElement('strong'); st.textContent = title; box.appendChild(st); }
 
@@ -95,7 +119,7 @@
         var list = organizations.filter(function (o) { return !term || o.title.toLowerCase().indexOf(term) >= 0 || o.name.toLowerCase().indexOf(term) >= 0; }).slice(0, 30);
         orgResults.textContent = '';
         if (!list.length) { say(orgResults, 'No organization found that you may add datasets to.'); return; }
-        list.forEach(function (o) { hit(orgResults, o.title, o.name, function () { chooseOrganization(o); }); });
+        list.forEach(function (o) { hit(orgResults, o.title, o.name + (o.package_count !== null && o.package_count !== undefined ? ' \u00b7 ' + o.package_count + ' datasets' : ''), function () { chooseOrganization(o); }); });
       }
       function loadOrganizations() {
         if (organizations !== null) { showOrganizations(); return; }
@@ -123,7 +147,7 @@
             dsResults.textContent = '';
             if (!data.datasets.length) { say(dsResults, 'No dataset found in this organization.'); return; }
             data.datasets.forEach(function (d) {
-              hit(dsResults, d.title, d.name, function () { dsField.value = d.id; chosenText(dsChosen, 'Chosen:', d.title); dsResults.textContent = ''; });
+              hit(dsResults, d.title, datasetDetail(d), function () { dsField.value = d.id; chosenText(dsChosen, 'Chosen:', d.title + (d.private ? ' (private)' : ' (public)')); dsResults.textContent = ''; }, datasetPills(d));
             });
           }).catch(function () { say(dsResults, 'The search failed.'); });
       }

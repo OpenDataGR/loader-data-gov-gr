@@ -25,8 +25,9 @@ class FakeCkan:
         if action == "organization_list_for_user":
             return [{"id": "org2", "name": "air", "title": "Air"}, {"id": "org1", "name": "traffic", "title": "Traffic"}]
         if action == "package_search":
-            return {"results": [{"id": "ds1", "name": "attica-traffic", "title": "Attica traffic", "organization": {"title": "Traffic"}, "owner_org": "org1"},
-                                {"id": "ds2", "name": "air", "owner_org": "org2"}]}
+            return {"results": [{"id": "ds1", "name": "attica-traffic", "title": "Attica traffic", "organization": {"title": "Traffic"}, "owner_org": "org1",
+                                 "private": True, "state": "draft", "num_resources": 3, "metadata_modified": "2026-10-12T05:04:21.123456"},
+                                {"id": "ds2", "name": "air", "owner_org": "org2", "resources": [{"id": "r"}]}]}
         if action == "package_show":
             return {"id": data["id"], "name": "attica-traffic", "title": "Attica traffic", "organization": {"title": "Traffic"},
                     "owner_org": "org2" if data["id"] == "ds2" else "org1"}
@@ -69,6 +70,9 @@ def test_the_search_is_limited_to_the_organizations_the_person_can_add_datasets_
     ckan = FakeCkan()
     found = ckan_load.search_datasets(ckan, "user_abc", "traffic")
     assert [(d.id, d.title, d.organization, d.owner_org) for d in found] == [("ds1", "Attica traffic", "Traffic", "org1"), ("ds2", "air", "", "org2")]
+    first, second = found  # and what each says about itself: private or public, its state, its resources, when it last changed
+    assert (first.private, first.state, first.num_resources, first.modified) == (True, "draft", 3, "2026-10-12")
+    assert (second.private, second.state, second.num_resources, second.modified) == (False, "active", 1, "")  # (counted from its resources when CKAN gives no count)
     (_, orgs_call, _), (_, search_call, _) = ckan.calls
     assert orgs_call == {"id": "user_abc", "permission": "create_dataset"}  # an editor counts, not only an administrator
     assert search_call["fq"] == "owner_org:(org2 OR org1)" and search_call["q"] == "traffic" and search_call["include_private"] is True

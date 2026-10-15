@@ -41,6 +41,7 @@ class OrganizationChoice:
     id: str
     name: str
     title: str
+    package_count: int | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -50,6 +51,10 @@ class DatasetChoice:
     title: str
     organization: str
     owner_org: str = ""
+    private: bool = False
+    state: str = "active"
+    num_resources: int = 0
+    modified: str = ""  # the date CKAN last changed it, as YYYY-MM-DD
 
 
 def configured() -> bool:
@@ -88,7 +93,8 @@ def list_organizations(client: ckan_client.CKANActionClient, ckan_user: str) -> 
         organizations = client.call("organization_list_for_user", {"id": ckan_user, "permission": "create_dataset"}) or []
     except ckan_client.CKANActionError as exc:
         raise CkanLoadError(_explain(exc)) from exc
-    found = [OrganizationChoice(id=str(o["id"]), name=str(o.get("name") or ""), title=str(o.get("title") or o.get("display_name") or o.get("name") or ""))
+    found = [OrganizationChoice(id=str(o["id"]), name=str(o.get("name") or ""), title=str(o.get("title") or o.get("display_name") or o.get("name") or ""),
+                                package_count=o.get("package_count") if isinstance(o.get("package_count"), int) else None)
              for o in organizations if isinstance(o, dict) and o.get("id")]
     return sorted(found, key=lambda o: o.title.lower())
 
@@ -109,10 +115,17 @@ def search_datasets(client: ckan_client.CKANActionClient, ckan_user: str, query:
                                                "sort": "metadata_modified desc"}) or {}
     except ckan_client.CKANActionError as exc:
         raise CkanLoadError(_explain(exc)) from exc
-    return [DatasetChoice(id=str(d["id"]), name=str(d.get("name") or ""), title=str(d.get("title") or d.get("name") or ""),
-                          organization=str((d.get("organization") or {}).get("title") or (d.get("organization") or {}).get("name") or ""),
-                          owner_org=str(d.get("owner_org") or ""))
-            for d in found.get("results", []) if isinstance(d, dict) and d.get("id")]
+    return [_dataset_choice(d) for d in found.get("results", []) if isinstance(d, dict) and d.get("id")]
+
+
+def _dataset_choice(d: dict) -> DatasetChoice:
+    organization = d.get("organization") or {}
+    return DatasetChoice(
+        id=str(d["id"]), name=str(d.get("name") or ""), title=str(d.get("title") or d.get("name") or ""),
+        organization=str(organization.get("title") or organization.get("name") or ""), owner_org=str(d.get("owner_org") or ""),
+        private=bool(d.get("private")), state=str(d.get("state") or "active"),
+        num_resources=int(d.get("num_resources") if isinstance(d.get("num_resources"), int) else len(d.get("resources") or [])),
+        modified=str(d.get("metadata_modified") or "")[:10])
 
 
 def get_dataset(client: ckan_client.CKANActionClient, dataset_id: str) -> DatasetChoice:
@@ -120,8 +133,7 @@ def get_dataset(client: ckan_client.CKANActionClient, dataset_id: str) -> Datase
         d = client.call("package_show", {"id": dataset_id})
     except ckan_client.CKANActionError as exc:
         raise CkanLoadError(_explain(exc)) from exc
-    return DatasetChoice(id=str(d["id"]), name=str(d.get("name") or ""), title=str(d.get("title") or d.get("name") or ""),
-                         organization=str((d.get("organization") or {}).get("title") or ""), owner_org=str(d.get("owner_org") or ""))
+    return _dataset_choice(d)
 
 
 # -- the resource -----------------------------------------------------------------------------------------------------------------------------------------

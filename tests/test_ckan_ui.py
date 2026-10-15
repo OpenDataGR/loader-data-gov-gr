@@ -85,7 +85,8 @@ def test_the_page_shows_what_will_be_created_and_unknown_pipelines_are_refused(c
 
 def test_the_dataset_search_returns_the_datasets_the_person_may_use(client, source, ckan):
     found = client.get("/load/ckan/datasets", params={"q": "traffic"})
-    assert found.status_code == 200 and found.json()["datasets"][0] == {"id": "ds1", "name": "attica-traffic", "title": "Attica traffic", "organization": "Traffic", "owner_org": "org1"}
+    assert found.status_code == 200 and found.json()["datasets"][0] == {"id": "ds1", "name": "attica-traffic", "title": "Attica traffic", "organization": "Traffic", "owner_org": "org1",
+                                                                       "private": True, "state": "draft", "num_resources": 3, "modified": "2026-10-12"}
     assert ckan.calls[-1][1]["q"] == "traffic" and ckan.calls[-1][1]["fq"] == "owner_org:(org2 OR org1)"  # (all the person's organizations, when none is chosen)
     ckan.fail["package_search"] = ckan_client.CKANActionError("package_search", "boom")
     failed = client.get("/load/ckan/datasets")
@@ -218,7 +219,8 @@ def test_a_disconnect_ckan_refuses_keeps_the_connection(client, source, ckan, _i
 
 def test_the_organizations_are_listed_for_the_first_step(client, source, ckan):
     found = client.get("/load/ckan/organizations")
-    assert found.status_code == 200 and found.json()["organizations"] == [{"id": "org2", "name": "air", "title": "Air"}, {"id": "org1", "name": "traffic", "title": "Traffic"}]
+    assert found.status_code == 200 and found.json()["organizations"] == [{"id": "org2", "name": "air", "title": "Air", "package_count": None},
+                                                                     {"id": "org1", "name": "traffic", "title": "Traffic", "package_count": None}]
     ckan.fail["organization_list_for_user"] = ckan_client.CKANActionError("organization_list_for_user", "boom")
     failed = client.get("/load/ckan/organizations")
     assert failed.status_code == 502 and "could not be reached" in failed.json()["error"]
@@ -254,3 +256,10 @@ def test_the_page_script_loads_organizations_first_then_searches_the_datasets_of
     page = client.get(_page(source["id"])).text
     assert "fetch('/load/ckan/organizations'" in page and "'/load/ckan/datasets?org=' + encodeURIComponent(orgField.value)" in page
     assert 'id="ds-q" placeholder="Search the datasets of the chosen organization' in page and "disabled" in page.split('id="ds-q"')[1].split(">")[0]  # off until an organization is chosen
+
+
+def test_the_lists_are_short_scrolling_boxes_and_each_dataset_shows_what_it_is(client, source, ckan):
+    _setup(client, source)
+    page = client.get(_page(source["id"])).text
+    assert ".pick-list { max-height: 15rem; overflow-y: auto;" in page and 'id="org-results" class="pick-list"' in page and 'id="ds-results" class="pick-list"' in page
+    assert "pill('Private', 'private') : pill('Public', 'public')" in page and "' resource' : ' resources'" in page and "'updated ' + d.modified" in page
