@@ -22,7 +22,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from providerharvest_service import build_info, connection_check, harvest_db, harvest_runner, nav, provider_sources, push_check, retention
+from providerharvest_service import build_info, ckan_load, connection_check, harvest_db, harvest_runner, nav, provider_sources, push_check, retention
 from providerharvest_service.db import get_session
 from providerharvest_service.models import LookupTable
 
@@ -149,11 +149,12 @@ def delete_source(source_id: str, session: Session = Depends(get_session), hsess
     """Delete a source and everything that belongs to it: its pipelines, index tables, publish setting, stored runs, files and outputs."""
     try:
         provider_sources.get_or_404(session, source_id)
+        ckan_warnings = ckan_load.forget_source(session, source_id)  # its resources leave CKAN (best effort: CKAN being down does not stop this)
         stored = retention.delete_source_data(hsession, source_id)
         removed = provider_sources.delete(session, source_id)
     except provider_sources.NotFound:
         return RedirectResponse(_redirect_with_flash("No such source.", kind="error"), status_code=303)
-    return RedirectResponse(_redirect_with_flash(provider_sources.deletion_summary(removed, stored)), status_code=303)
+    return RedirectResponse(_redirect_with_flash(" ".join([provider_sources.deletion_summary(removed, stored)] + ckan_warnings)), status_code=303)
 
 
 @router.get("/sources/{source_id}/credentials", response_class=HTMLResponse)

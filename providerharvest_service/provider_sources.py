@@ -40,7 +40,7 @@ from providerharvest_service.ftp_credentials import (
     password_problem,
 )
 from providerharvest_service import retention, sender_allowlist
-from providerharvest_service.models import FtpAccount, FtpAllowedIp, LoadTarget, LookupTable, ProviderSource, Transform, _new_id
+from providerharvest_service.models import CkanTarget, FtpAccount, FtpAllowedIp, LoadTarget, LookupTable, ProviderSource, Transform, _new_id
 
 TRANSPORT_TYPES = ("http", "sftp", "scp", "ftp", "push")
 PROXY_METHODS = ("GET", "POST")
@@ -825,7 +825,7 @@ def delete(session: Session, source_id: str) -> None:
         session.delete(account)
         removed["accounts"] += 1
     # what belongs to the source goes with it: its pipelines, its index tables and its publish setting (nothing can use them afterwards)
-    for model, key in ((Transform, "pipelines"), (LookupTable, "tables"), (LoadTarget, None)):  # (the old per-source switch is only cleaned up)
+    for model, key in ((Transform, "pipelines"), (LookupTable, "tables"), (LoadTarget, None), (CkanTarget, None)):  # (the old switch and the CKAN connections are only cleaned up)
         for row in session.scalars(select(model).where(model.source_id == source_id)).all():
             if key:
                 removed[key] += 1

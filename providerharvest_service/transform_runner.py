@@ -137,7 +137,11 @@ def on_new_file(config_session: Session, hsession: Session, source, run: Harvest
         return
     for pipeline in list_pipelines(config_session, source.id):  # every enabled pipeline gets the file; one failing never stops the others
         try:
-            process_run(config_session, hsession, source.id, run.id, filename, content, transform=pipeline)
+            stored = process_run(config_session, hsession, source.id, run.id, filename, content, transform=pipeline)
+            if stored is not None and stored.status == "ok":
+                from providerharvest_service import ckan_load  # an `upload` connection to CKAN puts the new output there too (best effort)
+
+                ckan_load.sync_after_output(config_session, source, pipeline, stored)
         except Exception:  # noqa: BLE001 -- ingest must not fail because of a transform
             logger.exception("pipeline %s of source %s failed unexpectedly", pipeline.name, getattr(source, "name", "?"))
             try:

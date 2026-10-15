@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from providerharvest_service import (
-    proxy, publishing, request_template, admin_session, build_info, harvest_db, nav, provider_sources, retention, transform_engine as te, transform_forms as tf, transform_runner,
+    ckan_load, proxy, publishing, request_template, admin_session, build_info, harvest_db, nav, provider_sources, retention, transform_engine as te, transform_forms as tf, transform_runner,
 )
 from providerharvest_service.db import get_session
 from providerharvest_service.harvest_models import TransformedFile
@@ -741,10 +741,12 @@ def delete_pipeline(source_id: str, pipeline: str, request: Request, session: Se
     if found is None:
         return _go(base, "No such pipeline.", "error")
     count = transform_runner.delete_all_outputs(hsession, source_id, found.id)
+    ckan_warning = ckan_load.forget(session, found.id)  # its CKAN resource leaves CKAN with it
     session.delete(found)
     source = _source_or_none(session, source_id)
     unpublished = publishing.is_pipeline_published(found)  # the switch is on the pipeline: it goes with it
     address = publishing.address_of(source, found)
     session.commit()
     logger.info("transform box: %s removed the pipeline %s of source %s (%d outputs)", _who(request) or "?", pipeline, source_id, count)
-    return _go(base, "Pipeline %s removed.%s" % (pipeline, (" Its published address %s stopped answering with it." % address) if unpublished else ""))
+    return _go(base, "Pipeline %s removed.%s%s" % (pipeline, (" Its published address %s stopped answering with it." % address) if unpublished else "",
+                                                 (" " + ckan_warning) if ckan_warning else ""))

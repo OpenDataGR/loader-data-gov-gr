@@ -173,3 +173,100 @@ def remove(target: CkanTarget, client: ckan_client.CKANActionClient) -> bool:
     target.resource_id = None
     target.last_output_id = None
     return True
+
+
+# -- keeping CKAN in step with the pipeline --------------------------------------------------------------------------------------------------------------
+# Every function below is best effort and never raises: a CKAN that is down or says no must not stop an upload from being received, a pipeline from
+# being unpublished or a source from being deleted. What went wrong is kept on the target (and returned as words where a person is looking).
+
+def target_of(session: Session, pipeline_id: str) -> CkanTarget | None:
+    from sqlalchemy import select
+
+    return session.scalar(select(CkanTarget).where(CkanTarget.pipeline_id == pipeline_id))
+
+
+def _client_for(session: Session, target: CkanTarget):
+    if not configured():
+        raise CkanLoadError("CKAN is not set up on this deployment.")
+    return user_client(session, target.ckan_user)
+
+
+def sync_after_output(session: Session, source: ProviderSource, pipeline: Transform, output) -> None:
+    """A new good output was stored: an ``upload`` connection puts it into CKAN (as the person who connected it). A ``link`` one needs nothing."""
+    try:
+        target = target_of(session, pipeline.id)
+        if target is None or target.mode != "upload" or getattr(output, "status", "ok") != "ok":
+            return
+        if target.last_output_id == getattr(output, "id", None) and target.resource_id:
+            return
+        push(target, source, pipeline, _client_for(session, target), output=output)
+        session.commit()
+    except CkanLoadError:
+        session.commit()  # (the reason was recorded on the target)
+    except Exception:  # noqa: BLE001 -- receiving a file must not fail because of CKAN
+        logger.exception("ckan: syncing a new output of %s / %s failed", getattr(source, "name", "?"), getattr(pipeline, "name", "?"))
+        session.rollback()
+
+
+def release(session: Session, target: CkanTarget) -> str:
+    """Take the pipeline's resource out of CKAN (it was unpublished or removed). '' when all is well, else a sentence for the person."""
+    if not target.resource_id:
+        return ""
+    try:
+        remove(target, _client_for(session, target))
+    except CkanLoadError as exc:
+        target.last_status, target.last_error = "error", "Could not be removed from CKAN: %s" % exc
+        return "Its CKAN resource could not be removed (%s) -- remove it in CKAN by hand." % exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("ckan: releasing a resource failed")
+        return "Its CKAN resource could not be removed (%s) -- remove it in CKAN by hand." % exc
+    target.last_status, target.last_error = None, None
+    return ""
+
+
+def restore(session: Session, source: ProviderSource, pipeline: Transform, target: CkanTarget) -> str:
+    """The pipeline is published again: put its resource back. '' when all is well, else a sentence for the person."""
+    if target.resource_id:
+        return ""
+    output = None
+    if target.mode == "upload":
+        from providerharvest_service import harvest_db, load_api
+
+        try:
+            with harvest_db.get_session_factory()() as hsession:
+                output = load_api.latest_output(hsession, source.id, pipeline.id)
+                if output is not None:
+                    hsession.expunge(output)
+        except Exception:  # noqa: BLE001
+            output = None
+    try:
+        push(target, source, pipeline, _client_for(session, target), output=output)
+    except CkanLoadError as exc:
+        return "It could not be put back in CKAN: %s" % exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("ckan: restoring a resource failed")
+        return "It could not be put back in CKAN: %s" % exc
+    return ""
+
+
+def forget(session: Session, pipeline_id: str) -> str:
+    """The pipeline is being removed: its resource leaves CKAN and the connection is deleted (the caller commits). Returns a warning, or ''."""
+    target = target_of(session, pipeline_id)
+    if target is None:
+        return ""
+    warning = release(session, target)
+    session.delete(target)
+    return warning
+
+
+def forget_source(session: Session, source_id: str) -> list[str]:
+    """Same for every pipeline of a source that is being deleted. Returns the warnings."""
+    from sqlalchemy import select
+
+    warnings = []
+    for target in session.scalars(select(CkanTarget).where(CkanTarget.source_id == source_id)).all():
+        warning = release(session, target)
+        if warning:
+            warnings.append(warning)
+        session.delete(target)
+    return warnings

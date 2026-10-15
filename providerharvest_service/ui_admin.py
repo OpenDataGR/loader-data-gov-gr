@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from providerharvest_service import build_info, connection_check, harvest_db, nav, provider_sources, retention
+from providerharvest_service import build_info, ckan_load, connection_check, harvest_db, nav, provider_sources, retention
 from providerharvest_service.db import get_session
 
 router = APIRouter(prefix="/admin/sources", tags=["admin-ui"])
@@ -125,13 +125,14 @@ def check_connection(source_id: str, request: Request, session: Session = Depend
 def delete_source(source_id: str, request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)) -> RedirectResponse:
     try:
         provider_sources.get_or_404(session, source_id)
+        ckan_warnings = ckan_load.forget_source(session, source_id)  # its resources leave CKAN (best effort)
         stored = retention.delete_source_data(hsession, source_id)
         removed = provider_sources.delete(session, source_id)
     except provider_sources.NotFound:
         return RedirectResponse(
             _came_from(request, "/admin/sources", "No such source.", kind="error"), status_code=303
         )
-    return RedirectResponse(_came_from(request, "/admin/sources", provider_sources.deletion_summary(removed, stored)), status_code=303)
+    return RedirectResponse(_came_from(request, "/admin/sources", " ".join([provider_sources.deletion_summary(removed, stored)] + ckan_warnings)), status_code=303)
 
 
 def _size(count: int) -> str:

@@ -107,8 +107,15 @@ async def set_api(source_id: str, request: Request, pipeline: str = transform_ru
     session.commit()
     path = publishing.address_of(source, target) if target is not None else "/data/%s" % source.name
     logger.info("load box: %s %s %s", who or "?", "published" if enable else "unpublished", path)
-    return _go("%s is %s at %s." % (source.title if target is None or target.name == transform_runner.DEFAULT_PIPELINE else "%s / %s" % (source.title, target.name),
-                                    "published" if enable else "no longer published", path))
+    note = ""
+    connection = ckan_load.target_of(session, target.id) if target is not None else None
+    if connection is not None:  # its CKAN resource follows: out when unpublished (it would link to a dead address), back when published again
+        had = bool(connection.resource_id)
+        warning = ckan_load.release(session, connection) if not enable else ckan_load.restore(session, source, target, connection)
+        session.commit()
+        note = " " + warning if warning else (" Its CKAN resource was removed." if had and not enable else (" Its CKAN resource is back." if enable and connection.resource_id else ""))
+    return _go("%s is %s at %s.%s" % (source.title if target is None or target.name == transform_runner.DEFAULT_PIPELINE else "%s / %s" % (source.title, target.name),
+                                      "published" if enable else "no longer published", path, note))
 
 
 def _api_source(session: Session, source_id: str):
