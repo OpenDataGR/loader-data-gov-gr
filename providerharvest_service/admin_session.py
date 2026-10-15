@@ -147,7 +147,7 @@ def user_info(username: str, profile_cookie: str) -> dict:
     else:
         access = ""
     # Without a valid profile cookie nobody is a super admin: it is the cookie, signed by this server at login, that says so.
-    return {"username": username, "name": profile.get("n") or "", "email": profile.get("e") or "",
+    return {"username": username, "sub": profile.get("sub") or "", "name": profile.get("n") or "", "email": profile.get("e") or "",
             "via": profile.get("via") or "Unknown", "access": access, "super": bool(profile.get("super"))}
 
 

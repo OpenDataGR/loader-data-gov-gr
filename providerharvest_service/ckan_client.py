@@ -84,13 +84,19 @@ class CKANActionClient:
             return self.call(action_name, data_dict)
         return _call
 
-    def call(self, action_name: str, data_dict: dict) -> Any:
+    def call(self, action_name: str, data_dict: dict, files: dict | None = None) -> Any:
+        """``files`` ({"upload": (filename, bytes, content_type)}) makes it a multipart call -- how CKAN takes a file for a resource; the
+        other fields are then sent as form fields (text), not JSON."""
+        if files:
+            body = {"data": {k: "" if v is None else str(v) for k, v in data_dict.items()}, "files": files}
+        else:
+            body = {"json": data_dict}
         try:
             response = self._session.post(
                 "%s/%s" % (self._api_base, action_name),
-                json=data_dict,
                 headers={"Authorization": self._token},
                 timeout=self._timeout,
+                **body,
             )
         except requests.RequestException as exc:
             raise CKANActionError(action_name, "request failed: %s" % exc) from exc

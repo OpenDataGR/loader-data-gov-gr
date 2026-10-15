@@ -231,7 +231,7 @@ def finish(request_base_url: str, tx_cookie: str, params: dict) -> tuple[str, st
     if not username or len(username) > 100 or any(ord(c) < 32 for c in username):
         raise OidcError("The login server did not say who you are (no user name).")
     full_name = str(ident.get("name") or " ".join(filter(None, [ident.get("given_name"), ident.get("family_name")]))).strip()
-    profile = {"u": username, "n": full_name[:100], "e": str(ident.get("email") or "")[:120], "via": "Keycloak (data.gov.gr)"}
+    profile = {"u": username, "n": full_name[:100], "e": str(ident.get("email") or "")[:120], "via": "Keycloak (data.gov.gr)", "sub": str(ident.get("sub") or "")[:80]}
     if access_rule() == "ckan-org-admin":
         try:
             verdict = ckan_access.check(str(ident.get("sub") or ""))
