@@ -197,3 +197,57 @@ def test_deleting_the_source_takes_its_service_out_of_ckan(client, registry, cka
     _service(client, registry)
     flash = _flash(client.post("/provider/sources/%s/delete" % registry, follow_redirects=False))
     assert "Source deleted." in flash and ckan.packages == {} and _targets(_isolated_db) == []
+
+
+# -- the format is the pipeline's ------------------------------------------------------------------------------------------------------------------------------------
+
+def test_the_format_is_shown_read_only_with_a_way_to_the_pipelines_output(client, registry, ckan):
+    page = client.get(_page(registry)).text
+    assert 'name="svc_format"' not in page and 'id="svc_format_label">JSON<' in page
+    assert 'href="/transform/sources/%s/steps/output">Change it on the pipeline' % registry in page
+
+
+def test_a_format_sent_with_the_form_is_ignored_and_the_pipelines_is_used(client, source, ckan):
+    _ready(client, source)
+    _service(client, source["id"], svc_format="CSV")
+    assert ckan.packages["svc1"]["format"].endswith("/file-type/JSON")  # the default pipeline writes JSON
+    assert 'id="svc_format_label">JSON<' in client.get(_page(source["id"])).text
+
+
+def test_changing_the_pipelines_output_updates_the_data_service_in_ckan(client, source, ckan, _isolated_db):
+    from tests.test_transform_ui import _go
+
+    _ready(client, source)
+    _service(client, source["id"])
+    assert ckan.packages["svc1"]["format"].endswith("/file-type/JSON")
+    flash = _flash(_go(client, source, "output", data={"format": "xml", "root": "records", "record": "record"}))
+    assert "Output set to" in flash and "The data service in CKAN was updated." in flash
+    assert ckan.packages["svc1"]["format"].endswith("/file-type/XML") and 'id="svc_format_label">XML<' in client.get(_page(source["id"])).text
+    flash = _flash(_go(client, source, "enabled", data={"enabled": "0"}))  # off: an API pipeline would pass the answer through, as JSON
+    assert "Transform switched off." in flash and "The data service in CKAN was updated." in flash
+    assert ckan.packages["svc1"]["format"].endswith("/file-type/JSON")
+
+
+def test_a_ckan_that_cannot_be_updated_never_blocks_the_pipeline_change(client, source, ckan, _isolated_db):
+    from providerharvest_service import ckan_client
+    from tests.test_transform_ui import _go
+
+    _ready(client, source)
+    _service(client, source["id"])
+    ckan.fail["package_patch"] = ckan_client.CKANActionError("package_patch", "down")
+    flash = _flash(_go(client, source, "output", data={"format": "csv", "delimiter": ","}))
+    assert "Output set to CSV" in flash and "could not be updated" in flash
+    from providerharvest_service import transform_runner
+
+    with _isolated_db() as s:
+        assert transform_runner.get_transform(s, source["id"]).output_format == "csv"  # the change was made
+
+
+def test_a_resource_connection_is_not_touched_by_a_change_of_the_output(client, source, ckan, _isolated_db):
+    from tests.test_transform_ui import _go
+
+    _ready(client, source)
+    client.post(_page(source["id"]), data={"mode": "link", "organization_id": "org1", "dataset_id": "ds1", "resource_name": "Traffic"}, follow_redirects=False)
+    ckan.calls.clear()
+    flash = _flash(_go(client, source, "output", data={"format": "csv", "delimiter": ","}))
+    assert "CKAN" not in flash and ckan.calls == []

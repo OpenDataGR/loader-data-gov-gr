@@ -48,6 +48,10 @@ def _base(source_id: str, pipeline: str) -> str:
     return "/load/sources/%s%s" % (source_id, "" if pipeline == transform_runner.DEFAULT_PIPELINE else "/pipelines/%s" % pipeline)
 
 
+def _transform_base(source_id: str, pipeline: str) -> str:
+    return "/transform/sources/%s%s" % (source_id, "" if pipeline == transform_runner.DEFAULT_PIPELINE else "/pipelines/%s" % pipeline)
+
+
 def _go(path: str, flash: str, kind: str = "success") -> RedirectResponse:
     return RedirectResponse("%s?%s" % (path, urlencode({"flash": flash, "flash_kind": kind})), status_code=303)
 
@@ -87,7 +91,7 @@ def _meta_from_form(form) -> dict:
         licence = str(form.get("svc_license_other") or "").strip()
     return {
         "title": form.get("svc_title"), "description": form.get("svc_description"), "endpoint_description": form.get("svc_endpoint_description"),
-        "format": form.get("svc_format"), "license": licence, "access_rights": form.get("svc_access_rights"), "themes": many("svc_themes"),
+        "license": licence, "access_rights": form.get("svc_access_rights"), "themes": many("svc_themes"),
         "legislation": many("svc_legislation") + _lines(form.get("svc_legislation_other")), "hvd_categories": many("svc_hvd"),
         "contact_name": form.get("svc_contact_name"), "contact_email": form.get("svc_contact_email"), "publisher_name": form.get("svc_publisher_name"),
         "publisher_email": form.get("svc_publisher_email"), "publisher_identifier": form.get("svc_publisher_identifier"),
@@ -153,8 +157,9 @@ def ckan_page(source_id: str, request: Request, pipeline: str = transform_runner
     if meta is None:
         meta = ckan_load.get_defaults(session, target.organization_id) if target is not None and target.organization_id else dict(ckan_load.META_DEFAULTS)
         meta["title"] = default_name
-        meta["format"] = {"xml": "XML", "csv": "CSV"}.get(found.output_format or "json", "JSON")
         meta["endpoint_description"] = ckan_load.describe_endpoint(source, found, ckan_load.link_url(source, found, base))
+    format_code = ckan_load.service_format(source, found)
+    meta["format"] = format_code
     mode = target.mode if target is not None else ("service" if source.transport_type == "http" else "link")
     known_license = ckan_vocab.is_known("license", str(meta.get("license") or ""))
     return templates.TemplateResponse(request, "load/ckan.html", {
@@ -162,6 +167,7 @@ def ckan_page(source_id: str, request: Request, pipeline: str = transform_runner
         "link": ckan_load.link_url(source, found, base), "has_public_base": bool(base), "published": publishing.is_pipeline_published(found),
         "is_http": source.transport_type == "http", "newest": newest, "modes": ckan_load.MODES, "mode": mode,
         "default_name": default_name, "meta": meta, "known_license": known_license, "vocab": ckan_vocab,
+        "format_label": dict(ckan_vocab.FORMATS)[format_code], "output_url": "%s/steps/output" % _transform_base(source_id, pipeline),
         "legislation_known": [u for u in meta.get("legislation", []) if any(u == k for k, _ in ckan_vocab.LEGISLATION)],
         "legislation_other": [u for u in meta.get("legislation", []) if not any(u == k for k, _ in ckan_vocab.LEGISLATION)],
         "fill_defaults": not (target is not None and target.service_meta),

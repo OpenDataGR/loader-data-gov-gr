@@ -8,7 +8,7 @@ import pytest
 from providerharvest_service import ckan_client, ckan_load, ckan_vocab
 from providerharvest_service.models import CkanTarget, ProviderSource, Transform
 from tests.test_ckan_load import BASE, FakeCkan
-from tests.test_transform_ui import _isolated_db  # noqa: F401  (a config database for the defaults test)
+from tests.test_transform_ui import _isolated_db, _master_key  # noqa: F401  (a config database for the defaults test)
 
 URL = BASE + "/data/opencar-data"
 
@@ -203,3 +203,64 @@ def test_the_details_an_organization_chose_are_remembered_for_its_next_service(_
         ckan_load.save_defaults(session, "org1", {"license": "ODC_BY"}, "k")
         session.commit()
         assert ckan_load.get_defaults(session, "org1")["license"] == "ODC_BY"  # updated in place
+
+
+# -- the format is the pipeline's ------------------------------------------------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("output,enabled,expected", [("json", True, "JSON"), ("jsonl", True, "JSON"), ("xml", True, "XML"), ("csv", True, "CSV"),
+                                                     ("xml", False, "JSON"), ("csv", False, "JSON")])
+def test_the_format_of_a_service_is_what_the_pipeline_writes_while_it_is_on_else_json(output, enabled, expected):
+    assert ckan_load.service_format(_source(), _pipeline(enabled=enabled, output=output)) == expected
+
+
+def test_what_the_details_say_about_the_format_is_ignored():
+    ckan = ServiceCkan()
+    ckan_load.push(_target(dict(META, format="CSV")), _source(), _pipeline(enabled=True, output="xml"), ckan, base_url=BASE)
+    assert ckan.packages["svc1"]["format"].endswith("/file-type/XML")  # the pipeline writes XML: not what the form held
+    plain = ServiceCkan()
+    ckan_load.push(_target(dict(META, format="XML")), _source(), _pipeline(), plain, base_url=BASE)
+    assert plain.packages["svc1"]["format"].endswith("/file-type/JSON")
+
+
+def test_a_change_of_the_pipeline_updates_the_entry_and_nothing_else_is_touched():
+    ckan, target = ServiceCkan(), _target()
+    pipeline = _pipeline(enabled=True, output="json")
+    ckan_load.push(target, _source(), pipeline, ckan, base_url=BASE)
+    # (the loader looks the connection up by pipeline in the database: here the pieces are called one by one)
+    pipeline.output_format = "csv"
+    ckan_load.push(target, _source(), pipeline, ckan, base_url=BASE)
+    assert ckan.calls[-1][0] == "package_patch" and ckan.calls[-1][1]["format"].endswith("/file-type/CSV")
+
+
+def test_refreshing_after_a_change_updates_a_connected_service_best_effort(_isolated_db, _master_key, monkeypatch):
+    from tests.test_live_transform import _http_source
+
+    ckan = ServiceCkan()
+    monkeypatch.setattr(ckan_load, "user_client", lambda session, ckan_user: ckan)
+    monkeypatch.setenv("CKAN_BASE_URL", "https://ckan.example.gr")
+    monkeypatch.setenv("CKAN_SYSADMIN_API_TOKEN", "t")
+    monkeypatch.setenv("LOADER_PUBLIC_BASE_URL", BASE)
+    source_id = _http_source(_isolated_db, "opencar-data", post=True)  # published, passes the provider's answer through
+    with _isolated_db() as session:
+        source = session.get(ProviderSource, source_id)
+        pipeline = session.query(Transform).filter_by(source_id=source_id).one()
+        assert ckan_load.refresh_after_change(session, source, pipeline) == ""  # no connection: nothing to do
+        target = _target()
+        target.source_id, target.pipeline_id = source_id, pipeline.id
+        session.add(target)
+        session.commit()
+        assert ckan_load.refresh_after_change(session, source, pipeline) == ""  # a connection that is not in CKAN (not pushed yet): nothing to do
+        ckan_load.push(target, source, pipeline, ckan)
+        session.commit()
+        pipeline.enabled, pipeline.output_format = True, "csv"
+        assert ckan_load.refresh_after_change(session, source, pipeline) == "The data service in CKAN was updated."
+        assert ckan.packages["svc1"]["format"].endswith("/file-type/CSV")
+        ckan.fail["package_patch"] = ckan_client.CKANActionError("package_patch", "down")
+        assert "could not be updated" in ckan_load.refresh_after_change(session, source, pipeline)  # said in words, never raised
+        other = Transform(source_id=source_id, name="other", steps="[]", published=True)
+        session.add(other)
+        session.flush()
+        link = CkanTarget(source_id=source_id, pipeline_id=other.id, mode="link", dataset_id="ds1", resource_id="res1", ckan_user="user_abc")
+        session.add(link)
+        session.commit()
+        assert ckan_load.refresh_after_change(session, source, other) == ""  # only a data service says a format

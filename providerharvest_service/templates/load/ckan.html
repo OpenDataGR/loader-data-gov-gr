@@ -95,8 +95,8 @@
         <textarea id="svc_endpoint_description" name="svc_endpoint_description" rows="5">{{ meta.endpoint_description }}</textarea>
         <p class="muted" style="margin:0.2rem 0 0.6rem;">Written for you from the pipeline's request settings (method, parameters), its output and the per-caller limit. Edit it freely.</p>
         <div style="display:flex; gap:1.2rem; flex-wrap:wrap;">
-          <div><label for="svc_format">Format of the answer</label>
-            <select id="svc_format" name="svc_format">{% for code, text in vocab.FORMATS %}<option value="{{ code }}"{% if meta.format == code %} selected{% endif %}>{{ text }}</option>{% endfor %}</select></div>
+          <div><label>Format of the answer</label>
+            <div style="padding:0.5rem 0.2rem;"><strong id="svc_format_label">{{ format_label }}</strong> <span class="muted" style="font-size:0.85rem;">-- set by the pipeline's output, not here. <a href="{{ output_url }}">Change it on the pipeline</a>.</span></div></div>
           <div><label for="svc_access_rights">Access rights</label>
             <select id="svc_access_rights" name="svc_access_rights">{% for code, text in vocab.ACCESS_RIGHTS %}<option value="{{ code }}"{% if meta.access_rights == code %} selected{% endif %}>{{ text }}</option>{% endfor %}</select></div>
           <div><label for="svc_license">Licence</label>

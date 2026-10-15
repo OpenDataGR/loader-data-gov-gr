@@ -329,7 +329,10 @@ async def set_enabled(source_id: str, request: Request, session: Session = Depen
             return _go(back, "It is not ready: %s" % problems[0], "error")
     transform.enabled = want
     session.commit()
-    return _go(back, "Transform switched %s. %s" % ("on" if want else "off", "Files that arrive from now on are transformed." if want else "Files arrive as they are."))
+    ckan_note = ckan_load.refresh_after_change(session, source, transform)  # (on or off decides whether the answer is the pipeline's output or the provider's)
+    session.commit()
+    return _go(back, "Transform switched %s. %s%s" % ("on" if want else "off", "Files that arrive from now on are transformed." if want else "Files arrive as they are.",
+                                                      (" " + ckan_note) if ckan_note else ""))
 
 
 @router.post("/sources/{source_id}/output")
@@ -361,7 +364,9 @@ async def set_output(source_id: str, request: Request, session: Session = Depend
         return _go(back, str(exc), "error")
     transform.output_format = fmt
     session.commit()
-    return _go(back, "Output set to %s." % te.OUTPUTS[fmt][2])
+    ckan_note = ckan_load.refresh_after_change(session, source, transform)  # a data service in CKAN says the format: it follows
+    session.commit()
+    return _go(back, "Output set to %s.%s" % (te.OUTPUTS[fmt][2], (" " + ckan_note) if ckan_note else ""))
 
 
 # -- steps ------------------------------------------------------------------------------------------------------------------------------------------

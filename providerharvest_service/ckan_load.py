@@ -324,6 +324,14 @@ def normalise_meta(raw: dict) -> dict:
     return meta
 
 
+def service_format(source: ProviderSource, pipeline: Transform) -> str:
+    """The format of what the endpoint answers, as the vocabulary's code: what the pipeline writes while it is switched on; a pipeline that is off
+    passes an API source's answer through as it is, which is JSON. It is never chosen by hand: it changes only when the pipeline's output does."""
+    if not pipeline.enabled:
+        return "JSON"
+    return {"xml": "XML", "csv": "CSV"}.get(pipeline.output_format or "json", "JSON")
+
+
 def describe_endpoint(source: ProviderSource, pipeline: Transform, url: str) -> str:
     """What the endpoint description of the service says, from what the loader knows: how to call it, with what, what comes back, how often."""
     from providerharvest_service import proxy, request_template
@@ -385,6 +393,7 @@ def _push_service(target: CkanTarget, source: ProviderSource, pipeline: Transfor
         meta = normalise_meta(json.loads(target.service_meta or "{}"))
     except ValueError as exc:
         raise CkanLoadError("The details of the service are unreadable: %s" % exc) from exc
+    meta["format"] = service_format(source, pipeline)  # (whatever the form held: the pipeline decides)
     payload = service_payload(meta, url, target.organization_id)
     try:
         if target.resource_id:
@@ -531,3 +540,19 @@ def forget_source(session: Session, source_id: str) -> list[str]:
             warnings.append(warning)
         session.delete(target)
     return warnings
+
+
+def refresh_after_change(session: Session, source: ProviderSource, pipeline: Transform) -> str:
+    """The pipeline changed what an entry in CKAN says (its output format, or it was switched on or off): update the data service, as the person
+    who connected it. Best effort, '' when there is nothing to do or all is well, else a sentence for the person."""
+    target = target_of(session, pipeline.id)
+    if target is None or target.mode != "service" or not target.resource_id:
+        return ""
+    try:
+        push(target, source, pipeline, _client_for(session, target))
+    except CkanLoadError as exc:
+        return "The data service in CKAN could not be updated: %s" % exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("ckan: refreshing a data service failed")
+        return "The data service in CKAN could not be updated: %s" % exc
+    return "The data service in CKAN was updated."
