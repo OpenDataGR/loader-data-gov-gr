@@ -65,6 +65,7 @@
           {% for s in sources %}
           <tr>
             <td><div class="name-title">{{ s.title }}</div><div class="name-slug">{{ s.name }}</div>
+              {% if s.organization_title %}<div class="muted" style="font-size:0.78rem;">{{ s.organization_title }}</div>{% elif is_admin %}<div class="muted" style="font-size:0.78rem;" title="Only super admins see a source with no organization on the Overview">no organization</div>{% endif %}
               {% set its = index_tables.get(s.id, []) %}{% if its %}<div class="muted" style="font-size:0.78rem; margin-top:0.25rem;">Index tables: <a href="/provider/sources/{{ s.id }}/tables">{% for t in its %}{{ t.name }} ({{ "{:,}".format(t.row_count) }}){{ ", " if not loop.last }}{% endfor %}</a></div>{% endif %}</td>
             <td>{{ macros.type_badges(s) }}</td>
             <td class="muted">

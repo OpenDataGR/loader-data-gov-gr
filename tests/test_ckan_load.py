@@ -25,7 +25,11 @@ class FakeCkan:
         if action in self.fail:
             raise self.fail[action]
         if action == "organization_list_for_user":
+            if data.get("permission") == "admin":  # (the person administers one of the two organizations they may add datasets to)
+                return [{"id": "org1", "name": "traffic", "title": "Traffic"}]
             return [{"id": "org2", "name": "air", "title": "Air"}, {"id": "org1", "name": "traffic", "title": "Traffic"}]
+        if action == "organization_list":  # every organization of the portal
+            return [{"id": "org3", "name": "zeta", "title": "Zeta authority"}, {"id": "org1", "name": "traffic", "title": "Traffic"}, {"id": "org2", "name": "air", "title": "Air"}]
         if action == "package_search":
             return {"results": [{"id": "ds1", "name": "attica-traffic", "title": "Attica traffic", "organization": {"title": "Traffic"}, "owner_org": "org1",
                                  "private": True, "state": "draft", "num_resources": 3, "metadata_modified": "2026-10-12T05:04:21.123456"},

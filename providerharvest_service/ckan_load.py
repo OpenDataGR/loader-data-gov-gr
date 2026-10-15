@@ -148,6 +148,38 @@ def list_organizations(client: ckan_client.CKANActionClient, ckan_user: str) -> 
     return list(found)
 
 
+def list_admin_organizations(client: ckan_client.CKANActionClient, ckan_user: str) -> list[OrganizationChoice]:
+    """The organizations the person *administers* (a source belongs to one of them), by title. Kept for ten minutes."""
+    return _organizations(client, "%s:admin" % ckan_user, "organization_list_for_user", {"id": ckan_user, "permission": "admin"})
+
+
+def sysadmin_client() -> ckan_client.CKANActionClient:  # replaced in tests
+    return ckan_access._client()
+
+
+def list_all_organizations(client: ckan_client.CKANActionClient) -> list[OrganizationChoice]:
+    """Every organization in CKAN, by title (for a super admin). Kept for ten minutes."""
+    return _organizations(client, "*", "organization_list", {"all_fields": True})
+
+
+def _organizations(client, cache_key: str, action: str, data: dict) -> list[OrganizationChoice]:
+    now = time.monotonic()
+    with _ORG_CACHE_LOCK:
+        cached = _ORG_CACHE.get(cache_key)
+        if cached and now - cached[0] < ORG_CACHE_SECONDS:
+            return list(cached[1])
+    try:
+        organizations = _read(client, action, data) or []
+    except ckan_client.CKANActionError as exc:
+        raise CkanLoadError(_explain(exc)) from exc
+    found = sorted((OrganizationChoice(id=str(o["id"]), name=str(o.get("name") or ""), title=str(o.get("title") or o.get("display_name") or o.get("name") or ""),
+                                       package_count=o.get("package_count") if isinstance(o.get("package_count"), int) else None)
+                    for o in organizations if isinstance(o, dict) and o.get("id")), key=lambda o: o.title.lower())
+    with _ORG_CACHE_LOCK:
+        _ORG_CACHE[cache_key] = (now, found)
+    return list(found)
+
+
 def search_datasets(client: ckan_client.CKANActionClient, ckan_user: str, query: str = "", limit: int = 20, organization_id: str | None = None) -> list[DatasetChoice]:
     """Datasets found by a text search: those of the organization given, or else of all the organizations the person can create datasets in.
     Which datasets CKAN lets the person *see* is CKAN's to decide (private ones only for those who may); what they may *add to* is checked

@@ -62,25 +62,83 @@ def source_list(request: Request, session: Session = Depends(get_session)) -> HT
     )
 
 
+def _signed_in(request: Request) -> tuple[bool, str]:
+    """(is this a super admin, the CKAN user the person is -- '' for the shared password)."""
+    from providerharvest_service import ui_ckan
+
+    user = getattr(request.state, "user", None) or {}
+    return bool(user.get("super")), ui_ckan._identity(request)
+
+
+def _organizations_for(request: Request, session: Session) -> list[ckan_load.OrganizationChoice]:
+    """The organizations the signed-in person may give a source to: every one for a super admin, those they administer for anyone else."""
+    is_super, ident = _signed_in(request)
+    if not ckan_load.configured():
+        raise ckan_load.CkanLoadError("CKAN is not set up on this deployment.")
+    if is_super:
+        return ckan_load.list_all_organizations(ckan_load.sysadmin_client())
+    if not ident:
+        raise ckan_load.CkanLoadError("Sign in with your data.gov.gr account to choose an organization.")
+    return ckan_load.list_admin_organizations(ckan_load.user_client(session, ident), ident)
+
+
+def _resolve_organization(request: Request, session: Session, organization_id: str, given_title: str) -> tuple[str | None, str | None, str | None]:
+    """(organization id, its title, a problem to tell the person). A person signed in with a CKAN account who is not a super admin must give one of
+    the organizations they administer; a super admin may leave it out; a deployment without CKAN takes it as given."""
+    is_super, ident = _signed_in(request)
+    if not organization_id:
+        if ident and not is_super and ckan_load.configured():
+            return None, None, "Choose the organization the source belongs to."
+        return None, None, None
+    if not ckan_load.configured():
+        return organization_id, given_title or None, None
+    try:
+        match = next((o for o in _organizations_for(request, session) if o.id == organization_id), None)
+    except ckan_load.CkanLoadError as exc:
+        return None, None, "The organization could not be checked with CKAN: %s" % exc
+    if match is None:
+        return None, None, "You may not give a source to that organization."
+    return match.id, match.title, None
+
+
+@router.get("/organizations")
+def organizations(request: Request, session: Session = Depends(get_session)):
+    """The organizations the signed-in person may give a source to, for the picker on the source form (JSON)."""
+    from fastapi.responses import JSONResponse
+
+    try:
+        found = _organizations_for(request, session)
+    except ckan_load.CkanLoadError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=403)
+    import dataclasses
+
+    return JSONResponse({"organizations": [dataclasses.asdict(o) for o in found]})
+
+
 @router.get("/sources/new", response_class=HTMLResponse)
 def new_source_form(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "provider/source_form.html",
-        _form_template_vars({}),
+        _form_template_vars({}, request=request),
     )
 
 
 @router.post("/sources/new", response_class=HTMLResponse)
 async def new_source_submit(request: Request, session: Session = Depends(get_session)):
     form = await request.form()
+    org_id, org_title, org_problem = _resolve_organization(request, session, str(form.get("organization_id") or "").strip(), str(form.get("organization_title") or ""))
+    data = dict(form)
+    data.update({"organization_id": org_id or "", "organization_title": org_title or ""})
     try:
-        source = provider_sources.register(session, form)
+        if org_problem:
+            raise provider_sources.ValidationError({"organization_id": org_problem})
+        source = provider_sources.register(session, data)
     except provider_sources.ValidationError as exc:
         return templates.TemplateResponse(
             request,
             "provider/source_form.html",
-            _form_template_vars(form, errors=exc.errors),
+            _form_template_vars(data, errors=exc.errors, request=request),
             status_code=400,
         )
     generated_api_key = getattr(source, "generated_api_key", None)
@@ -128,22 +186,29 @@ def edit_source_form(source_id: str, request: Request, session: Session = Depend
     return templates.TemplateResponse(
         request,
         "provider/source_form.html",
-        _form_template_vars(data, editing=True, source_id=source_id),
+        _form_template_vars(data, editing=True, source_id=source_id, request=request),
     )
 
 
 @router.post("/sources/{source_id}/edit", response_class=HTMLResponse)
 async def edit_source_submit(source_id: str, request: Request, session: Session = Depends(get_session)):
     form = await request.form()
+    data = dict(form)
+    org_problem = None
+    if "organization_id" in form:
+        org_id, org_title, org_problem = _resolve_organization(request, session, str(form.get("organization_id") or "").strip(), str(form.get("organization_title") or ""))
+        data.update({"organization_id": org_id or "", "organization_title": org_title or ""})
     try:
-        provider_sources.update(session, source_id, form)
+        if org_problem:
+            raise provider_sources.ValidationError({"organization_id": org_problem})
+        provider_sources.update(session, source_id, data)
     except provider_sources.NotFound:
         return RedirectResponse(_redirect_with_flash("No such source.", kind="error"), status_code=303)
     except provider_sources.ValidationError as exc:
         return templates.TemplateResponse(
             request,
             "provider/source_form.html",
-            _form_template_vars(form, errors=exc.errors, editing=True, source_id=source_id),
+            _form_template_vars(data, errors=exc.errors, editing=True, source_id=source_id, request=request),
             status_code=400,
         )
     return RedirectResponse(_redirect_with_flash("Source updated."), status_code=303)
@@ -491,7 +556,7 @@ def _human_size(n: int) -> str:
     return "%d B" % n
 
 
-def _form_template_vars(data, errors=None, editing=False, source_id=None) -> dict:
+def _form_template_vars(data, errors=None, editing=False, source_id=None, request=None) -> dict:
     if not data:
         # A genuinely fresh form (GET /sources/new): seed the checkbox
         # defaults HTML can't express via an <input> `value` -- an
@@ -500,9 +565,12 @@ def _form_template_vars(data, errors=None, editing=False, source_id=None) -> dic
         # `data` already reflects whatever the provider actually
         # submitted, including a deliberately unchecked box).
         data = {"ftp_use_tls": "on"}
+    is_super, ident = _signed_in(request) if request is not None else (True, "")
     return {
         "data": data,
         "errors": errors or {},
+        # a person signed in with a CKAN account who is not a super admin must say which organization the source belongs to
+        "org_required": bool(ident and not is_super and ckan_load.configured()),
         "transport_types": FIELD_TYPES,
         # Pull sources are fetched by us, on a schedule: HTTP, SFTP/SCP
         # (one card -- identical settings; the SFTP-vs-SCP switch inside

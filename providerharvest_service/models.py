@@ -160,6 +160,10 @@ class ProviderSource(Base):
     status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
     rejection_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     notification_email: Mapped[str | None] = mapped_column(String, nullable=True)
+    # The CKAN organization the source belongs to: who sees it on the Overview (an administrator of that organization, or a super admin). Empty for a
+    # source from before this existed, or registered by a super admin who did not choose one; only super admins see those.
+    organization_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    organization_title: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
 
     # Connection health: set by connection_check.check_connection, a real

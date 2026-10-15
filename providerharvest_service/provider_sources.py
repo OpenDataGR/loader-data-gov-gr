@@ -537,6 +537,8 @@ def register(session: Session, form: dict) -> ProviderSource:
         secret_algorithm="",
         status="pending",
         notification_email=notification_email,
+        organization_id=(form.get("organization_id") or "").strip() or None,
+        organization_title=(form.get("organization_title") or "").strip() or None,
         proxy_enabled=proxy_enabled,
     )
     session.add(row)
@@ -600,6 +602,8 @@ def config_to_form_fields(source: ProviderSource) -> dict:
         "transport_type": source.transport_type,
         "frequency": source.frequency,
         "notification_email": source.notification_email or "",
+        "organization_id": source.organization_id or "",
+        "organization_title": source.organization_title or "",
         "proxy_enabled": "on" if source.proxy_enabled is not False else "",
     }
     if source.transport_type == "http":
@@ -782,6 +786,9 @@ def update(session: Session, source_id: str, form: dict) -> ProviderSource:
     source.auth_type = auth_type
     source.config = json.dumps(retention.carry_over(source.config, config))  # (an edit must not forget the retention)
     source.notification_email = notification_email
+    if "organization_id" in form:  # (a form that does not carry it leaves the organization as it is)
+        source.organization_id = (form.get("organization_id") or "").strip() or None
+        source.organization_title = (form.get("organization_title") or "").strip() or None
     source.proxy_enabled = proxy_enabled
     session.flush()
     _sync_managed_allowed_ips(session, source)
