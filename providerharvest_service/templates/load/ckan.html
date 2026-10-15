@@ -143,9 +143,12 @@
       orgQ.addEventListener('focus', loadOrganizations);
 
       // 2. the dataset: searched within the chosen organization
+      var inFlight = null;
       function searchDatasets() {
         if (!orgField.value) return;
-        fetch('/load/ckan/datasets?org=' + encodeURIComponent(orgField.value) + '&q=' + encodeURIComponent(dsQ.value), {credentials: 'same-origin'})
+        if (inFlight) inFlight.abort();  // an unfinished search is dropped when you type again: CKAN is not asked for answers nobody will read
+        inFlight = window.AbortController ? new AbortController() : null;
+        fetch('/load/ckan/datasets?org=' + encodeURIComponent(orgField.value) + '&q=' + encodeURIComponent(dsQ.value), {credentials: 'same-origin', signal: inFlight ? inFlight.signal : undefined})
           .then(function (r) { return r.json(); }).then(function (data) {
             if (data.error) { say(dsResults, data.error, searchDatasets); return; }
             dsResults.textContent = '';
@@ -153,9 +156,14 @@
             data.datasets.forEach(function (d) {
               hit(dsResults, d.title, datasetDetail(d), function () { dsField.value = d.id; chosenText(dsChosen, 'Chosen:', d.title + (d.private ? ' (private)' : ' (public)')); dsResults.textContent = ''; }, datasetPills(d));
             });
-          }).catch(function () { say(dsResults, 'The search failed.', searchDatasets); });
+          }).catch(function (e) { if (!e || e.name !== 'AbortError') say(dsResults, 'The search failed.', searchDatasets); });
       }
-      dsQ.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(searchDatasets, 300); });
+      dsQ.addEventListener('input', function () {  // after a pause, and not for a single letter (nothing useful is found with one)
+        clearTimeout(timer);
+        var n = dsQ.value.trim().length;
+        if (n === 1) return;
+        timer = setTimeout(searchDatasets, 700);
+      });
       dsQ.addEventListener('focus', function () { if (!dsResults.children.length) searchDatasets(); });
 
       function modeNote() {

@@ -255,6 +255,7 @@ def test_the_dataset_must_be_in_the_chosen_organization_and_the_organization_one
 def test_the_page_script_loads_organizations_first_then_searches_the_datasets_of_the_one_chosen(client, source, ckan):
     _setup(client, source)
     page = client.get(_page(source["id"])).text
+    assert "inFlight.abort()" in page and "setTimeout(searchDatasets, 700)" in page and "if (n === 1) return;" in page  # fewer, later, cancellable searches
     assert "b.textContent = 'Retry'" in page and "say(dsResults, data.error, searchDatasets)" in page  # an error comes with a Retry button
     assert "fetch('/load/ckan/organizations'" in page and "'/load/ckan/datasets?org=' + encodeURIComponent(orgField.value)" in page
     assert 'id="ds-q" placeholder="Search the datasets of the chosen organization' in page and "disabled" in page.split('id="ds-q"')[1].split(">")[0]  # off until an organization is chosen

@@ -17,6 +17,7 @@ class FakeCkan:
 
     def __init__(self):
         ckan_load._ORG_CACHE.clear()
+        ckan_load.RETRY_DELAY_S = 0.0  # (the test run does not wait)
         self.calls, self.resources, self.fail = [], {}, {}
 
     def call(self, action, data, files=None):
@@ -260,3 +261,58 @@ def test_a_failing_organization_list_is_explained():
     ckan.fail["organization_list_for_user"] = ckan_client.CKANActionError("organization_list_for_user", "boom")
     with pytest.raises(ckan_load.CkanLoadError, match="could not be reached or failed"):
         ckan_load.list_organizations(ckan, "user_abc")
+
+
+# -- a polite client -------------------------------------------------------------------------------------------------------------------------------------------
+
+def test_the_loader_never_has_more_than_one_call_to_ckan_in_flight_per_process():
+    import threading
+    import time as _time
+
+    state = {"now": 0, "max": 0}
+    lock = threading.Lock()
+
+    class Slow(FakeCkan):
+        def call(self, action, data, files=None):
+            with lock:
+                state["now"] += 1
+                state["max"] = max(state["max"], state["now"])
+            _time.sleep(0.02)
+            with lock:
+                state["now"] -= 1
+            return {"results": []} if action == "package_search" else []
+
+    slow = Slow()
+    threads = [threading.Thread(target=lambda: ckan_load.search_datasets(slow, "user_abc", organization_id="org1")) for _ in range(6)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert state["max"] == 1
+
+
+def test_a_retry_waits_a_moment_and_every_call_is_logged_with_its_time(caplog, monkeypatch):
+    import logging
+
+    class Flaky(FakeCkan):
+        def call(self, action, data, files=None):
+            self.calls.append((action, data, files))
+            if len(self.calls) == 1:
+                raise ckan_client.CKANActionError(action, "non-JSON response (HTTP 500)", status_code=500)
+            return {"results": []}
+
+    slept = []
+    flaky = Flaky()  # (made first: a fake resets the delay to nothing)
+    monkeypatch.setattr(ckan_load.time, "sleep", lambda seconds: slept.append(seconds))
+    ckan_load.RETRY_DELAY_S = 1.0
+    try:
+        with caplog.at_level(logging.INFO, logger="providerharvest_service.ckan_load"):
+            ckan_load.search_datasets(flaky, "user_abc", organization_id="org1")
+    finally:
+        ckan_load.RETRY_DELAY_S = 0.0
+    assert slept == [1.0]
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("ckan call package_search: CKANActionError after" in m and "(HTTP 500)" in m for m in messages)
+    assert any("ckan call package_search: ok in" in m and " ms" in m for m in messages)
+
+
+def test_the_organizations_are_kept_for_ten_minutes():
+    assert ckan_load.ORG_CACHE_SECONDS == 600.0

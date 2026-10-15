@@ -37,7 +37,12 @@ _FORMAT_BY_EXTENSION = {".csv": "CSV", ".tsv": "TSV", ".json": "JSON", ".jsonl":
 #: A person's organizations, kept for a short while: asking CKAN for them is the slow call (a sysadmin has hundreds), and the page asks twice.
 _ORG_CACHE: dict[str, tuple[float, list]] = {}
 _ORG_CACHE_LOCK = threading.Lock()
-ORG_CACHE_SECONDS = 120.0
+ORG_CACHE_SECONDS = 600.0
+
+#: The loader is one client among many of a CKAN whose web workers are few: it never has more than one call to it in flight per process, and a retry
+#: waits a moment. (CKAN's public site answered 500 while this was not so, when the organization list was asked for again and again.)
+_THROTTLE = threading.BoundedSemaphore(1)
+RETRY_DELAY_S = 1.0
 
 
 class CkanLoadError(Exception):
@@ -93,16 +98,31 @@ def _explain(exc: ckan_client.CKANActionError) -> str:
     return "CKAN could not be reached or failed (%s)." % exc
 
 
+def _call(client: ckan_client.CKANActionClient, action: str, data: dict, files: dict | None = None):
+    """Every call the loader makes to CKAN goes through here: one at a time per process, and its time and outcome are logged, so a slow or
+    failing CKAN can be matched against what the loader sent."""
+    with _THROTTLE:
+        started = time.monotonic()
+        try:
+            result = client.call(action, data, files=files) if files else client.call(action, data)
+        except ckan_client.CKANActionError as exc:
+            logger.info("ckan call %s: %s after %d ms (HTTP %s)", action, type(exc).__name__, (time.monotonic() - started) * 1000, getattr(exc, "status_code", None))
+            raise
+        logger.info("ckan call %s: ok in %d ms", action, (time.monotonic() - started) * 1000)
+        return result
+
+
 def _read(client: ckan_client.CKANActionClient, action: str, data: dict):
     """A call that only reads. CKAN now and then answers one of its heavier actions with a server error (HTTP 5xx, or something that is not
     JSON); the second try nearly always works, so a read gets one."""
     try:
-        return client.call(action, data)
+        return _call(client, action, data)
     except ckan_client.CKANActionError as exc:
         if isinstance(exc, (ckan_client.CKANNotAuthorized, ckan_client.CKANNotFound, ckan_client.CKANValidationError)) or not (getattr(exc, "status_code", None) or 0) >= 500:
             raise
         logger.info("ckan: %s answered %s, trying once more", action, exc.status_code)
-        return client.call(action, data)
+        time.sleep(RETRY_DELAY_S)  # (not at once: a CKAN that just failed is best left a moment)
+        return _call(client, action, data)
 
 
 # -- finding the dataset -------------------------------------------------------------------------------------------------------------------------------
@@ -210,12 +230,12 @@ def _push(target: CkanTarget, source: ProviderSource, pipeline: Transform, clien
     try:
         if target.resource_id:
             try:
-                client.call("resource_update", {"id": target.resource_id, **fields}, files=files)
+                _call(client, "resource_update", {"id": target.resource_id, **fields}, files)
                 target.last_output_id = getattr(output, "id", None)
                 return
             except ckan_client.CKANNotFound:
                 target.resource_id = None  # it was deleted in CKAN: make it again
-        created = client.call("resource_create", {"package_id": target.dataset_id, **fields}, files=files)
+        created = _call(client, "resource_create", {"package_id": target.dataset_id, **fields}, files)
         target.resource_id = str(created["id"])
         target.last_output_id = getattr(output, "id", None)
     except ckan_client.CKANActionError as exc:
@@ -227,7 +247,7 @@ def remove(target: CkanTarget, client: ckan_client.CKANActionClient) -> bool:
     if not target.resource_id:
         return False
     try:
-        client.call("resource_delete", {"id": target.resource_id})
+        _call(client, "resource_delete", {"id": target.resource_id})
     except ckan_client.CKANNotFound:
         pass
     except ckan_client.CKANActionError as exc:
