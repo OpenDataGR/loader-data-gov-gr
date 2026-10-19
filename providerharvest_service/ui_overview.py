@@ -33,6 +33,7 @@ def overview_page(request: Request, session: Session = Depends(get_session), hse
     groups = overview.group_by_organization(flows)
     return templates.TemplateResponse(request, "overview/flows.html", {
         "scope": scope, "groups": groups, "flows": flows, "is_super": is_super,
+        "flash": request.query_params.get("flash"), "flash_kind": request.query_params.get("flash_kind", "success"),
         "pipeline_count": sum(len(f["pipelines"]) for f in flows),
         "flags": {"running": sum(1 for f in flows if f["flag"] == "running"), "attention": sum(1 for f in flows if f["flag"] == "attention"),
                   "paused": sum(1 for f in flows if f["flag"] in ("paused", "pending", "rejected")), "idle": sum(1 for f in flows if f["flag"] == "idle")},

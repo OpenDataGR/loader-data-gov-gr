@@ -202,3 +202,21 @@ def test_the_page_script_draws_the_connectors_and_filters(client, source, ckan):
                    "'live' : 'idle'", "prefers-reduced-motion"):
         assert needed in page
     assert "@keyframes ovflow" in page and ".flow-lines .live" in page
+
+
+# -- the landing page ------------------------------------------------------------------------------------------------------------------------------------------------
+
+def test_the_overview_is_the_default_screen(client):
+    front = client.get("/", follow_redirects=False)
+    assert front.status_code == 303 and front.headers["location"] == "/overview"
+    from fastapi.testclient import TestClient
+
+    from providerharvest_service.app import app
+
+    anonymous = TestClient(app, base_url="https://testserver").get("/", follow_redirects=False)
+    assert anonymous.headers["location"].startswith("/admin/login")  # (signing in comes first; the login leads to the Overview, see test_admin_session)
+
+
+def test_the_overview_shows_a_message_it_is_sent_with(client):
+    page = client.get("/overview", params={"flash": "Something to know", "flash_kind": "success"}).text
+    assert 'flash flash-success">Something to know<' in page

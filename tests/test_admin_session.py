@@ -2,6 +2,7 @@ import bcrypt
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.test_push_ingest import _isolated_harvest_db  # noqa: F401  (the landing page, the Overview, reads the harvest database)
 from providerharvest_service import db
 from providerharvest_service.admin_session import verify_session_cookie
 from providerharvest_service.app import app
@@ -107,7 +108,7 @@ def test_login_rejects_an_open_redirect_via_next(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert resp.headers["location"] == "/provider/sources"  # falls back to the default, never off-site
+    assert resp.headers["location"] == "/overview"  # falls back to the default, never off-site
 
 
 def test_logout_clears_the_session(client):
@@ -189,7 +190,7 @@ def test_the_admin_pages_are_not_exempted_by_the_similarly_named_json_api(client
 
 def test_login_lands_on_the_provider_portal_by_default(client):
     resp = client.post("/admin/login", data={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD}, follow_redirects=False)
-    assert resp.headers["location"] == "/provider/sources"
+    assert resp.headers["location"] == "/overview"
 
 
 def test_login_returns_to_whichever_local_page_was_asked_for(client):
@@ -210,7 +211,7 @@ def test_login_refuses_next_values_that_would_leave_the_site(client):
             data={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD, "next": target},
             follow_redirects=False,
         )
-        assert resp.headers["location"] == "/provider/sources", target
+        assert resp.headers["location"] == "/overview", target
 
 
 def test_a_failed_login_keeps_the_page_that_was_asked_for_intact(client):

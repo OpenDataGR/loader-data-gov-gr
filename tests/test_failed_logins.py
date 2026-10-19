@@ -8,6 +8,7 @@ import bcrypt
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.test_push_ingest import _isolated_harvest_db  # noqa: F401  (the landing page, the Overview, reads the harvest database)
 from providerharvest_service import db
 from providerharvest_service.admin_ftp import ATTEMPT_RETENTION, MAX_USERNAME_LENGTH, clean_username
 from providerharvest_service.app import app

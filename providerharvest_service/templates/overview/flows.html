@@ -74,6 +74,7 @@
       {% else %}The pipelines of your organizations, from the input to where the data goes.{% endif %}
       {{ flows|length }} source{{ "" if flows|length == 1 else "s" }}, {{ pipeline_count }} pipeline{{ "" if pipeline_count == 1 else "s" }}.
     </p>
+    {% if flash %}<div class="flash flash-{{ flash_kind }}">{{ flash }}</div>{% endif %}
     {% if scope.notice %}<div class="flash flash-error">{{ scope.notice }}</div>{% endif %}
 
     {% if flows %}

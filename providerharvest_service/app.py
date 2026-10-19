@@ -99,7 +99,7 @@ app.include_router(ftp_relay_ingest_router)
 @app.get("/", include_in_schema=False)
 def front_page() -> RedirectResponse:
     """The bare address: somewhere to land (the login gate sends anyone not signed in to the login page first)."""
-    return RedirectResponse("/provider/sources", status_code=303)
+    return RedirectResponse("/overview", status_code=303)
 
 
 @app.get("/health")

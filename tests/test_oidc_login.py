@@ -204,7 +204,7 @@ def test_keycloak_refusing_the_code_or_the_user_declining_is_explained(keycloak)
 def test_the_way_back_cannot_be_turned_into_an_open_redirect(keycloak):
     browser = _browser()
     query = _start(browser, keycloak, "//evil.example/steal")
-    assert _call_back(browser, query).headers["location"] == "/provider/sources"
+    assert _call_back(browser, query).headers["location"] == "/overview"
 
 
 def test_logging_out_also_ends_the_keycloak_session_without_asking_again(keycloak):
@@ -249,7 +249,7 @@ def test_the_bare_address_leads_somewhere(monkeypatch):
     assert first.status_code == 303 and first.headers["location"].startswith("/admin/login")  # not signed in: the login page
     anonymous.post("/admin/login", data={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD, "next": "/"})
     resp = anonymous.get("/")
-    assert resp.status_code == 303 and resp.headers["location"] == "/provider/sources"
+    assert resp.status_code == 303 and resp.headers["location"] == "/overview"
 
 
 def test_the_login_page_has_no_menu_but_every_other_page_does(client_logged_in=None):

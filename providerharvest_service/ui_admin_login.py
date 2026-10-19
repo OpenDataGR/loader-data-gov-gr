@@ -28,7 +28,7 @@ templates.env.globals["pending_approvals"] = nav.pending_approvals
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_NEXT = "/provider/sources"
+_DEFAULT_NEXT = "/overview"
 
 
 def _safe_next(value: str | None) -> str:
