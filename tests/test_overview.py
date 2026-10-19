@@ -220,3 +220,7 @@ def test_the_overview_is_the_default_screen(client):
 def test_the_overview_shows_a_message_it_is_sent_with(client):
     page = client.get("/overview", params={"flash": "Something to know", "flash_kind": "success"}).text
     assert 'flash flash-success">Something to know<' in page
+
+
+def test_the_title_in_the_header_links_to_the_front_address(client):
+    assert '<a class="brand" href="/">' in client.get("/overview").text

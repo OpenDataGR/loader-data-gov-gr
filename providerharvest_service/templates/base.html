@@ -392,7 +392,7 @@
   <div class="masthead">
     {% set who = request.state.user if (request.state is defined and request.state.user is defined) else none %}
     <div class="masthead-top">
-      <a class="brand" href="/provider/sources">
+      <a class="brand" href="/">
         {{ macros.icon("logo", 26) }}
         <span>loader.data.gov.gr<span class="brand-sub">Provider harvesting platform</span></span>
       </a>
