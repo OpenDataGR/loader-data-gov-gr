@@ -35,7 +35,7 @@
 
     {% if loads %}
       <div class="load-list" style="max-width:46rem; margin-bottom:1rem;">
-        <div class="muted" style="margin-bottom:0.3rem;">Loads of this pipeline -- each is one way, on its own line in the Load Box.</div>
+        <div class="muted" style="margin-bottom:0.3rem;">Outputs of this pipeline -- each is one way, on its own line in the Load Box.</div>
         {% for l in loads %}
           <div style="display:flex; align-items:center; gap:0.6rem; padding:0.35rem 0.6rem; border:1px solid var(--border, #d6dce6); border-radius:8px; margin-bottom:0.3rem;{% if target and l.id == target.id %} background:rgba(27,110,194,0.07);{% endif %}">
             <span style="flex:1;"><strong>{{ l.dataset_title or l.dataset_name or l.resource_name }}</strong> <span class="muted">-- {{ mode_text[l.mode] }}</span></span>
@@ -43,7 +43,7 @@
             <a href="{{ base }}/ckan?load={{ l.id }}">Open</a>
           </div>
         {% endfor %}
-        {% if not creating %}<a href="{{ base }}/ckan?load=new">Add another load</a>{% endif %}
+        {% if not creating %}<a href="{{ base }}/ckan?load=new">+ Add an output</a>{% endif %}
       </div>
     {% endif %}
 
@@ -59,14 +59,14 @@
         </div>
         <div style="display:flex; gap:0.5rem; margin-top:0.7rem;">
           <form method="post" action="{{ base }}/ckan/push" style="margin:0;"><input type="hidden" name="target_id" value="{{ target.id }}"><button type="submit" class="btn-sm"{% if problem %} disabled{% endif %}>{{ macros.icon("push", 14) }} Push now</button></form>
-          <form method="post" action="{{ base }}/ckan/disconnect" style="margin:0;" onsubmit="return confirm('Remove this from CKAN and delete this load?');"><input type="hidden" name="target_id" value="{{ target.id }}"><button type="submit" class="btn-secondary btn-sm"{% if problem %} disabled{% endif %}>{{ macros.icon("trash", 14) }} Disconnect</button></form>
+          <form method="post" action="{{ base }}/ckan/disconnect" style="margin:0;" onsubmit="return confirm('Remove this from CKAN and delete this output?');"><input type="hidden" name="target_id" value="{{ target.id }}"><button type="submit" class="btn-secondary btn-sm"{% if problem %} disabled{% endif %}>{{ macros.icon("trash", 14) }} Disconnect</button></form>
         </div>
       </div>
     {% endif %}
 
     <form method="post" action="{{ base }}/ckan" id="ckan-form" style="max-width:46rem;">
       <input type="hidden" name="target_id" value="{{ target.id if target else '' }}">
-      <h2 style="font-size:1.05rem; margin:0 0 0.4rem;">{{ "Change this load" if target else ("Add a load" if loads else "Connect") }}</h2>
+      <h2 style="font-size:1.05rem; margin:0 0 0.4rem;">{{ "Change this load" if target else ("Add an output" if loads else "Connect") }}</h2>
 
       <label>What goes into CKAN</label>
       <div class="segmented">

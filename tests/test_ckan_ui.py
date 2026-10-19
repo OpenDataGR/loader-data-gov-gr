@@ -59,7 +59,7 @@ def test_the_load_box_offers_the_connection_only_when_ckan_is_set_up(client, sou
     monkeypatch.setenv("CKAN_BASE_URL", "https://ckan.example.gr")
     monkeypatch.setenv("CKAN_SYSADMIN_API_TOKEN", "t")
     page = client.get("/load").text
-    assert '<th>Loads into CKAN</th>' in page and 'href="/load/sources/%s/ckan?load=new">Push to CKAN' % source["id"] in page
+    assert '<th>Outputs into CKAN</th>' in page and 'href="/load/sources/%s/ckan?load=new"' % source["id"] in page and '+ Add an output' in page
 
 
 def test_the_page_explains_when_ckan_is_not_set_up_or_the_session_has_no_ckan_identity(client, source, monkeypatch):

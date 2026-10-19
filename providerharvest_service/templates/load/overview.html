@@ -17,11 +17,10 @@
       <div class="empty-state">{{ macros.icon("inbox", 40) }}<p>No sources yet. Register one in the Extract Box first.</p></div>
     {% else %}
       <table>
-        <thead><tr><th>Pipeline</th><th>What it answers with</th><th>Published address</th><th>Loads into CKAN</th><th></th></tr></thead>
+        <thead><tr><th>Pipeline</th><th>What it answers with</th><th>Published address</th><th>Outputs into CKAN</th><th></th></tr></thead>
         <tbody>
           {% for r in rows %}
-          {% set span = (r.loads|length) + (1 if r.pipeline and ckan_ready else 0) %}
-          {% set span = span if span > 0 else 1 %}
+          {% set span = ((r.loads|length) if r.loads else 1) + (1 if r.pipeline and ckan_ready else 0) %}
           <tr>
             <td rowspan="{{ span }}">
               <div class="name-title">{{ r.pipeline.name if r.pipeline else "none yet" }}</div>
@@ -51,14 +50,16 @@
                 <div class="muted">would answer at <code>{{ r.path }}</code></div>
               {% else %}<span class="muted">-</span>{% endif %}
             </td>
-            {% for load in r.loads %}
+            {% for load in r.loads or [None] %}
               {% if not loop.first %}<tr class="load-row">{% endif %}
             <td class="load-cell">
+              {% if load %}
                 {% if load.last_status == "error" %}<span class="badge badge-error">{{ macros.icon("rejected", 13) }}<span>failed</span></span>
                 {% elif load.resource_id %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>in CKAN</span></span>
                 {% else %}<span class="badge badge-pending"><span>not in CKAN</span></span>{% endif %}
                 <div class="muted" style="font-size:0.85rem;">{{ load.dataset_title or load.dataset_name }} &middot; {{ {"link": "link", "upload": "uploaded copy", "datastore": "DataStore table", "service": "data service"}.get(load.mode, load.mode) }}</div>
                 <a href="{{ r.base }}/ckan?load={{ load.id }}">Manage</a>
+              {% else %}<span class="muted">no output yet</span>{% endif %}
             </td>
             {% if loop.first %}
             <td rowspan="{{ span }}">
@@ -73,22 +74,7 @@
           </tr>
             {% endfor %}
           {% if r.pipeline and ckan_ready %}
-            {% if r.loads %}<tr class="load-row">{% endif %}
-            <td class="load-cell"><a href="{{ r.base }}/ckan?load=new">{{ "Add another load" if r.loads else "Push to CKAN" }}</a></td>
-            {% if not r.loads %}<td rowspan="{{ span }}">{% if r.pipeline or r.api %}
-              <form method="post" action="{{ r.base }}/api" style="margin:0;"{% if r.published %} onsubmit="return confirm('Stop publishing {{ r.path }}? Anyone using its address will get a 404.');"{% endif %}>
-                <input type="hidden" name="enabled" value="{{ '0' if r.published else '1' }}">
-                <button type="submit" class="btn-secondary btn-sm">{{ "Unpublish" if r.published else "Publish" }}</button>
-              </form>{% endif %}</td>{% endif %}
-          </tr>
-          {% elif not r.loads %}
-            <td class="load-cell"><span class="muted"{% if r.pipeline %} title="CKAN is not set up on this deployment"{% endif %}>-</span></td>
-            <td>{% if r.pipeline or r.api %}
-              <form method="post" action="{{ r.base }}/api" style="margin:0;"{% if r.published %} onsubmit="return confirm('Stop publishing {{ r.path }}? Anyone using its address will get a 404.');"{% endif %}>
-                <input type="hidden" name="enabled" value="{{ '0' if r.published else '1' }}">
-                <button type="submit" class="btn-secondary btn-sm">{{ "Unpublish" if r.published else "Publish" }}</button>
-              </form>{% endif %}</td>
-          </tr>
+          <tr class="load-row"><td class="load-cell"><a href="{{ r.base }}/ckan?load=new" class="btn-secondary btn-sm" style="text-decoration:none; display:inline-block; padding:0.25rem 0.6rem; border-radius:6px;">+ Add an output</a></td></tr>
           {% endif %}
           {% endfor %}
         </tbody>

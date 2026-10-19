@@ -226,7 +226,7 @@ def test_a_pipeline_can_have_several_loads_each_its_own_line_in_the_load_box(cli
     assert sorted(t.mode for t in targets) == ["datastore", "link", "upload"] and len({t.id for t in targets}) == 3
     box = client.get("/load").text
     assert box.count('class="load-cell"') == 4 and "rows" not in "" and "DataStore table" in box and "uploaded copy" in box  # (three loads and the "add another" line)
-    assert "Add another load" in box and box.count("?load=") == 4
+    assert "+ Add an output" in box and box.count("?load=") == 4
     page = client.get(_page(source["id"])).text
     assert page.count('href="/load/sources/%s/ckan?load=' % source["id"]) >= 3  # (each load is listed on its own line)
 
