@@ -102,6 +102,19 @@ def _migrate_pipelines(engine: Engine) -> None:
             conn.execute(text("CREATE UNIQUE INDEX ix_transform_source_name ON transform (source_id, name)"))
 
 
+def _migrate_ckan_targets(engine: Engine) -> None:
+    """A pipeline may have several loads into CKAN, each one way: ``pipeline_id`` no longer carries a UNIQUE index. Swaps it for a plain one.
+    Idempotent."""
+    inspector = inspect(engine)
+    if "ckan_target" not in inspector.get_table_names():
+        return
+    indexes = {ix["name"]: ix for ix in inspector.get_indexes("ckan_target")}
+    if indexes.get("ix_ckan_target_pipeline_id", {}).get("unique"):
+        with engine.begin() as conn:
+            conn.execute(text("DROP INDEX ix_ckan_target_pipeline_id"))
+            conn.execute(text("CREATE INDEX ix_ckan_target_pipeline_id ON ckan_target (pipeline_id)"))
+
+
 def _migrate_lookup_tables(engine: Engine) -> None:
     """Index tables belong to a source now (``source_id``), and a name is unique per source, not across the service. SQLite cannot drop the
     old UNIQUE(name), so the table is rebuilt -- once, when that constraint is still there -- and in the same step every existing table
@@ -162,6 +175,7 @@ def make_engine(url: str) -> Engine:
     Base.metadata.create_all(engine)
     _sync_schema(engine)
     _migrate_pipelines(engine)
+    _migrate_ckan_targets(engine)
     _migrate_lookup_tables(engine)
     return engine
 

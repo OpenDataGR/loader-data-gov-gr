@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from providerharvest_service import build_info, ckan_access, ckan_load, ckan_vocab, harvest_db, load_api, nav, publishing, transform_runner
+from providerharvest_service import build_info, ckan_access, ckan_datastore, ckan_load, ckan_vocab, harvest_db, load_api, nav, publishing, transform_runner
 from providerharvest_service.db import get_session
 from providerharvest_service.models import CkanTarget, ProviderSource, Transform
 
@@ -53,7 +53,7 @@ def _transform_base(source_id: str, pipeline: str) -> str:
 
 
 def _go(path: str, flash: str, kind: str = "success") -> RedirectResponse:
-    return RedirectResponse("%s?%s" % (path, urlencode({"flash": flash, "flash_kind": kind})), status_code=303)
+    return RedirectResponse("%s%s%s" % (path, "&" if "?" in path else "?", urlencode({"flash": flash, "flash_kind": kind})), status_code=303)
 
 
 def _problem_with_identity(request: Request) -> str:
@@ -70,8 +70,20 @@ def _found(session: Session, source_id: str, pipeline_name: str):
     return source, pipeline
 
 
-def _target(session: Session, pipeline: Transform | None) -> CkanTarget | None:
-    return session.scalar(select(CkanTarget).where(CkanTarget.pipeline_id == pipeline.id)) if pipeline is not None else None
+def _loads(session: Session, pipeline: Transform | None) -> list[CkanTarget]:
+    return ckan_load.targets_of(session, pipeline.id) if pipeline is not None else []
+
+
+def _target(session: Session, pipeline: Transform | None, target_id: str = "") -> CkanTarget | None:
+    """One of the pipeline's loads: the one asked for, else the first (a pipeline may have several, each its own line in the Load Box)."""
+    loads = _loads(session, pipeline)
+    if target_id:
+        return next((t for t in loads if t.id == target_id), None)
+    return loads[0] if loads else None
+
+
+MODE_TEXT = {"link": "a link to the published address", "upload": "an uploaded copy of the newest output", "datastore": "rows in a DataStore table",
+             "service": "as a data service"}
 
 
 def _ckan_dataset_url(name: str, mode: str = "link") -> str:
@@ -145,7 +157,11 @@ def ckan_page(source_id: str, request: Request, pipeline: str = transform_runner
     source, found = _found(session, source_id, pipeline)
     if source is None or found is None:
         return _go("/load", "No such pipeline.", "error")
-    target = _target(session, found)
+    loads = _loads(session, found)
+    wanted = request.query_params.get("load", "")
+    target = None if wanted == "new" else _target(session, found, wanted)
+    if wanted and wanted != "new" and target is None:
+        return _go(_base(source_id, pipeline) + "/ckan", "No such load.", "error")
     base = ckan_load.public_base_url()
     newest = load_api.latest_output(hsession, source.id, found.id) if source.transport_type != "http" else None
     default_name = ("%s / %s" % (source.title, found.name)) if found.name != transform_runner.DEFAULT_PIPELINE else source.title
@@ -161,11 +177,13 @@ def ckan_page(source_id: str, request: Request, pipeline: str = transform_runner
     format_code = ckan_load.service_format(source, found)
     meta["format"] = format_code
     mode = target.mode if target is not None else ("service" if source.transport_type == "http" else "link")
+    datastore_cfg = ckan_datastore.config_of(target.datastore_config if target is not None else None)
     known_license = ckan_vocab.is_known("license", str(meta.get("license") or ""))
     return templates.TemplateResponse(request, "load/ckan.html", {
         "source": source, "pipeline": found, "target": target, "base": _base(source_id, pipeline), "problem": _problem_with_identity(request),
         "link": ckan_load.link_url(source, found, base), "has_public_base": bool(base), "published": publishing.is_pipeline_published(found),
-        "is_http": source.transport_type == "http", "newest": newest, "modes": ckan_load.MODES, "mode": mode,
+        "is_http": source.transport_type == "http", "newest": newest, "modes": ckan_load.MODES, "mode": mode, "loads": loads, "mode_text": MODE_TEXT,
+        "datastore_cfg": datastore_cfg, "columns": ckan_datastore.columns_of(newest), "creating": wanted == "new",
         "default_name": default_name, "meta": meta, "known_license": known_license, "vocab": ckan_vocab,
         "format_label": dict(ckan_vocab.FORMATS)[format_code], "output_url": "%s/steps/output" % _transform_base(source_id, pipeline),
         "legislation_known": [u for u in meta.get("legislation", []) if any(u == k for k, _ in ckan_vocab.LEGISLATION)],
@@ -179,7 +197,7 @@ def ckan_page(source_id: str, request: Request, pipeline: str = transform_runner
 def _push_now(session: Session, hsession: Session, target: CkanTarget, source: ProviderSource, pipeline: Transform, ident: str):
     client = ckan_load.user_client(session, ident)
     output = None
-    if target.mode == "upload":
+    if target.mode in ("upload", "datastore"):
         output = load_api.latest_output(hsession, source.id, pipeline.id)
     ckan_load.push(target, source, pipeline, client, output=output)
 
@@ -199,13 +217,20 @@ async def ckan_save(source_id: str, request: Request, pipeline: str = transform_
         return _go(back, problem, "error")
     form = await request.form()
     mode = str(form.get("mode") or "link")
+    adding = "target_id" in form and not str(form.get("target_id") or "")  # (a form that carries the field empty adds another load)
     organization_id = str(form.get("organization_id") or "").strip()
     dataset_id = str(form.get("dataset_id") or "").strip()
     name = str(form.get("resource_name") or "").strip()[:200]
     if mode not in ckan_load.MODES:
-        return _go(back, "Choose link, upload or data service.", "error")
-    if mode == "upload" and source.transport_type == "http":
-        return _go(back, "An API source stores nothing, so there is no file to upload: use a link or a data service.", "error")
+        return _go(back, "Choose link, upload, DataStore or data service.", "error")
+    if mode in ("upload", "datastore") and source.transport_type == "http":
+        return _go(back, "An API source stores nothing, so there is no output to %s: use a link or a data service." % ("upload" if mode == "upload" else "load"), "error")
+    datastore_cfg = None
+    if mode == "datastore":
+        try:
+            datastore_cfg = ckan_datastore.check_config(str(form.get("ds_refresh") or ""), [str(k) for k in form.getlist("ds_keys")])
+        except ckan_datastore.DatastoreError as exc:
+            return _go(back, str(exc), "error")
     if not organization_id:
         return _go(back, "Choose the organization first.", "error")
     meta = None
@@ -230,7 +255,10 @@ async def ckan_save(source_id: str, request: Request, pipeline: str = transform_
         return _go(back, str(exc), "error")
     if dataset is not None and dataset.owner_org != organization.id:
         return _go(back, "%s is not in %s." % (dataset.title, organization.title), "error")
-    target = _target(session, found)
+    chosen = str(form.get("target_id") or "")
+    target = None if adding else _target(session, found, chosen)
+    if chosen and target is None:
+        return _go(back, "No such load.", "error")
     moving = target is not None and bool(target.resource_id) and (
         target.mode != mode or (mode == "service" and target.organization_id != organization.id) or (dataset is not None and target.dataset_id != dataset.id))
     if moving:
@@ -252,18 +280,26 @@ async def ckan_save(source_id: str, request: Request, pipeline: str = transform_
     else:
         target.dataset_id, target.dataset_name, target.dataset_title = dataset.id, dataset.name, dataset.title
         target.resource_name, target.description = name, str(form.get("description") or "").strip()[:1000]
+        if datastore_cfg is not None:
+            old = ckan_datastore.config_of(target.datastore_config)
+            same_way = old["refresh"] == datastore_cfg["refresh"] and old["keys"] == datastore_cfg["keys"]
+            if not same_way:
+                target.last_output_id = None  # (a changed way of loading starts from the newest output again)
+            if same_way and old.get("fields"):
+                datastore_cfg["fields"], datastore_cfg["created"] = old["fields"], old.get("created", "")
+            target.datastore_config = json.dumps(datastore_cfg, ensure_ascii=False)
         label = "%s is now a resource of %s in CKAN." % (name, dataset.title)
     target.ckan_user, target.connected_by = ident, _who(request)
     try:
         _push_now(session, hsession, target, source, found, ident)
     except ckan_load.CkanLoadError as exc:
         session.commit()  # the connection is kept, with the reason, so it can be fixed and pushed again
-        return _go(back, "Saved, but not pushed: %s" % exc, "error")
+        return _go("%s?load=%s" % (back, target.id), "Saved, but not pushed: %s" % exc, "error")
     if meta is not None:
         ckan_load.save_defaults(session, organization.id, meta, _who(request))  # the next service of this organization starts from these
     session.commit()
     logger.info("ckan: %s connected %s / %s as %s (%s)", _who(request) or "?", source.name, found.name, mode, organization.title)
-    return _go(back, label)
+    return _go("%s?load=%s" % (back, target.id), label)
 
 
 @router.post("/sources/{source_id}/ckan/push")
@@ -272,9 +308,11 @@ async def ckan_push(source_id: str, request: Request, pipeline: str = transform_
                     hsession: Session = Depends(harvest_db.get_session)):
     source, found = _found(session, source_id, pipeline)
     back = _base(source_id, pipeline) + "/ckan"
-    target = _target(session, found)
+    form = await request.form()
+    target = _target(session, found, str(form.get("target_id") or ""))
     if source is None or found is None or target is None:
         return _go(back, "This pipeline is not connected to CKAN.", "error")
+    back = "%s?load=%s" % (back, target.id)
     problem = _problem_with_identity(request)
     if problem:
         return _go(back, problem, "error")
@@ -293,9 +331,11 @@ async def ckan_disconnect(source_id: str, request: Request, pipeline: str = tran
     """Take the resource out of CKAN and forget the connection."""
     source, found = _found(session, source_id, pipeline)
     back = _base(source_id, pipeline) + "/ckan"
-    target = _target(session, found)
+    form = await request.form()
+    target = _target(session, found, str(form.get("target_id") or ""))
     if source is None or found is None or target is None:
         return _go(back, "This pipeline is not connected to CKAN.", "error")
+    back = "%s?load=%s" % (back, target.id)
     problem = _problem_with_identity(request)
     if problem:
         return _go(back, problem, "error")
@@ -305,4 +345,4 @@ async def ckan_disconnect(source_id: str, request: Request, pipeline: str = tran
         return _go(back, "The resource could not be removed from CKAN, so it is still connected: %s" % exc, "error")
     session.delete(target)
     session.commit()
-    return _go("/load", "Disconnected: the resource was removed from CKAN.")
+    return _go("/load", "Disconnected: the load was removed from CKAN.")

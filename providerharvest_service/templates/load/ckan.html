@@ -33,36 +33,54 @@
     {% if flash %}<div class="flash flash-{{ flash_kind }}">{{ flash }}</div>{% endif %}
     {% if problem %}<div class="flash flash-error">{{ problem }}</div>{% endif %}
 
+    {% if loads %}
+      <div class="load-list" style="max-width:46rem; margin-bottom:1rem;">
+        <div class="muted" style="margin-bottom:0.3rem;">Loads of this pipeline -- each is one way, on its own line in the Load Box.</div>
+        {% for l in loads %}
+          <div style="display:flex; align-items:center; gap:0.6rem; padding:0.35rem 0.6rem; border:1px solid var(--border, #d6dce6); border-radius:8px; margin-bottom:0.3rem;{% if target and l.id == target.id %} background:rgba(27,110,194,0.07);{% endif %}">
+            <span style="flex:1;"><strong>{{ l.dataset_title or l.dataset_name or l.resource_name }}</strong> <span class="muted">-- {{ mode_text[l.mode] }}</span></span>
+            {% if l.last_status == "error" %}<span class="badge badge-error"><span>failed</span></span>{% elif l.resource_id %}<span class="badge badge-ok"><span>in CKAN</span></span>{% else %}<span class="badge badge-pending"><span>not in CKAN</span></span>{% endif %}
+            <a href="{{ base }}/ckan?load={{ l.id }}">Open</a>
+          </div>
+        {% endfor %}
+        {% if not creating %}<a href="{{ base }}/ckan?load=new">Add another load</a>{% endif %}
+      </div>
+    {% endif %}
+
     {% if target %}
       <div class="ckan-status">
         <div style="font-weight:600;">Connected to
           {% if dataset_url %}<a href="{{ dataset_url }}" target="_blank" rel="noopener">{{ target.dataset_title or target.dataset_name }}</a>{% else %}{{ target.dataset_title or target.dataset_name }}{% endif %}
-          <span class="muted">-- {{ {"link": "a link to the published address", "upload": "an uploaded copy of the newest output", "service": "as a data service"}[target.mode] }}</span></div>
+          <span class="muted">-- {{ mode_text[target.mode] }}</span></div>
         <div style="margin-top:0.3rem;">
           {% if target.last_status == "ok" and target.resource_id %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>in CKAN</span></span> <span class="muted">pushed {{ target.last_pushed_at|short_utc }} UTC</span>
           {% elif target.last_status == "error" %}<span class="badge badge-error">{{ macros.icon("rejected", 13) }}<span>failed</span></span> <span class="muted">{{ target.last_error }}</span>
           {% else %}<span class="badge badge-pending"><span>not in CKAN</span></span> <span class="muted">{% if not published and target.mode in ("link", "service") %}it is unpublished, so it was taken out of CKAN; publish it again and push{% else %}not pushed yet{% endif %}</span>{% endif %}
         </div>
         <div style="display:flex; gap:0.5rem; margin-top:0.7rem;">
-          <form method="post" action="{{ base }}/ckan/push" style="margin:0;"><button type="submit" class="btn-sm"{% if problem %} disabled{% endif %}>{{ macros.icon("push", 14) }} Push now</button></form>
-          <form method="post" action="{{ base }}/ckan/disconnect" style="margin:0;" onsubmit="return confirm('Remove this from CKAN and disconnect the pipeline?');"><button type="submit" class="btn-secondary btn-sm"{% if problem %} disabled{% endif %}>{{ macros.icon("trash", 14) }} Disconnect</button></form>
+          <form method="post" action="{{ base }}/ckan/push" style="margin:0;"><input type="hidden" name="target_id" value="{{ target.id }}"><button type="submit" class="btn-sm"{% if problem %} disabled{% endif %}>{{ macros.icon("push", 14) }} Push now</button></form>
+          <form method="post" action="{{ base }}/ckan/disconnect" style="margin:0;" onsubmit="return confirm('Remove this from CKAN and delete this load?');"><input type="hidden" name="target_id" value="{{ target.id }}"><button type="submit" class="btn-secondary btn-sm"{% if problem %} disabled{% endif %}>{{ macros.icon("trash", 14) }} Disconnect</button></form>
         </div>
       </div>
     {% endif %}
 
     <form method="post" action="{{ base }}/ckan" id="ckan-form" style="max-width:46rem;">
-      <h2 style="font-size:1.05rem; margin:0 0 0.4rem;">{{ "Change" if target else "Connect" }}</h2>
+      <input type="hidden" name="target_id" value="{{ target.id if target else '' }}">
+      <h2 style="font-size:1.05rem; margin:0 0 0.4rem;">{{ "Change this load" if target else ("Add a load" if loads else "Connect") }}</h2>
 
       <label>What goes into CKAN</label>
       <div class="segmented">
         <span><input type="radio" id="mode-link" name="mode" value="link"{% if mode == "link" %} checked{% endif %}><label for="mode-link">A link to the published address</label></span>
         <span><input type="radio" id="mode-upload" name="mode" value="upload"{% if mode == "upload" %} checked{% endif %}{% if is_http %} disabled{% endif %}><label for="mode-upload">An uploaded copy of the newest output</label></span>
+        <span><input type="radio" id="mode-datastore" name="mode" value="datastore"{% if mode == "datastore" %} checked{% endif %}{% if is_http %} disabled{% endif %}><label for="mode-datastore">Rows in a DataStore table</label></span>
         <span><input type="radio" id="mode-service" name="mode" value="service"{% if mode == "service" %} checked{% endif %}><label for="mode-service">A data service</label></span>
       </div>
       <p class="muted" id="mode-note" style="margin:0.4rem 0 0.8rem;">
         <span id="note-link"><strong>Link</strong>: a resource in a dataset that points to <code>{{ link }}</code>, which always answers with the current data. Nothing is copied; the pipeline must be published{% if not published %} (it is not yet){% endif %}.
         {% if not has_public_base %}<br><strong>LOADER_PUBLIC_BASE_URL is not set</strong>, so the address cannot be built.{% endif %}</span>
         <span id="note-upload" hidden><strong>Upload</strong>: a resource whose file is the newest output, kept in CKAN's own storage and replaced each time a new one is made.
+          {% if is_http %}Not available for an API source: it stores nothing.{% elif newest %}Newest now: {{ newest.filename }}.{% else %}There is no output yet.{% endif %}</span>
+        <span id="note-datastore" hidden><strong>DataStore</strong>: the rows of each new output are written into a table of CKAN's DataStore (a resource of the dataset), so they can be queried through CKAN's API. The table can be emptied and loaded again each time, or grow: every output's rows are added, or update the rows that have the same key.
           {% if is_http %}Not available for an API source: it stores nothing.{% elif newest %}Newest now: {{ newest.filename }}.{% else %}There is no output yet.{% endif %}</span>
         <span id="note-service" hidden><strong>Data service</strong>: an entry in the data-services catalogue of data.gov.gr that describes the endpoint <code>{{ link }}</code> -- how to call it, what it answers, the licence and who to ask. It has no dataset and no resources of its own. The pipeline must be published{% if not published %} (it is not yet){% endif %}.</span>
       </p>
@@ -84,6 +102,20 @@
       <input type="text" id="resource_name" name="resource_name" maxlength="200" value="{{ target.resource_name if target else default_name }}">
       <label for="description">Description (optional)</label>
       <input type="text" id="description" name="description" maxlength="1000" value="{{ target.description if target else '' }}">
+      <div id="section-datastore" hidden>
+        <label for="ds_refresh">When a new output arrives</label>
+        <select id="ds_refresh" name="ds_refresh">
+          <option value="replace"{% if datastore_cfg.refresh == "replace" %} selected{% endif %}>Replace all the rows (the table mirrors the newest output)</option>
+          <option value="append"{% if datastore_cfg.refresh == "append" %} selected{% endif %}>Add its rows to the ones already there (history grows)</option>
+          <option value="upsert"{% if datastore_cfg.refresh == "upsert" %} selected{% endif %}>Add its rows, updating those with the same key (history grows, no repeats)</option>
+        </select>
+        <div id="ds-keys" hidden>
+          <label>The column(s) that identify a row</label>
+          {% if columns %}
+            <div class="checks">{% for c in columns %}<label class="check"><input type="checkbox" name="ds_keys" value="{{ c.id }}"{% if c.id in datastore_cfg["keys"] %} checked{% endif %}> {{ c.id }} <span class="muted">({{ c.type }})</span></label>{% endfor %}</div>
+          {% else %}<p class="muted">The columns are listed once there is an output that can be read as rows (JSON, JSON Lines or CSV).</p>{% endif %}
+        </div>
+        {% if columns %}<p class="muted" style="margin:0.4rem 0 0;">The table would have {{ columns|length }} column(s): {% for c in columns %}{{ c.id }} ({{ c.type }}){{ ", " if not loop.last }}{% endfor %}. Types are worked out from the values; once the table exists a column keeps its type.</p>{% endif %}
       </div>
 
       <div id="section-service" hidden>
@@ -225,10 +257,13 @@
       dsQ.addEventListener('focus', function () { if (!dsResults.children.length) searchDatasets(); });
 
       var FILL_DEFAULTS = {{ 'true' if fill_defaults else 'false' }};
+      function refreshKeys() { var sel = document.getElementById('ds_refresh'); document.getElementById('ds-keys').hidden = !sel || sel.value !== 'upsert'; }
+      document.getElementById('ds_refresh').addEventListener('change', refreshKeys);
       function currentMode() { var r = document.querySelector('input[name="mode"]:checked'); return r ? r.value : 'link'; }
       function modeNote() {
         var mode = currentMode();
-        document.getElementById('note-link').hidden = mode !== 'link'; document.getElementById('note-upload').hidden = mode !== 'upload'; document.getElementById('note-service').hidden = mode !== 'service';
+        document.getElementById('note-link').hidden = mode !== 'link'; document.getElementById('note-upload').hidden = mode !== 'upload'; document.getElementById('note-service').hidden = mode !== 'service'; document.getElementById('note-datastore').hidden = mode !== 'datastore';
+        document.getElementById('section-datastore').hidden = mode !== 'datastore'; refreshKeys();
         document.getElementById('section-dataset').hidden = mode === 'service'; document.getElementById('section-service').hidden = mode !== 'service';
         if (mode === 'service') loadServiceDefaults();
       }

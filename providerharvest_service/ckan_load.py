@@ -1,6 +1,6 @@
 """The Load Box's CKAN destination: a published pipeline can be given a **resource** in an existing CKAN dataset (data.gov.gr).
 
-Two ways, chosen per pipeline (``CkanTarget.mode``):
+Four ways, chosen per pipeline (``CkanTarget.mode``):
 * ``link`` -- the resource's URL is the pipeline's published address (``/data/<source>/<pipeline>``). Nothing is copied: CKAN links to the
   loader, which always answers with the newest output (or asks the provider, for an API source).
 * ``upload`` -- the newest output file is uploaded into CKAN's own storage, again each time a new one is made (a source that stores data).
@@ -26,12 +26,12 @@ import time
 
 from sqlalchemy.orm import Session
 
-from providerharvest_service import ckan_access, ckan_client, ckan_tokens, ckan_vocab, publishing
+from providerharvest_service import ckan_access, ckan_client, ckan_datastore, ckan_tokens, ckan_vocab, publishing
 from providerharvest_service.models import CkanServiceDefaults, CkanTarget, ProviderSource, Transform
 
 logger = logging.getLogger(__name__)
 
-MODES = ("link", "upload", "service")
+MODES = ("link", "upload", "datastore", "service")
 MAX_UPLOAD_BYTES = 100 * 1000 * 1000
 _FORMAT_BY_EXTENSION = {".csv": "CSV", ".tsv": "TSV", ".json": "JSON", ".jsonl": "JSON", ".xml": "XML", ".xlsx": "XLSX", ".xls": "XLS"}
 
@@ -247,6 +247,9 @@ def _push(target: CkanTarget, source: ProviderSource, pipeline: Transform, clien
     if target.mode == "service":
         _push_service(target, source, pipeline, client, base_url)
         return
+    if target.mode == "datastore":
+        _push_datastore(target, pipeline, client, output)
+        return
     fields = {"name": target.resource_name or pipeline.name, "description": target.description or ""}
     files = None
     if target.mode == "link":
@@ -277,6 +280,62 @@ def _push(target: CkanTarget, source: ProviderSource, pipeline: Transform, clien
         target.last_output_id = getattr(output, "id", None)
     except ckan_client.CKANActionError as exc:
         raise CkanLoadError(_explain(exc)) from exc
+
+
+def _push_datastore(target: CkanTarget, pipeline: Transform, client, output) -> None:
+    """Write the newest output's rows into the DataStore table of the pipeline's resource (made here, without a file, the first time)."""
+    if output is None or not getattr(output, "content", b""):
+        raise CkanLoadError("There is no output to load yet.")
+    if len(output.content) > MAX_UPLOAD_BYTES:
+        raise CkanLoadError("The newest output is larger than %d MB, too big to load into the DataStore." % (MAX_UPLOAD_BYTES // 1_000_000))
+    cfg = ckan_datastore.config_of(target.datastore_config)
+    if cfg["refresh"] == "append" and target.resource_id and target.last_output_id == getattr(output, "id", None):
+        raise CkanLoadError("This output is already in the table (adding it again would repeat its rows). Wait for the next output.")
+    try:
+        rows = ckan_datastore.records_of(output.content, output.filename, output.content_type)
+        known = {f["id"]: f["type"] for f in cfg.get("fields", [])} if cfg["refresh"] != "replace" else None
+        fields, records = ckan_datastore.table_of(rows, known)
+        keys = cfg["keys"]
+        if cfg["refresh"] == "upsert" and any(k not in {f["id"] for f in fields} for k in keys):
+            raise ckan_datastore.DatastoreError("The key column(s) %s are not in the output any more." % ", ".join(repr(k) for k in keys))
+    except ckan_datastore.DatastoreError as exc:
+        raise CkanLoadError(str(exc)) from exc
+    try:
+        if not target.resource_id:
+            created = _call(client, "resource_create", {"package_id": target.dataset_id, "name": target.resource_name or pipeline.name,
+                                                       "description": target.description or "", "url": "_datastore_only_resource", "format": ""})
+            target.resource_id = str(created["id"])
+            cfg.pop("created", None)
+        rid = target.resource_id
+        try:
+            _write_table(client, rid, cfg, fields, records, keys)
+        except ckan_client.CKANNotFound:
+            # the resource was deleted in CKAN: make it again, and start the table from nothing
+            created = _call(client, "resource_create", {"package_id": target.dataset_id, "name": target.resource_name or pipeline.name,
+                                                       "description": target.description or "", "url": "_datastore_only_resource", "format": ""})
+            target.resource_id = rid = str(created["id"])
+            cfg.pop("created", None)
+            _write_table(client, rid, cfg, fields, records, keys)
+    except ckan_client.CKANActionError as exc:
+        raise CkanLoadError(_explain(exc)) from exc
+    cfg["fields"] = fields
+    cfg["created"] = ckan_datastore.signature(fields, keys)
+    target.datastore_config = json.dumps(cfg, ensure_ascii=False)
+    target.last_output_id = getattr(output, "id", None)
+
+
+def _write_table(client, rid: str, cfg: dict, fields: list[dict], records: list[dict], keys: list[str]) -> None:
+    if cfg["refresh"] == "replace":
+        try:
+            _call(client, "datastore_delete", {"resource_id": rid, "force": True})  # (no filters: the whole table; there may be none yet)
+        except ckan_client.CKANNotFound:
+            pass
+        cfg.pop("created", None)
+    if cfg.get("created") != ckan_datastore.signature(fields, keys):
+        _call(client, "datastore_create", {"resource_id": rid, "force": True, "fields": fields, **({"primary_key": keys} if keys else {})})
+    method = "upsert" if cfg["refresh"] == "upsert" else "insert"
+    for batch in ckan_datastore.batches(records):
+        _call(client, "datastore_upsert", {"resource_id": rid, "force": True, "method": method, "records": batch})
 
 
 def remove(target: CkanTarget, client: ckan_client.CKANActionClient) -> bool:
@@ -481,10 +540,17 @@ def save_defaults(session: Session, organization_id: str, meta: dict, who: str =
 # Every function below is best effort and never raises: a CKAN that is down or says no must not stop an upload from being received, a pipeline from
 # being unpublished or a source from being deleted. What went wrong is kept on the target (and returned as words where a person is looking).
 
-def target_of(session: Session, pipeline_id: str) -> CkanTarget | None:
+def targets_of(session: Session, pipeline_id: str) -> list[CkanTarget]:
+    """Every load of the pipeline into CKAN, oldest first (each is its own row in the Load Box)."""
     from sqlalchemy import select
 
-    return session.scalar(select(CkanTarget).where(CkanTarget.pipeline_id == pipeline_id))
+    return list(session.scalars(select(CkanTarget).where(CkanTarget.pipeline_id == pipeline_id).order_by(CkanTarget.created_at, CkanTarget.id)).all())
+
+
+def target_of(session: Session, pipeline_id: str) -> CkanTarget | None:
+    """The first load of the pipeline (for callers that mean 'the' load)."""
+    found = targets_of(session, pipeline_id)
+    return found[0] if found else None
 
 
 def _client_for(session: Session, target: CkanTarget):
@@ -494,20 +560,27 @@ def _client_for(session: Session, target: CkanTarget):
 
 
 def sync_after_output(session: Session, source: ProviderSource, pipeline: Transform, output) -> None:
-    """A new good output was stored: an ``upload`` connection puts it into CKAN (as the person who connected it). A ``link`` one needs nothing."""
+    """A new good output was stored: every ``upload`` and ``datastore`` load of the pipeline puts it into CKAN (as the person who connected it), each
+    independently. A ``link`` or ``service`` one needs nothing."""
+    if getattr(output, "status", "ok") != "ok":
+        return
     try:
-        target = target_of(session, pipeline.id)
-        if target is None or target.mode != "upload" or getattr(output, "status", "ok") != "ok":
-            return
-        if target.last_output_id == getattr(output, "id", None) and target.resource_id:
-            return
-        push(target, source, pipeline, _client_for(session, target), output=output)
-        session.commit()
-    except CkanLoadError:
-        session.commit()  # (the reason was recorded on the target)
-    except Exception:  # noqa: BLE001 -- receiving a file must not fail because of CKAN
-        logger.exception("ckan: syncing a new output of %s / %s failed", getattr(source, "name", "?"), getattr(pipeline, "name", "?"))
+        targets = [t for t in targets_of(session, pipeline.id) if t.mode in ("upload", "datastore")]
+    except Exception:  # noqa: BLE001
+        logger.exception("ckan: looking up the loads of %s failed", getattr(pipeline, "name", "?"))
         session.rollback()
+        return
+    for target in targets:
+        try:
+            if target.last_output_id == getattr(output, "id", None) and target.resource_id:
+                continue
+            push(target, source, pipeline, _client_for(session, target), output=output)
+            session.commit()
+        except CkanLoadError:
+            session.commit()  # (the reason was recorded on the target)
+        except Exception:  # noqa: BLE001 -- receiving a file must not fail because of CKAN
+            logger.exception("ckan: syncing a new output of %s / %s failed", getattr(source, "name", "?"), getattr(pipeline, "name", "?"))
+            session.rollback()
 
 
 def release(session: Session, target: CkanTarget) -> str:
@@ -531,7 +604,7 @@ def restore(session: Session, source: ProviderSource, pipeline: Transform, targe
     if target.resource_id:
         return ""
     output = None
-    if target.mode == "upload":
+    if target.mode in ("upload", "datastore"):
         from providerharvest_service import harvest_db, load_api
 
         try:
@@ -552,13 +625,14 @@ def restore(session: Session, source: ProviderSource, pipeline: Transform, targe
 
 
 def forget(session: Session, pipeline_id: str) -> str:
-    """The pipeline is being removed: its resource leaves CKAN and the connection is deleted (the caller commits). Returns a warning, or ''."""
-    target = target_of(session, pipeline_id)
-    if target is None:
-        return ""
-    warning = release(session, target)
-    session.delete(target)
-    return warning
+    """The pipeline is being removed: every one of its loads leaves CKAN and the connections are deleted (the caller commits). Returns the warnings, or ''."""
+    warnings = []
+    for target in targets_of(session, pipeline_id):
+        warning = release(session, target)
+        if warning:
+            warnings.append(warning)
+        session.delete(target)
+    return " ".join(warnings)
 
 
 def forget_source(session: Session, source_id: str) -> list[str]:
@@ -575,16 +649,18 @@ def forget_source(session: Session, source_id: str) -> list[str]:
 
 
 def refresh_after_change(session: Session, source: ProviderSource, pipeline: Transform) -> str:
-    """The pipeline changed what an entry in CKAN says (its output format, or it was switched on or off): update the data service, as the person
-    who connected it. Best effort, '' when there is nothing to do or all is well, else a sentence for the person."""
-    target = target_of(session, pipeline.id)
-    if target is None or target.mode != "service" or not target.resource_id:
-        return ""
-    try:
-        push(target, source, pipeline, _client_for(session, target))
-    except CkanLoadError as exc:
-        return "The data service in CKAN could not be updated: %s" % exc
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("ckan: refreshing a data service failed")
-        return "The data service in CKAN could not be updated: %s" % exc
-    return "The data service in CKAN was updated."
+    """The pipeline changed what an entry in CKAN says (its output format, or it was switched on or off): update its data services, as the person
+    who connected them. Best effort, '' when there is nothing to do, else a sentence for the person."""
+    notes = []
+    for target in targets_of(session, pipeline.id):
+        if target.mode != "service" or not target.resource_id:
+            continue
+        try:
+            push(target, source, pipeline, _client_for(session, target))
+            notes.append("The data service in CKAN was updated.")
+        except CkanLoadError as exc:
+            notes.append("The data service in CKAN could not be updated: %s" % exc)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("ckan: refreshing a data service failed")
+            notes.append("The data service in CKAN could not be updated: %s" % exc)
+    return " ".join(notes)

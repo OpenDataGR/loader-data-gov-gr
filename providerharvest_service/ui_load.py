@@ -65,7 +65,9 @@ def _api_of(source: ProviderSource, base: str, pipeline=None) -> dict | None:
 def overview(request: Request, session: Session = Depends(get_session), hsession: Session = Depends(harvest_db.get_session)):
     # the configured public address: behind the gateway the request itself says "http" (see ui_provider._push_upload_url)
     base = (os.environ.get("LOADER_PUBLIC_BASE_URL") or str(request.base_url)).rstrip("/")
-    targets = {t.pipeline_id: t for t in session.scalars(select(CkanTarget)).all()}
+    targets: dict[str, list] = {}
+    for t in session.scalars(select(CkanTarget).order_by(CkanTarget.created_at, CkanTarget.id)).all():
+        targets.setdefault(t.pipeline_id, []).append(t)
     rows = []  # one row per pipeline (what is published is a pipeline); a source with none yet gets one row
     for source in provider_sources.list_all(session):
         for pipeline in transform_runner.list_pipelines(session, source.id) or [None]:
@@ -73,7 +75,7 @@ def overview(request: Request, session: Session = Depends(get_session), hsession
             rows.append({
                 "source": source, "pipeline": pipeline, "published": publishing.is_pipeline_published(pipeline),
                 "latest": load_api.latest_output(hsession, source.id, pipeline.id) if pipeline is not None and source.transport_type != "http" else None,
-                "path": path, "url": base + path, "api": _api_of(source, base, pipeline), "ckan": targets.get(pipeline.id) if pipeline is not None else None,
+                "path": path, "url": base + path, "api": _api_of(source, base, pipeline), "loads": targets.get(pipeline.id, []) if pipeline is not None else [],
                 "base": ("/load/sources/%s" % source.id) + ("" if pipeline is None or pipeline.name == transform_runner.DEFAULT_PIPELINE else "/pipelines/%s" % pipeline.name),
             })
     return templates.TemplateResponse(request, "load/overview.html", {
@@ -108,12 +110,14 @@ async def set_api(source_id: str, request: Request, pipeline: str = transform_ru
     path = publishing.address_of(source, target) if target is not None else "/data/%s" % source.name
     logger.info("load box: %s %s %s", who or "?", "published" if enable else "unpublished", path)
     note = ""
-    connection = ckan_load.target_of(session, target.id) if target is not None else None
-    if connection is not None:  # its CKAN resource follows: out when unpublished (it would link to a dead address), back when published again
+    for connection in ckan_load.targets_of(session, target.id) if target is not None else []:
+        if connection.mode == "datastore":
+            continue  # a table keeps its rows (its history) whether or not the pipeline's address is served
+        # its CKAN resource follows: out when unpublished (it would link to a dead address), back when published again
         had = bool(connection.resource_id)
         warning = ckan_load.release(session, connection) if not enable else ckan_load.restore(session, source, target, connection)
         session.commit()
-        note = " " + warning if warning else (" Its CKAN resource was removed." if had and not enable else (" Its CKAN resource is back." if enable and connection.resource_id else ""))
+        note += " " + warning if warning else (" Its CKAN resource was removed." if had and not enable else (" Its CKAN resource is back." if enable and connection.resource_id else ""))
     return _go("%s is %s at %s.%s" % (source.title if target is None or target.name == transform_runner.DEFAULT_PIPELINE else "%s / %s" % (source.title, target.name),
                                       "published" if enable else "no longer published", path, note))
 

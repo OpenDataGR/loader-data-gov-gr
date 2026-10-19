@@ -135,7 +135,7 @@
                   {% if p.turned %}<span class="chip warn" title="{{ p.request }}">request turned around</span>{% endif %}
                 </span>
               </a>
-              <a class="node node-output{{ '' if p.live else ' dim' }}" href="{{ p.output_url }}" data-node="p{{ i }}o" data-to="{% if p.published %}p{{ i }}d0 {% endif %}{% if p.ckan %}p{{ i }}d{{ 1 if p.published else 0 }} {% endif %}{% if not p.published and not p.ckan %}p{{ i }}g{% endif %}" data-live="{{ 1 if p.live else 0 }}" aria-label="Output: {{ p.output }}">
+              <a class="node node-output{{ '' if p.live else ' dim' }}" href="{{ p.output_url }}" data-node="p{{ i }}o" data-to="{% if p.published %}p{{ i }}d0 {% endif %}{% for c in p.ckans %}p{{ i }}d{{ loop.index0 + (1 if p.published else 0) }} {% endfor %}{% if not p.published and not p.ckans %}p{{ i }}g{% endif %}" data-live="{{ 1 if p.live else 0 }}" aria-label="Output: {{ p.output }}">
                 <span class="node-kind">Output</span>
                 <span class="node-title">{{ p.output }}</span>
                 <span class="node-meta">{% if s.transport_type == "http" %}built when someone calls{% else %}{{ "{:,}".format(p.ok) }} ok{% if p.failed %}, <span class="bad">{{ "{:,}".format(p.failed) }} failed</span>{% endif %}{% if p.latest %} &middot; {{ p.latest|short_utc }} UTC{% endif %}{% endif %}</span>
@@ -148,14 +148,14 @@
                   <span class="node-line"><span class="state on">live</span></span>
                 </a>
                 {% endif %}
-                {% if p.ckan %}
-                <a class="node node-ckan" href="{{ p.ckan_link }}" data-node="p{{ i }}d{{ 1 if p.published else 0 }}" data-live="{{ 1 if p.ckan.state == 'ok' else 0 }}" aria-label="CKAN: {{ p.ckan.title }}">
-                  <span class="node-kind">CKAN &middot; {{ p.ckan.mode_label }}</span>
-                  <span class="node-title" style="font-size:0.85rem;">{{ p.ckan.title or "(not pushed yet)" }}</span>
-                  <span class="node-line"><span class="state {{ 'on' if p.ckan.state == 'ok' else ('err' if p.ckan.state == 'error' else 'wait') }}" title="{{ p.ckan.text }}">{{ "in CKAN" if p.ckan.state == 'ok' else ("failed" if p.ckan.state == 'error' else "not in CKAN") }}</span></span>
+                {% for c in p.ckans %}
+                <a class="node node-ckan" href="{{ c.link }}" data-node="p{{ i }}d{{ loop.index0 + (1 if p.published else 0) }}" data-live="{{ 1 if c.state == 'ok' else 0 }}" aria-label="CKAN: {{ c.title }}">
+                  <span class="node-kind">CKAN &middot; {{ c.mode_label }}</span>
+                  <span class="node-title" style="font-size:0.85rem;">{{ c.title or "(not pushed yet)" }}</span>
+                  <span class="node-line"><span class="state {{ 'on' if c.state == 'ok' else ('err' if c.state == 'error' else 'wait') }}" title="{{ c.text }}">{{ "in CKAN" if c.state == 'ok' else ("failed" if c.state == 'error' else "not in CKAN") }}</span></span>
                 </a>
-                {% endif %}
-                {% if not p.published and not p.ckan %}
+                {% endfor %}
+                {% if not p.published and not p.ckans %}
                 <a class="node node-dest ghost" href="{{ p.load_url }}" data-node="p{{ i }}g" data-live="0" aria-label="Not delivered anywhere yet">
                   <span class="node-kind">Not delivered yet</span>
                   <span class="node-meta" style="margin-top:0.1rem;">Publish it in the Load Box</span>

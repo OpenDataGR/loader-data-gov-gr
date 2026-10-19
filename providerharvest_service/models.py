@@ -501,15 +501,16 @@ class LoadTarget(Base):
 
 
 class CkanTarget(Base):
-    """A pipeline's resource in a CKAN dataset (the Load Box's CKAN destination, see ``ckan_load``): one per pipeline. ``mode`` is ``link``
-    (the resource points at the published address) or ``upload`` (the newest output is uploaded into CKAN). ``ckan_user`` is the CKAN user
+    """One load of a pipeline into CKAN (the Load Box's CKAN destination, see ``ckan_load``): a pipeline may have several, each its own row and
+    each exactly one way. ``mode`` is ``link`` (the resource points at the published address), ``upload`` (the newest output is uploaded into
+    CKAN), ``datastore`` (its rows are written into a DataStore table) or ``service`` (a data-service entry). ``ckan_user`` is the CKAN user
     the loader acts as for it -- the person who connected it -- so CKAN's own permissions apply to every later change too."""
 
     __tablename__ = "ckan_target"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_new_id)
     source_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    pipeline_id: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    pipeline_id: Mapped[str] = mapped_column(String, nullable=False, index=True)  # (a pipeline may have several loads, each one way)
     mode: Mapped[str] = mapped_column(String, nullable=False, default="link")
     organization_id: Mapped[str | None] = mapped_column(String, nullable=True)
     organization_title: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -518,6 +519,7 @@ class CkanTarget(Base):
     dataset_title: Mapped[str] = mapped_column(String, nullable=False, default="")
     resource_id: Mapped[str | None] = mapped_column(String, nullable=True)  # the id of the thing in CKAN (the resource; for a data service the entry itself); empty while it is not there
     service_meta: Mapped[str | None] = mapped_column(String, nullable=True)  # a data service's own details (licence, themes, contact ...), as JSON
+    datastore_config: Mapped[str | None] = mapped_column(String, nullable=True)  # a DataStore table's settings (refresh, keys, the columns it was made with), as JSON
     resource_name: Mapped[str] = mapped_column(String, nullable=False, default="")
     description: Mapped[str] = mapped_column(String, nullable=False, default="")
     ckan_user: Mapped[str] = mapped_column(String, nullable=False, default="")

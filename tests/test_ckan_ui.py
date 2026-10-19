@@ -59,7 +59,7 @@ def test_the_load_box_offers_the_connection_only_when_ckan_is_set_up(client, sou
     monkeypatch.setenv("CKAN_BASE_URL", "https://ckan.example.gr")
     monkeypatch.setenv("CKAN_SYSADMIN_API_TOKEN", "t")
     page = client.get("/load").text
-    assert '<th>CKAN</th>' in page and 'href="/load/sources/%s/ckan">Push to CKAN' % source["id"] in page
+    assert '<th>Loads into CKAN</th>' in page and 'href="/load/sources/%s/ckan?load=new">Push to CKAN' % source["id"] in page
 
 
 def test_the_page_explains_when_ckan_is_not_set_up_or_the_session_has_no_ckan_identity(client, source, monkeypatch):
@@ -144,7 +144,7 @@ def test_what_is_missing_is_explained_before_anything_is_sent_to_ckan(client, so
     assert "Choose the organization first" in _flash(_connect(client, source["id"], organization_id=""))
     assert "Choose the dataset first" in _flash(_connect(client, source["id"], dataset_id=""))
     assert "Give the resource a name" in _flash(_connect(client, source["id"], resource_name=" "))
-    assert "Choose link, upload or data service" in _flash(_connect(client, source["id"], mode="teleport"))
+    assert "Choose link, upload, DataStore or data service" in _flash(_connect(client, source["id"], mode="teleport"))
     assert [c[0] for c in ckan.calls] == []
 
 
@@ -159,7 +159,7 @@ def test_an_api_source_can_only_be_linked(client, source, ckan, _isolated_db):
     from tests.test_live_transform import _http_source
 
     registry_id = _http_source(_isolated_db, "registry", post=True)  # published, no steps: passes the answer through
-    assert "no file to upload" in _flash(_connect(client, registry_id, mode="upload"))
+    assert "no output to upload" in _flash(_connect(client, registry_id, mode="upload"))
     assert "is now a resource" in _flash(_connect(client, registry_id))
     assert ckan.resources["res1"]["url"] == BASE + "/data/registry" and ckan.resources["res1"]["format"] == "JSON"
     assert "disabled" in client.get(_page(registry_id)).text  # the upload choice is greyed out on the page
