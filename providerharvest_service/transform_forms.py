@@ -165,6 +165,14 @@ def build_reader(kind: str, form: Mapping) -> dict:
     if kind == "csv_records":
         step["delimiter"] = _one(form, "delimiter", ",") or ","
         step["encoding"] = _one(form, "encoding", "utf-8-sig") or "utf-8-sig"
+        shape = {key: _one(form, key) for key in ("skip_lines", "column_names", "empty_regex") if _one(form, key)}
+        skip, names, _ = te.csv_options(shape)  # (checks them; a bad one is told in words)
+        if skip:
+            step["skip_lines"] = skip
+        if names:
+            step["column_names"] = names
+        if shape.get("empty_regex"):
+            step["empty_regex"] = shape["empty_regex"]
     elif kind == "xlsx_records":
         if _one(form, "sheet"):
             step["sheet"] = _one(form, "sheet")

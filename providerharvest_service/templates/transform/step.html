@@ -73,6 +73,41 @@
           {% endif %}
         {% endif %}
 
+        {% if r.kind == "csv_records" %}
+          <form method="get" class="csv-shape" style="margin:0 0 0.8rem;">
+            <input type="hidden" name="format" value="csv_records"><input type="hidden" name="delimiter" value="{{ r.delimiter or ',' }}">
+            <details{% if r.csv.skip_lines or r.csv.column_names or r.csv.empty_regex %} open{% endif %}>
+              <summary>The file has lines before the table, no header row, or marks for "no value"</summary>
+              <div class="row-pair"><div><label for="skip_lines">Skip this many lines at the top</label><input id="skip_lines" name="skip_lines" value="{{ r.csv.skip_lines }}" size="3" maxlength="3"></div>
+                <div><label for="empty_regex">Values that mean "nothing" (a pattern, e.g. <code>/+</code> for ////)</label><input id="empty_regex" name="empty_regex" value="{{ r.csv.empty_regex }}" maxlength="100"></div></div>
+              <label for="column_names">The file has no header row: name its columns (one per line, or separated by commas)</label>
+              <textarea id="column_names" name="column_names" rows="5" placeholder="Leave empty when the first line of the table holds the column names">{{ r.csv.column_names }}</textarea>
+              <p class="muted" style="margin:0.2rem 0 0.4rem;">Or fill the list from a header file (a text file whose lines start with the column name, such as <code>header_info.txt</code>; a first line of titles is skipped and a name used twice gets a number):
+                <input type="file" id="header-file" accept=".txt,.csv,text/plain" style="display:inline-block; width:auto;"></p>
+              <button type="submit" class="btn-secondary btn-sm">Apply and look at the columns</button>
+            </details>
+          </form>
+          <script>
+            (function () {
+              var input = document.getElementById('header-file'); if (!input) return;
+              input.addEventListener('change', function () {
+                var file = input.files && input.files[0]; if (!file) return;
+                var reader = new FileReader();
+                reader.onload = function () {
+                  var lines = String(reader.result || '').split(/\r?\n/).filter(function (l) { return l.trim(); });
+                  if (lines.length && /^name$/i.test(lines[0].trim().split(/\s+/)[0])) lines.shift();
+                  var seen = {}, names = lines.map(function (l) {
+                    var n = l.trim().split(/[\s,;]+/)[0].replace(/\W+/g, '_'); if (/^[^A-Za-z_]/.test(n)) n = 'f_' + n;
+                    seen[n] = (seen[n] || 0) + 1; return seen[n] > 1 ? n + '_' + seen[n] : n;
+                  });
+                  document.getElementById('column_names').value = names.join('\n');
+                };
+                reader.readAsText(file);
+              });
+            })();
+          </script>
+        {% endif %}
+
         {% if r.info %}
           <form method="post" action="{{ '/transform/sources/%s/steps/%d/edit' % (source.id, number) if number else '/transform/sources/%s/steps/new' % source.id }}">
             <input type="hidden" name="kind" value="read">
@@ -87,6 +122,7 @@
               {% endif %}
             {% elif r.kind == "csv_records" %}
               <div class="row-pair"><div><label for="delim">Delimiter</label><input id="delim" name="delimiter" value="{{ r.delimiter or ',' }}" size="2" maxlength="1"></div></div>
+              <input type="hidden" name="skip_lines" value="{{ r.csv.skip_lines }}"><input type="hidden" name="column_names" value="{{ r.csv.column_names }}"><input type="hidden" name="empty_regex" value="{{ r.csv.empty_regex }}">
             {% elif r.info.repeating %}
               <label for="explode">A repeated part inside each record gets one row per repeat</label>
               <select id="explode" name="explode" style="max-width:26rem;">

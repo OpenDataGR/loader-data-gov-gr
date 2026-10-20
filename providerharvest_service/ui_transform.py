@@ -373,7 +373,7 @@ async def set_output(source_id: str, request: Request, session: Session = Depend
 
 def _reader_context(session: Session, hsession: Session, source_id: str, request: Request, existing: dict | None) -> dict:
     sample = transform_runner.sample_for(session, hsession, source_id)
-    ctx: dict = {"sample": sample, "kind": None, "candidates": [], "record": "", "info": None, "selected": {}, "explode": "", "readers": te.READERS, "error": None,
+    ctx: dict = {"csv": {"skip_lines": "", "column_names": "", "empty_regex": ""}, "sample": sample, "kind": None, "candidates": [], "record": "", "info": None, "selected": {}, "explode": "", "readers": te.READERS, "error": None,
                  "sheets": [], "sheet": ""}
     if sample is None:
         src = _source_or_none(session, source_id)
@@ -399,8 +399,13 @@ def _reader_context(session: Session, hsession: Session, source_id: str, request
             ctx["sheets"] = te.xlsx_sheets(sample.content)
             ctx["sheet"] = params.get("sheet") or (existing or {}).get("sheet") or ""
         if kind in tf.TABULAR or record or kind == "json_records":
+            shape = {key: (params.get(key) if key in params else (existing or {}).get(key)) for key in ("skip_lines", "column_names", "empty_regex")}
+            if isinstance(shape["column_names"], list):
+                shape["column_names"] = "\n".join(shape["column_names"])
+            ctx["csv"] = {key: ("" if value is None else str(value)) for key, value in shape.items()}
             ctx["info"] = te.describe_record(
                 sample.content, kind, record, delimiter=params.get("delimiter") or (existing or {}).get("delimiter"), sheet=ctx.get("sheet") or None,
+                csv_shape=ctx["csv"] if kind == "csv_records" else None,
             )
     except te.TransformError as exc:
         ctx["error"] = str(exc)

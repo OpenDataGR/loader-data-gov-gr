@@ -226,23 +226,70 @@ def read_json(content: bytes, options: dict) -> list[Record]:
 
 # -- CSV -------------------------------------------------------------------------------------------------------
 
+MAX_SKIP_LINES = 100
+
+
+def csv_options(options: dict) -> tuple[int, list[str] | None, "re.Pattern | None"]:
+    """The options of a CSV reader that are about the file's shape: how many lines to skip before the table starts, the column names to use when the
+    file has no header row (a list, or text with one name per line or separated by commas), and a pattern for values that mean "nothing" (``/+`` for a
+    station that writes ``////`` where it has no reading). Raises ``TransformError`` with a sentence."""
+    try:
+        skip = int(options.get("skip_lines") or 0)
+    except (TypeError, ValueError):
+        raise TransformError("The number of lines to skip must be a whole number.") from None
+    if not 0 <= skip <= MAX_SKIP_LINES:
+        raise TransformError("Skip between 0 and %d lines." % MAX_SKIP_LINES)
+    names = options.get("column_names")
+    if isinstance(names, str):
+        names = re.split(r"[\s,;]+", names.strip())
+    names = [str(n).strip() for n in (names or []) if str(n).strip()]
+    if names:
+        if len(names) > MAX_FIELDS:
+            raise TransformError("At most %d columns." % MAX_FIELDS)
+        for name in names:
+            _check_name(name, "A column name")
+        duplicated = sorted({n for n in names if names.count(n) > 1})
+        if duplicated:
+            raise TransformError("The column name %s is used twice: every column needs its own." % ", ".join(repr(d) for d in duplicated))
+    pattern = None
+    raw = str(options.get("empty_regex") or "").strip()
+    if raw:
+        if len(raw) > 100:
+            raise TransformError("The pattern for empty values is longer than 100 characters.")
+        try:
+            pattern = re.compile(raw)
+        except re.error as exc:
+            raise TransformError("The pattern for empty values is not valid: %s" % exc) from None
+    return skip, names or None, pattern
+
+
+def _csv_text(content: bytes, encoding: str, skip: int) -> str:
+    try:
+        text = content.decode(encoding)
+    except (LookupError, UnicodeDecodeError) as exc:
+        raise TransformError("Cannot read the file as %s: %s" % (encoding, exc)) from None
+    return "".join(text.splitlines(keepends=True)[skip:]) if skip else text
+
+
 def read_csv(content: bytes, options: dict) -> list[Record]:
     encoding = str(options.get("encoding") or "utf-8-sig")
     delimiter = str(options.get("delimiter") or ",")
     if len(delimiter) != 1:
         raise TransformError("The delimiter must be one character.")
-    try:
-        text = content.decode(encoding)
-    except (LookupError, UnicodeDecodeError) as exc:
-        raise TransformError("Cannot read the file as %s: %s" % (encoding, exc)) from None
-    reader = csv.DictReader(io.StringIO(text, newline=""), delimiter=delimiter)
+    skip, names, empty = csv_options(options)
+    reader = csv.DictReader(io.StringIO(_csv_text(content, encoding, skip), newline=""), delimiter=delimiter, fieldnames=names)
     if not reader.fieldnames:
         raise TransformError("The CSV has no header row.")
     fields = _fields(options, required=False, plain=True)
     columns = fields or [(re.sub(r"\W", "_", c).strip("_") or "col", c) for c in reader.fieldnames]
+
+    def cell(value: object) -> str | None:
+        text = _text(value)
+        return None if text is not None and empty is not None and empty.fullmatch(text) else text
+
     records: list[Record] = []
     for row in reader:
-        records.append({name: _text(row.get(column)) for name, column in columns})
+        records.append({name: cell(row.get(column)) for name, column in columns})
         if len(records) > MAX_RECORDS:
             raise TransformError("More than %d records: refusing to continue." % MAX_RECORDS)
     return records
@@ -430,7 +477,7 @@ def sniff_delimiter(content: bytes) -> str:
     return best if first.count(best) else ","
 
 
-def describe_record(content: bytes, reader: str, record: str, sample: int = 50, delimiter: str | None = None, sheet: str | None = None) -> dict:
+def describe_record(content: bytes, reader: str, record: str, sample: int = 50, delimiter: str | None = None, sheet: str | None = None, csv_shape: dict | None = None) -> dict:
     """The fields available inside a record: {"fields": [{"path", "example", "repeats"}], "repeating": [path...]}.
     ``repeats`` marks a path that occurs more than once in a single record (a candidate to "explode")."""
     seen: dict[str, dict] = {}
@@ -496,8 +543,11 @@ def describe_record(content: bytes, reader: str, record: str, sample: int = 50, 
             if isinstance(item, dict):
                 walk_json(item, "")
     elif reader == "csv_records":
-        rows = csv.reader(io.StringIO(content.decode("utf-8-sig", "replace"), newline=""), delimiter=delimiter or sniff_delimiter(content))
-        header = [c.strip() for c in next(rows, [])]
+        skip, names, _ = csv_options(csv_shape or {})
+        text = content.decode("utf-8-sig", "replace")
+        text = "".join(text.splitlines(keepends=True)[skip:]) if skip else text
+        rows = csv.reader(io.StringIO(text, newline=""), delimiter=delimiter or sniff_delimiter(content))
+        header = names or [c.strip() for c in next(rows, [])]
         first_rows = [r for _, r in zip(range(sample), rows)]
         for index, column in enumerate(header):
             if column:
@@ -553,7 +603,8 @@ def _convert(value: Any, kind: str) -> Any:
         raise ValueError
     if kind == "datetime":
         text = str(value).strip().replace("Z", "+00:00").replace("z", "+00:00")
-        moment = datetime.datetime.fromisoformat(text)
+        compact = {8: "%Y%m%d", 12: "%Y%m%d%H%M", 14: "%Y%m%d%H%M%S"}.get(len(text)) if text.isdigit() else None  # (202604010150: a date and time with no separators, UTC)
+        moment = datetime.datetime.strptime(text, compact) if compact else datetime.datetime.fromisoformat(text)
         if moment.tzinfo is None:
             moment = moment.replace(tzinfo=datetime.timezone.utc)
         return moment.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -829,6 +880,8 @@ def validate(steps: object) -> list[str]:
                 if kind == "xml_records" and not str(step.get("record") or "").strip():
                     raise TransformError("Choose the repeating element that holds one record.")
                 _fields(step, required=kind == "xml_records", plain=kind in ("csv_records", "xlsx_records"))
+                if kind == "csv_records":
+                    csv_options(step)
                 if step.get("explode"):
                     _check_path(step["explode"].get("path"), "The path to the repeated element")
                     _fields(step["explode"], required=False)
