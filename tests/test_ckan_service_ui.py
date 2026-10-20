@@ -264,3 +264,8 @@ def test_a_data_service_can_be_created_public_and_a_later_push_leaves_its_visibi
     ckan.packages["svc1"]["private"] = True  # (someone made it private in CKAN, or on its page)
     client.post(_page(registry, tail="ckan/push"), follow_redirects=False)
     assert ckan.packages["svc1"]["private"] is True and "private" not in [k for c in ckan.calls if c[0] == "package_patch" for k in c[1]]
+
+
+def test_the_form_shows_the_documentation_link_that_will_be_added(client, registry, ckan):
+    page = client.get(_page(registry)).text
+    assert "Added automatically:" in page and BASE + "/api-docs/opencar-data" in page

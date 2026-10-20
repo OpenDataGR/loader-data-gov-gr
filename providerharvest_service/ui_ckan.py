@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from providerharvest_service import build_info, ckan_access, ckan_datastore, ckan_load, ckan_vocab, harvest_db, load_api, nav, publishing, transform_runner
+from providerharvest_service import api_docs, build_info, ckan_access, ckan_datastore, ckan_load, ckan_vocab, harvest_db, load_api, nav, publishing, transform_runner
 from providerharvest_service.db import get_session
 from providerharvest_service.models import CkanTarget, ProviderSource, Transform
 
@@ -189,7 +189,7 @@ def ckan_page(source_id: str, request: Request, pipeline: str = transform_runner
         "source": source, "pipeline": found, "target": target, "base": _base(source_id, pipeline), "problem": _problem_with_identity(request),
         "link": ckan_load.link_url(source, found, base), "has_public_base": bool(base), "published": publishing.is_pipeline_published(found),
         "is_http": source.transport_type == "http", "newest": newest, "modes": ckan_load.MODES, "mode": mode, "loads": loads, "mode_text": MODE_TEXT,
-        "private": private, "datastore_cfg": datastore_cfg, "columns": ckan_datastore.columns_of(newest), "creating": wanted == "new", "retention_choices": ckan_datastore.RETENTION_CHOICES,
+        "private": private, "docs_url": ckan_load.public_base_url() + api_docs.docs_path(source, found), "datastore_cfg": datastore_cfg, "columns": ckan_datastore.columns_of(newest), "creating": wanted == "new", "retention_choices": ckan_datastore.RETENTION_CHOICES,
         "default_name": default_name, "meta": meta, "known_license": known_license, "vocab": ckan_vocab,
         "format_label": dict(ckan_vocab.FORMATS)[format_code], "output_url": "%s/steps/output" % _transform_base(source_id, pipeline),
         "legislation_known": [u for u in meta.get("legislation", []) if any(u == k for k, _ in ckan_vocab.LEGISLATION)],
