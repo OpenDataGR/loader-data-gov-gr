@@ -78,3 +78,37 @@ def test_the_page_offers_the_choice_between_an_existing_and_a_new_dataset(client
     page = client.get(_page(source["id"])).text
     assert 'name="dataset_mode" value="existing"' in page and 'name="dataset_mode" value="new"' in page and 'name="new_public"' in page
     assert "Title of the dataset" in page and 'class="svc-only"' in page
+
+
+def test_the_sections_of_the_page_do_not_sit_inside_each_other(client, source, ckan):
+    """The form's sections are shown and hidden by the way chosen, so the button and the service details must not be inside the dataset section (a
+    missing closing tag once hid them whenever 'a data service' was chosen)."""
+    from html.parser import HTMLParser
+
+    _ready(client, source)
+    stack, parents = [], {}
+
+    class Walker(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            if tag in ("input", "br", "meta", "link", "img", "hr"):
+                if tag == "input" and dict(attrs).get("type") == "submit":
+                    parents["submit"] = [i for t, i in stack if i]
+                return
+            ident = dict(attrs).get("id") or ""
+            if ident:
+                parents[ident] = [i for t, i in stack if i]
+            if tag == "button" and dict(attrs).get("type") == "submit":
+                parents.setdefault("submit-buttons", []).append([i for t, i in stack if i])
+            stack.append((tag, ident))
+
+        def handle_endtag(self, tag):
+            while stack and stack[-1][0] != tag:
+                stack.pop()
+            if stack:
+                stack.pop()
+
+    Walker().feed(client.get(_page(source["id"])).text)
+    for section in ("section-dataset", "section-datastore", "section-service"):
+        inside = parents[section]
+        assert not any(other in inside for other in ("section-dataset", "section-datastore", "section-service")), (section, inside)
+    assert any(chain[-1:] == ["ckan-form"] for chain in parents["submit-buttons"])  # (the connect button sits in the form itself, never in a section)

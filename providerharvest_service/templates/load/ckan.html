@@ -109,6 +109,8 @@
       <input type="text" id="resource_name" name="resource_name" maxlength="200" value="{{ target.resource_name if target else default_name }}">
       <label for="description">Description (optional)</label>
       <input type="text" id="description" name="description" maxlength="1000" value="{{ target.description if target else '' }}">
+      </div>
+
       <div id="section-datastore" hidden>
         <label for="ds_refresh">When a new output arrives</label>
         <select id="ds_refresh" name="ds_refresh">
@@ -194,7 +196,7 @@
         </div>
         <label for="svc_tags">Keywords (comma-separated)</label>
         <input type="text" id="svc_tags" name="svc_tags" value="{{ meta.tags|join(', ') }}">
-        <label class="check new-only" style="margin-top:0.8rem;"><input type="checkbox" name="new_public" value="1"> Make the new dataset public right away (otherwise it is private until someone makes it public in CKAN)</label>
+        <div class="new-only" style="margin-top:0.8rem;"><label class="check"><input type="checkbox" name="new_public" value="1"> Make the new dataset public right away (otherwise it is private until someone makes it public in CKAN)</label></div>
       </div>
 
       <div style="margin-top:1.2rem;"><button type="submit"{% if problem %} disabled{% endif %}>{{ macros.icon("push", 16) }} {{ "Save and push" if target else "Connect and push" }}</button></div>
