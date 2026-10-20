@@ -25,7 +25,7 @@ class DatastoreCkan(ServiceCkan):
         self.tables, self.fields, self.keys = {}, {}, {}
 
     def call(self, action, data, files=None):
-        if action not in ("datastore_create", "datastore_upsert", "datastore_delete"):
+        if action not in ("datastore_create", "datastore_upsert", "datastore_delete", "datastore_search"):
             return super().call(action, data, files)
         self.calls.append((action, data, files))
         if action in self.fail:
@@ -34,8 +34,24 @@ class DatastoreCkan(ServiceCkan):
         if action == "datastore_delete":
             if rid not in self.tables:
                 raise ckan_client.CKANNotFound(action, "Not found")
-            del self.tables[rid]
+            if data.get("filters"):
+                self.tables[rid] = [row for row in self.tables[rid] if not all(row.get(k) == v for k, v in data["filters"].items())]
+            else:
+                del self.tables[rid]
             return {}
+        if action == "datastore_search":
+            if rid not in self.tables:
+                raise ckan_client.CKANNotFound(action, "Not found")
+            rows = [row for row in self.tables[rid] if all(row.get(k) == v for k, v in (data.get("filters") or {}).items())]
+            if data.get("distinct"):
+                seen = []
+                for row in rows:
+                    one = {f: row.get(f) for f in data["fields"]}
+                    if one not in seen:
+                        seen.append(one)
+                return {"records": seen, "fields": [{"id": f} for f in data["fields"]]}
+            page = rows[data.get("offset", 0):data.get("offset", 0) + data.get("limit", 100)]
+            return {"records": [dict(r, _id=i) for i, r in enumerate(page)], "fields": [{"id": "_id"}] + [{"id": f["id"]} for f in self.fields[rid]]}
         if action == "datastore_create":
             self.tables.setdefault(rid, [])
             self.fields[rid] = data["fields"]
@@ -93,7 +109,7 @@ def test_upsert_needs_a_key_and_a_refresh_must_be_one_of_the_three():
         ckan_datastore.check_config("upsert", [])
     with pytest.raises(ckan_datastore.DatastoreError, match="replace, add"):
         ckan_datastore.check_config("sometimes", [])
-    assert ckan_datastore.check_config("append", ["x"]) == {"refresh": "append", "keys": []}
+    assert ckan_datastore.check_config("append", ["x"]) == {"refresh": "append", "keys": [], "retention_days": 0, "archive": True, "time_column": ""}
 
 
 # -- loading ---------------------------------------------------------------------------------------------------------------------------------------------------

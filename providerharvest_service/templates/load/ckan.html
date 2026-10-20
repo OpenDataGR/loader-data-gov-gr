@@ -115,6 +115,22 @@
             <div class="checks">{% for c in columns %}<label class="check"><input type="checkbox" name="ds_keys" value="{{ c.id }}"{% if c.id in datastore_cfg["keys"] %} checked{% endif %}> {{ c.id }} <span class="muted">({{ c.type }})</span></label>{% endfor %}</div>
           {% else %}<p class="muted">The columns are listed once there is an output that can be read as rows (JSON, JSON Lines or CSV).</p>{% endif %}
         </div>
+        <div id="ds-retention-box" hidden>
+          <label for="ds_retention">How long to keep the rows</label>
+          <select id="ds_retention" name="ds_retention">
+            <option value="0"{% if not datastore_cfg.retention_days %} selected{% endif %}>Keep everything (the table grows without limit)</option>
+            {% for n in retention_choices %}<option value="{{ n }}"{% if datastore_cfg.retention_days == n %} selected{% endif %}>The last {{ n }} days</option>{% endfor %}
+          </select>
+          <div id="ds-retention-more" hidden>
+            <label for="ds_time">The column that holds the time of a row</label>
+            <select id="ds_time" name="ds_time">
+              {% for c in columns or [] %}<option value="{{ c.id }}"{% if c.id == datastore_cfg.time_column or (not datastore_cfg.time_column and c.type == "timestamp" and loop.first) %} selected{% endif %}>{{ c.id }} ({{ c.type }})</option>{% endfor %}
+            </select>
+            <label class="check" style="margin-top:0.5rem;"><input type="checkbox" name="ds_archive" value="1"{% if datastore_cfg.archive %} checked{% endif %}> Save each day as a CSV file in the dataset before it is removed from the table</label>
+            <p class="muted" style="margin:0.3rem 0 0;">Rows older than that are not loaded, and each day that ages out leaves the table (the loader checks every few hours, a day or two at a time). The table gets an extra column, <code>loader_day</code>, that this uses.</p>
+          </div>
+          {% if datastore_cfg.prune_note %}<p class="muted" style="margin:0.4rem 0 0;">{{ datastore_cfg.prune_note }}</p>{% endif %}
+        </div>
         {% if columns %}<p class="muted" style="margin:0.4rem 0 0;">The table would have {{ columns|length }} column(s): {% for c in columns %}{{ c.id }} ({{ c.type }}){{ ", " if not loop.last }}{% endfor %}. Types are worked out from the values; once the table exists a column keeps its type.</p>{% endif %}
       </div>
 
@@ -257,7 +273,13 @@
       dsQ.addEventListener('focus', function () { if (!dsResults.children.length) searchDatasets(); });
 
       var FILL_DEFAULTS = {{ 'true' if fill_defaults else 'false' }};
-      function refreshKeys() { var sel = document.getElementById('ds_refresh'); document.getElementById('ds-keys').hidden = !sel || sel.value !== 'upsert'; }
+      function refreshKeys() {
+        var sel = document.getElementById('ds_refresh'), ret = document.getElementById('ds_retention');
+        document.getElementById('ds-keys').hidden = !sel || sel.value !== 'upsert';
+        document.getElementById('ds-retention-box').hidden = !sel || sel.value === 'replace';
+        document.getElementById('ds-retention-more').hidden = !ret || ret.value === '0';
+      }
+      document.getElementById('ds_retention').addEventListener('change', refreshKeys);
       document.getElementById('ds_refresh').addEventListener('change', refreshKeys);
       function currentMode() { var r = document.querySelector('input[name="mode"]:checked'); return r ? r.value : 'link'; }
       function modeNote() {

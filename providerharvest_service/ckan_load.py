@@ -24,6 +24,7 @@ import re
 import threading
 import time
 
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from providerharvest_service import ckan_access, ckan_client, ckan_datastore, ckan_tokens, ckan_vocab, publishing
@@ -295,6 +296,10 @@ def _push_datastore(target: CkanTarget, pipeline: Transform, client, output) -> 
         rows = ckan_datastore.records_of(output.content, output.filename, output.content_type)
         known = {f["id"]: f["type"] for f in cfg.get("fields", [])} if cfg["refresh"] != "replace" else None
         fields, records = ckan_datastore.table_of(rows, known)
+        if cfg["retention_days"]:
+            fields, records = ckan_datastore.with_days(fields, records, cfg["time_column"])
+            cutoff = (_now().date() - datetime.timedelta(days=cfg["retention_days"])).isoformat()
+            records = [r for r in records if r[ckan_datastore.DAY_COLUMN] is None or r[ckan_datastore.DAY_COLUMN] >= cutoff]  # (older ones would only be pruned again)
         keys = cfg["keys"]
         if cfg["refresh"] == "upsert" and any(k not in {f["id"] for f in fields} for k in keys):
             raise ckan_datastore.DatastoreError("The key column(s) %s are not in the output any more." % ", ".join(repr(k) for k in keys))
@@ -320,6 +325,10 @@ def _push_datastore(target: CkanTarget, pipeline: Transform, client, output) -> 
         raise CkanLoadError(_explain(exc)) from exc
     cfg["fields"] = fields
     cfg["created"] = ckan_datastore.signature(fields, keys)
+    fresh = ckan_datastore.config_of(target.datastore_config)  # (pruning keeps its own notes in it; do not overwrite them)
+    for key in ("pruned_at", "prune_note", "archived"):
+        if key in fresh:
+            cfg[key] = fresh[key]
     target.datastore_config = json.dumps(cfg, ensure_ascii=False)
     target.last_output_id = getattr(output, "id", None)
 
@@ -664,3 +673,139 @@ def refresh_after_change(session: Session, source: ProviderSource, pipeline: Tra
             logger.exception("ckan: refreshing a data service failed")
             notes.append("The data service in CKAN could not be updated: %s" % exc)
     return " ".join(notes)
+
+
+# -- pruning a DataStore table that keeps history ------------------------------------------------------------------------------------------------------------
+# Rows older than the chosen number of days leave the table a day at a time, each day first saved as a CSV file in a resource of the same dataset (when
+# chosen). It runs from the loader's hourly cleanup, not from receiving a file, and at most every PRUNE_EVERY_S per table.
+
+PRUNE_EVERY_S = 6 * 3600
+PRUNE_DAYS_PER_PASS = 2
+ARCHIVE_PAGE = 10_000
+ARCHIVE_PART_ROWS = 100_000
+
+
+def _csv_bytes(columns: list[str], rows: list[dict]) -> bytes:
+    import csv
+    import io
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(columns)
+    for row in rows:
+        writer.writerow(["" if row.get(c) is None else row.get(c) for c in columns])
+    return buffer.getvalue().encode("utf-8")
+
+
+def _file_stem(target: CkanTarget) -> str:
+    return re.sub(r"[^A-Za-z0-9_-]+", "-", target.resource_name or "data").strip("-") or "data"
+
+
+def archive_day(target: CkanTarget, client, day: str, ids: list[str]) -> list[str]:
+    """Save one day's rows of the table as CSV resource(s) of the dataset (parts of at most ARCHIVE_PART_ROWS rows). Returns their resource ids; a part
+    already made (``ids``) is updated, not made twice."""
+    done = list(ids)
+    state = {"part": 0, "rows": []}
+    columns: list[str] = []
+
+    def flush(last: bool) -> None:
+        if not state["rows"]:
+            return
+        state["part"] += 1
+        part = state["part"]
+        single = last and part == 1
+        label = "%s %s" % (target.resource_name or "Data", day) + ("" if single else " (part %d)" % part)
+        name = "%s-%s%s.csv" % (_file_stem(target), day, "" if single else "-part%d" % part)
+        data = {"name": label, "format": "CSV", "url": "", "description": "The rows of %s that the retention setting removed from the table." % day}
+        files = {"upload": (name, _csv_bytes(columns, state["rows"]), "text/csv")}
+        if part <= len(done):
+            _call(client, "resource_update", {"id": done[part - 1], **data}, files)
+        else:
+            done.append(str(_call(client, "resource_create", {"package_id": target.dataset_id, **data}, files)["id"]))
+        state["rows"] = []
+
+    offset = 0
+    while True:
+        page = _read(client, "datastore_search", {"resource_id": target.resource_id, "filters": {ckan_datastore.DAY_COLUMN: day}, "limit": ARCHIVE_PAGE,
+                                                  "offset": offset, "sort": "_id"})
+        records = page.get("records") or []
+        if not columns:
+            columns = [f["id"] for f in page.get("fields") or [] if f["id"] not in ("_id", "_full_text")]
+        state["rows"].extend(records)
+        offset += len(records)
+        if len(state["rows"]) >= ARCHIVE_PART_ROWS and len(records) == ARCHIVE_PAGE:
+            flush(False)
+        if len(records) < ARCHIVE_PAGE:
+            break
+    flush(True)
+    return done
+
+
+def _save_config(session: Session, target: CkanTarget, cfg: dict) -> None:
+    target.datastore_config = json.dumps(cfg, ensure_ascii=False)
+    session.commit()
+
+
+def prune_target(session: Session, target: CkanTarget, *, now: datetime.datetime | None = None, client=None) -> str:
+    """Prune one DataStore load if it is due. Returns a sentence about what was done ('' when nothing was due). Never raises: a failure is kept on the
+    target as a note for the page."""
+    cfg = ckan_datastore.config_of(target.datastore_config)
+    days = cfg["retention_days"]
+    now = now or _now()
+    if target.mode != "datastore" or not days or not target.resource_id or cfg["refresh"] == "replace":
+        return ""
+    if cfg.get("pruned_at"):
+        try:
+            if (now - datetime.datetime.fromisoformat(cfg["pruned_at"])).total_seconds() < PRUNE_EVERY_S:
+                return ""
+        except ValueError:
+            pass
+    # claim the pass: of several workers, only the one whose update lands does the work
+    before = target.datastore_config
+    cfg["pruned_at"] = now.isoformat()
+    won = session.execute(update(CkanTarget).where(CkanTarget.id == target.id, CkanTarget.datastore_config == before)
+                          .values(datastore_config=json.dumps(cfg, ensure_ascii=False))).rowcount
+    session.commit()
+    if not won:
+        return ""
+    session.refresh(target)
+    cutoff = (now.date() - datetime.timedelta(days=days)).isoformat()
+    removed: list[str] = []
+    try:
+        client = client or _client_for(session, target)
+        found = _read(client, "datastore_search", {"resource_id": target.resource_id, "fields": [ckan_datastore.DAY_COLUMN], "distinct": True, "limit": 5000}) or {}
+        old = sorted({r[ckan_datastore.DAY_COLUMN] for r in found.get("records", []) if r.get(ckan_datastore.DAY_COLUMN) and r[ckan_datastore.DAY_COLUMN] < cutoff})
+        for day in old[:PRUNE_DAYS_PER_PASS]:
+            cfg = ckan_datastore.config_of(target.datastore_config)
+            if cfg["archive"]:
+                archived = cfg.setdefault("archived", {})
+                archived[day] = archive_day(target, client, day, archived.get(day, []))
+                _save_config(session, target, cfg)  # (the files exist now: a failed delete must not make them twice)
+            _call(client, "datastore_delete", {"resource_id": target.resource_id, "force": True, "filters": {ckan_datastore.DAY_COLUMN: day}})
+            removed.append(day)
+            cfg = ckan_datastore.config_of(target.datastore_config)
+            cfg.get("archived", {}).pop(day, None)
+            cfg["prune_note"] = "Pruned %s on %s%s." % (", ".join(removed), now.strftime("%Y-%m-%d %H:%M"), " (saved as files first)" if cfg["archive"] else "")
+            _save_config(session, target, cfg)
+        return "Pruned %s." % ", ".join(removed) if removed else ""
+    except (CkanLoadError, ckan_client.CKANActionError) as exc:
+        reason = _explain(exc) if isinstance(exc, ckan_client.CKANActionError) else str(exc)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("ckan: pruning a DataStore table failed")
+        reason = str(exc)
+    cfg = ckan_datastore.config_of(target.datastore_config)
+    cfg["prune_note"] = "Pruning failed on %s: %s" % (now.strftime("%Y-%m-%d %H:%M"), reason)
+    _save_config(session, target, cfg)
+    return "Pruning failed: %s" % reason
+
+
+def prune_all(session: Session, *, now: datetime.datetime | None = None) -> list[str]:
+    """One pass over every DataStore load that has a retention. Returns the notes of those that did something."""
+    from sqlalchemy import select
+
+    notes = []
+    for target in session.scalars(select(CkanTarget).where(CkanTarget.mode == "datastore")).all():
+        note = prune_target(session, target, now=now)
+        if note:
+            notes.append("%s: %s" % (target.dataset_title or target.dataset_name or target.id, note))
+    return notes

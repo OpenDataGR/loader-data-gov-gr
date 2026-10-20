@@ -219,6 +219,10 @@ def start_purger(config_session_factory, harvest_session_factory_provider: Calla
             try:
                 with config_session_factory() as config_session, harvest_session_factory_provider()() as hsession:
                     purge_all(config_session, hsession)
+                    from providerharvest_service import ckan_load
+
+                    for note in ckan_load.prune_all(config_session):  # DataStore tables that keep a limited history
+                        logger.info("retention: %s", note)
             except Exception:  # noqa: BLE001 -- a bad pass must never end the loop
                 logger.exception("retention: purge pass failed")
             stop_event.wait(interval_s)

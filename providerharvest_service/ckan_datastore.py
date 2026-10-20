@@ -19,6 +19,11 @@ import re
 
 REFRESH_MODES = ("replace", "append", "upsert")
 BATCH = 1000
+#: A table that keeps history can be pruned: rows older than N days (by the day of one time column) are removed, a day at a time, after being saved as
+#: a file. CKAN can only delete rows that equal a value, never "older than", so each row also carries its day, in a column of its own.
+DAY_COLUMN = "loader_day"
+RETENTION_CHOICES = (7, 14, 30, 90, 180, 365)
+_DAY = re.compile(r"^(\d{4}-\d{2}-\d{2})")
 MAX_COLUMNS = 200
 _NUMBER = re.compile(r"^-?(0|[1-9]\d*)(\.\d+)?([eE][-+]?\d+)?$")
 _TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?)?(Z|[-+]\d{2}:?\d{2})?$")
@@ -29,7 +34,7 @@ class DatastoreError(Exception):
 
 
 def default_config() -> dict:
-    return {"refresh": "replace", "keys": []}
+    return {"refresh": "replace", "keys": [], "retention_days": 0, "archive": True, "time_column": ""}
 
 
 def config_of(raw: str | None) -> dict:
@@ -44,17 +49,33 @@ def config_of(raw: str | None) -> dict:
         out["keys"] = [str(k) for k in cfg.get("keys") or []]
         if cfg.get("created"):
             out["created"] = str(cfg["created"])
+        days = cfg.get("retention_days")
+        out["retention_days"] = days if isinstance(days, int) and not isinstance(days, bool) and days in RETENTION_CHOICES else 0
+        out["archive"] = cfg.get("archive") is not False
+        out["time_column"] = str(cfg.get("time_column") or "")
+        for key in ("pruned_at", "prune_note"):
+            if cfg.get(key):
+                out[key] = str(cfg[key])
+        if isinstance(cfg.get("archived"), dict):
+            out["archived"] = {str(d): [str(r) for r in ids] for d, ids in cfg["archived"].items() if isinstance(ids, list)}
         if isinstance(cfg.get("fields"), list):
             out["fields"] = [f for f in cfg["fields"] if isinstance(f, dict) and f.get("id") and f.get("type")]
     return out
 
 
-def check_config(refresh: str, keys: list[str]) -> dict:
+def check_config(refresh: str, keys: list[str], retention_days: int = 0, archive: bool = True, time_column: str = "") -> dict:
     if refresh not in REFRESH_MODES:
         raise DatastoreError("Choose what happens to the rows already there: replace, add, or update by key.")
     if refresh == "upsert" and not keys:
         raise DatastoreError("Choose the column(s) that identify a row, so a row can be updated instead of added twice.")
-    return {"refresh": refresh, "keys": keys if refresh == "upsert" else []}
+    if retention_days and retention_days not in RETENTION_CHOICES:
+        raise DatastoreError("Choose how long to keep the rows from the list.")
+    if retention_days and refresh == "replace":
+        raise DatastoreError("Pruning only makes sense for a table that keeps history: choose to add rows or to update by key.")
+    if retention_days and not time_column:
+        raise DatastoreError("Choose the column that holds the time of a row, so its age can be told.")
+    return {"refresh": refresh, "keys": keys if refresh == "upsert" else [], "retention_days": retention_days, "archive": bool(archive) if retention_days else True,
+            "time_column": time_column if retention_days else ""}
 
 
 # -- reading the output --------------------------------------------------------------------------------------------------------------------------------
@@ -142,6 +163,21 @@ def _convert(value, kind: str):
     if kind == "bool":
         return bool(value)
     return str(value).strip()
+
+
+def day_of(value) -> str | None:
+    """The day (YYYY-MM-DD) a time value is on, or None when it does not start with a date."""
+    match = _DAY.match(str(value or "").strip())
+    return match.group(1) if match else None
+
+
+def with_days(fields: list[dict], records: list[dict], time_column: str) -> tuple[list[dict], list[dict]]:
+    """Add the day column the table is pruned by (the day of ``time_column``, text) to the columns and the rows."""
+    if time_column not in {f["id"] for f in fields}:
+        raise DatastoreError("The time column %r is not in the output any more." % time_column)
+    if any(f["id"] == DAY_COLUMN for f in fields):
+        raise DatastoreError("The output has a column called %r, which the loader needs for pruning." % DAY_COLUMN)
+    return fields + [{"id": DAY_COLUMN, "type": "text"}], [dict(r, **{DAY_COLUMN: day_of(r.get(time_column))}) for r in records]
 
 
 def table_of(rows: list[dict], known: dict[str, str] | None = None) -> tuple[list[dict], list[dict]]:

@@ -183,7 +183,7 @@ def ckan_page(source_id: str, request: Request, pipeline: str = transform_runner
         "source": source, "pipeline": found, "target": target, "base": _base(source_id, pipeline), "problem": _problem_with_identity(request),
         "link": ckan_load.link_url(source, found, base), "has_public_base": bool(base), "published": publishing.is_pipeline_published(found),
         "is_http": source.transport_type == "http", "newest": newest, "modes": ckan_load.MODES, "mode": mode, "loads": loads, "mode_text": MODE_TEXT,
-        "datastore_cfg": datastore_cfg, "columns": ckan_datastore.columns_of(newest), "creating": wanted == "new",
+        "datastore_cfg": datastore_cfg, "columns": ckan_datastore.columns_of(newest), "creating": wanted == "new", "retention_choices": ckan_datastore.RETENTION_CHOICES,
         "default_name": default_name, "meta": meta, "known_license": known_license, "vocab": ckan_vocab,
         "format_label": dict(ckan_vocab.FORMATS)[format_code], "output_url": "%s/steps/output" % _transform_base(source_id, pipeline),
         "legislation_known": [u for u in meta.get("legislation", []) if any(u == k for k, _ in ckan_vocab.LEGISLATION)],
@@ -228,7 +228,12 @@ async def ckan_save(source_id: str, request: Request, pipeline: str = transform_
     datastore_cfg = None
     if mode == "datastore":
         try:
-            datastore_cfg = ckan_datastore.check_config(str(form.get("ds_refresh") or ""), [str(k) for k in form.getlist("ds_keys")])
+            try:
+                retention = int(str(form.get("ds_retention") or "0") or 0)
+            except ValueError:
+                retention = -1
+            datastore_cfg = ckan_datastore.check_config(str(form.get("ds_refresh") or ""), [str(k) for k in form.getlist("ds_keys")], retention,
+                                                        bool(form.get("ds_archive")), str(form.get("ds_time") or ""))
         except ckan_datastore.DatastoreError as exc:
             return _go(back, str(exc), "error")
     if not organization_id:
@@ -287,6 +292,9 @@ async def ckan_save(source_id: str, request: Request, pipeline: str = transform_
                 target.last_output_id = None  # (a changed way of loading starts from the newest output again)
             if same_way and old.get("fields"):
                 datastore_cfg["fields"], datastore_cfg["created"] = old["fields"], old.get("created", "")
+            for key in ("pruned_at", "prune_note", "archived"):  # (what pruning has done so far is kept)
+                if key in old:
+                    datastore_cfg[key] = old[key]
             target.datastore_config = json.dumps(datastore_cfg, ensure_ascii=False)
         label = "%s is now a resource of %s in CKAN." % (name, dataset.title)
     target.ckan_user, target.connected_by = ident, _who(request)
