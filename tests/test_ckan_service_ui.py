@@ -185,7 +185,7 @@ def test_unpublishing_removes_the_service_and_publishing_again_creates_it(client
     flash = _flash(_publish(client, registry, on=False))
     assert "no longer published" in flash and "Its CKAN resource was removed." in flash
     assert ckan.packages == {} and _targets(_isolated_db)[0].resource_id is None
-    assert "it is unpublished, so it was taken out of CKAN" in client.get(_page(registry)).text
+    assert "its public address was removed, so it was taken out of CKAN" in client.get(_page(registry)).text
     flash = _flash(_publish(client, registry))
     assert "Its CKAN resource is back." in flash and len(ckan.packages) == 1
     (entry,) = ckan.packages.values()
