@@ -1,0 +1,39 @@
+name: One-off give ubuntu its shell back
+
+# Manual-only. `ubuntu` is a member of the group `sftpusers`, which the box's sshd (Match Group sftpusers) locks into a chrooted SFTP-only login, so it has no
+# shell on ports 22 and 7002. This removes it from that group (reversible: sudo gpasswd -a ubuntu sftpusers). sshd needs no restart: the group is
+# looked at at each login. It touches nothing else: emy_sftpuser and the other SFTP-only accounts keep the rule.
+on:
+  workflow_dispatch:
+
+jobs:
+  fix:
+    runs-on: [self-hosted, loader-ftp]
+    steps:
+      - name: Before
+        run: |
+          id ubuntu
+          echo "--- members of sftpusers ---"
+          getent group sftpusers
+          echo "--- what the group owns under /home and /srv (first 30) ---"
+          sudo -n find /home /srv -maxdepth 3 -group sftpusers 2>/dev/null | head -30 || true
+
+      - name: Remove ubuntu from sftpusers
+        run: |
+          if id -nG ubuntu | tr ' ' '\n' | grep -qx sftpusers; then
+            sudo -n gpasswd -d ubuntu sftpusers
+          else
+            echo "ubuntu is not in sftpusers: nothing to do"
+          fi
+
+      - name: After
+        run: |
+          id ubuntu
+          echo "--- members of sftpusers ---"
+          getent group sftpusers
+          for who in "ubuntu 22" "ubuntu 7002" "emy_sftpuser 22"; do
+            set -- $who
+            echo "--- effective for $1 on port $2 ---"
+            sudo -n sshd -T -C "user=$1,host=x,addr=127.0.0.1,laddr=127.0.0.1,lport=$2" | grep -iE '^(forcecommand|chrootdirectory) ' || true
+          done
+          echo "To undo: sudo gpasswd -a ubuntu sftpusers"
