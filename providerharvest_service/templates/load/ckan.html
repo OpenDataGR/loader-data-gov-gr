@@ -92,11 +92,18 @@
       <div id="org-results" class="pick-list" aria-live="polite"></div>
 
       <div id="section-dataset">
+      <label>Dataset</label>
+      <div class="segmented">
+        <span><input type="radio" id="dsmode-existing" name="dataset_mode" value="existing" checked><label for="dsmode-existing">An existing dataset</label></span>
+        <span><input type="radio" id="dsmode-new" name="dataset_mode" value="new"{% if creating and not loads %} {% endif %}><label for="dsmode-new">A new dataset</label></span>
+      </div>
+      <div id="existing-dataset">
       <label for="ds-q">Dataset <span class="req" style="color:var(--status-rejected);">*</span></label>
       <input type="hidden" id="dataset_id" name="dataset_id" value="{{ target.dataset_id if target else '' }}">
       <div id="ds-chosen" class="muted" style="margin:0.2rem 0;">{% if target %}Now: <strong>{{ target.dataset_title or target.dataset_name }}</strong>. Search to choose another.{% else %}Choose the organization first.{% endif %}</div>
       <input type="text" id="ds-q" placeholder="Search the datasets of the chosen organization (title or words)" autocomplete="off"{% if problem or not (target and target.organization_id) %} disabled{% endif %}>
       <div id="ds-results" class="pick-list" aria-live="polite"></div>
+      </div>
 
       <label for="resource_name">Resource name <span class="req" style="color:var(--status-rejected);">*</span></label>
       <input type="text" id="resource_name" name="resource_name" maxlength="200" value="{{ target.resource_name if target else default_name }}">
@@ -135,15 +142,18 @@
       </div>
 
       <div id="section-service" hidden>
-        <label for="svc_title">Name of the service <span class="req" style="color:var(--status-rejected);">*</span></label>
+        <p class="muted new-only" style="margin:0 0 0.6rem;">The dataset is created in the organization chosen above, with these details (remembered for the organization's next one), and this output becomes its first resource.</p>
+        <label for="svc_title"><span class="svc-word">Name of the service</span><span class="new-word" hidden>Title of the dataset</span> <span class="req" style="color:var(--status-rejected);">*</span></label>
         <input type="text" id="svc_title" name="svc_title" maxlength="200" value="{{ meta.title }}">
         <label for="svc_description">Description</label>
         <textarea id="svc_description" name="svc_description" rows="3">{{ meta.description }}</textarea>
+        <div class="svc-only">
         <label for="svc_endpoint_description">Endpoint description -- how to call it</label>
         <textarea id="svc_endpoint_description" name="svc_endpoint_description" rows="5">{{ meta.endpoint_description }}</textarea>
         <p class="muted" style="margin:0.2rem 0 0.6rem;">Written for you from the pipeline's request settings (method, parameters), its output and the per-caller limit. Edit it freely.</p>
+        </div>
         <div style="display:flex; gap:1.2rem; flex-wrap:wrap;">
-          <div><label>Format of the answer</label>
+          <div class="svc-only"><label>Format of the answer</label>
             <div style="padding:0.5rem 0.2rem;"><strong id="svc_format_label">{{ format_label }}</strong> <span class="muted" style="font-size:0.85rem;">-- set by the pipeline's output, not here. <a href="{{ output_url }}">Change it on the pipeline</a>.</span></div></div>
           <div><label for="svc_access_rights">Access rights</label>
             <select id="svc_access_rights" name="svc_access_rights">{% for code, text in vocab.ACCESS_RIGHTS %}<option value="{{ code }}"{% if meta.access_rights == code %} selected{% endif %}>{{ text }}</option>{% endfor %}</select></div>
@@ -174,14 +184,17 @@
             <select id="svc_publisher_type" name="svc_publisher_type">{% for code, text in vocab.PUBLISHER_TYPES %}<option value="{{ code }}"{% if meta.publisher_type == code %} selected{% endif %}>{{ text }}</option>{% endfor %}</select></div>
         </div>
 
+        <div class="svc-only">
         <label for="svc_documentation">Documentation (links, one per line)</label>
         <textarea id="svc_documentation" name="svc_documentation" rows="2">{{ meta.documentation|join("\n") }}</textarea>
         <label for="svc_landing_page">Landing page (links, one per line)</label>
         <textarea id="svc_landing_page" name="svc_landing_page" rows="2">{{ meta.landing_page|join("\n") }}</textarea>
         <label for="svc_rights">Rights statement</label>
         <input type="text" id="svc_rights" name="svc_rights" value="{{ meta.rights }}">
+        </div>
         <label for="svc_tags">Keywords (comma-separated)</label>
         <input type="text" id="svc_tags" name="svc_tags" value="{{ meta.tags|join(', ') }}">
+        <label class="check new-only" style="margin-top:0.8rem;"><input type="checkbox" name="new_public" value="1"> Make the new dataset public right away (otherwise it is private until someone makes it public in CKAN)</label>
       </div>
 
       <div style="margin-top:1.2rem;"><button type="submit"{% if problem %} disabled{% endif %}>{{ macros.icon("push", 16) }} {{ "Save and push" if target else "Connect and push" }}</button></div>
@@ -243,7 +256,7 @@
         dsQ.disabled = false;
         if (changed) { dsField.value = ''; dsQ.value = ''; dsChosen.textContent = 'Now choose the dataset.'; }
         searchDatasets();
-        loadedFor = null; if (typeof loadServiceDefaults === 'function' && currentMode() === 'service') loadServiceDefaults();
+        loadedFor = null; if (typeof loadServiceDefaults === 'function' && (currentMode() === 'service' || document.getElementById('dsmode-new').checked)) loadServiceDefaults();
       }
       orgQ.addEventListener('input', function () { loadOrganizations(); });
       orgQ.addEventListener('focus', loadOrganizations);
@@ -286,8 +299,14 @@
         var mode = currentMode();
         document.getElementById('note-link').hidden = mode !== 'link'; document.getElementById('note-upload').hidden = mode !== 'upload'; document.getElementById('note-service').hidden = mode !== 'service'; document.getElementById('note-datastore').hidden = mode !== 'datastore';
         document.getElementById('section-datastore').hidden = mode !== 'datastore'; refreshKeys();
-        document.getElementById('section-dataset').hidden = mode === 'service'; document.getElementById('section-service').hidden = mode !== 'service';
-        if (mode === 'service') loadServiceDefaults();
+        var fresh = mode !== 'service' && document.getElementById('dsmode-new').checked;
+        document.getElementById('section-dataset').hidden = mode === 'service'; document.getElementById('section-service').hidden = !(mode === 'service' || fresh);
+        document.getElementById('existing-dataset').hidden = fresh;
+        document.querySelectorAll('.svc-only').forEach(function (e) { e.hidden = fresh; });
+        document.querySelectorAll('.new-only').forEach(function (e) { e.hidden = !fresh; });
+        document.querySelectorAll('.svc-word').forEach(function (e) { e.hidden = fresh; });
+        document.querySelectorAll('.new-word').forEach(function (e) { e.hidden = !fresh; });
+        if (mode === 'service' || fresh) loadServiceDefaults();
       }
       var loadedFor = null;
       function loadServiceDefaults() {  // an organization's services start from what the last one chose (only for a service that is not connected yet)
@@ -312,7 +331,7 @@
       }
       function licenceBox() { var other = document.getElementById('svc_license').value === '__other__'; document.getElementById('svc_license_other').hidden = !other; }
       document.getElementById('svc_license').addEventListener('change', licenceBox);
-      document.querySelectorAll('input[name="mode"]').forEach(function (r) { r.addEventListener('change', modeNote); });
+      document.querySelectorAll('input[name="mode"], input[name="dataset_mode"]').forEach(function (r) { r.addEventListener('change', modeNote); });
       modeNote();
     })();
   </script>

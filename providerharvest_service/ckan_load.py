@@ -481,6 +481,49 @@ def service_payload(meta: dict, url: str, owner_org: str) -> dict:
     return payload
 
 
+#: CKAN's own licence ids for the licences the form offers (only "cc-by" is known from a script that creates datasets on the portal; the others are CKAN's
+#: standard ids, and a licence with none is left out so CKAN's default applies).
+LICENSE_IDS = {"CC_BY_4_0": "cc-by", "CC0": "cc-zero", "CC_BYSA_4_0": "cc-by-sa", "CC_BYNC_4_0": "cc-nc", "ODC_BY": "odc-by", "ODC_ODBL": "odc-odbl"}
+
+
+def dataset_payload(meta: dict, owner_org: str, name: str, public: bool = False) -> dict:
+    """A new CKAN dataset (data.gov.gr's DCAT-AP fields, in the shapes a working dataset-creating script of the portal uses): a single value for the
+    legislation, the high-value category and the access rights, lists for the theme, contact and publisher."""
+    payload = {
+        "name": name, "title": meta["title"], "notes": meta["description"], "owner_org": owner_org, "private": not public,
+        "tag_string": ",".join(meta["tags"]), "access_rights": ckan_vocab.uri("access_rights", meta["access_rights"]),
+        "theme": [ckan_vocab.uri("theme", t) for t in meta["themes"]],
+    }
+    if meta["legislation"]:
+        payload["applicable_legislation"] = meta["legislation"][0]
+    if meta["hvd_categories"]:
+        payload["hvd_category"] = ckan_vocab.uri("hvd_category", meta["hvd_categories"][0])
+    if LICENSE_IDS.get(meta["license"]):
+        payload["license_id"] = LICENSE_IDS[meta["license"]]
+    if meta["contact_name"] or meta["contact_email"]:
+        payload["contact"] = [{"name": meta["contact_name"], "email": meta["contact_email"], "uri": ""}]
+    if meta["publisher_name"]:
+        payload["publisher"] = [{"name": meta["publisher_name"], "uri": meta["publisher_identifier"] if _URL.match(meta["publisher_identifier"] or "") else ""}]
+    return payload
+
+
+def create_dataset(client, meta: dict, owner_org: str, source: ProviderSource, pipeline: Transform, public: bool = False) -> DatasetChoice:
+    """Create the dataset a new load puts its resource in. Its address comes from the source and pipeline name; a taken one gets the next free number."""
+    last: Exception | None = None
+    for name in service_slug_candidates(source, pipeline):
+        try:
+            created = _call(client, "package_create", dataset_payload(meta, owner_org, name, public))
+            return DatasetChoice(id=str(created["id"]), name=str(created.get("name") or name), title=meta["title"], organization="", owner_org=owner_org,
+                                 private=not public, state="active")
+        except ckan_client.CKANValidationError as exc:
+            if "already in use" not in str(exc).lower() and "url" not in str(exc).lower():
+                raise CkanLoadError(_explain(exc)) from exc
+            last = exc
+        except ckan_client.CKANActionError as exc:
+            raise CkanLoadError(_explain(exc)) from exc
+    raise CkanLoadError("CKAN says every address it could use for this dataset is taken (%s)." % last)
+
+
 def _push_service(target: CkanTarget, source: ProviderSource, pipeline: Transform, client, base_url) -> None:
     if not publishing.is_pipeline_published(pipeline):
         raise CkanLoadError("Publish the pipeline first: the data service would point at an address that does not answer.")

@@ -239,13 +239,14 @@ async def ckan_save(source_id: str, request: Request, pipeline: str = transform_
     if not organization_id:
         return _go(back, "Choose the organization first.", "error")
     meta = None
-    if mode == "service":
+    new_dataset = mode != "service" and str(form.get("dataset_mode") or "existing") == "new"
+    if mode == "service" or new_dataset:
         try:
             meta = ckan_load.normalise_meta(_meta_from_form(form))
         except ckan_load.CkanLoadError as exc:
-            return _go(back, str(exc), "error")
-    else:
-        if not dataset_id:
+            return _go(back, str(exc).replace("the service", "the dataset") if new_dataset else str(exc), "error")
+    if mode != "service":
+        if not dataset_id and not new_dataset:
             return _go(back, "Choose the dataset first (it is listed once the organization is chosen; click it).", "error")
         if not name:
             return _go(back, "Give the resource a name.", "error")
@@ -255,11 +256,16 @@ async def ckan_save(source_id: str, request: Request, pipeline: str = transform_
         organization = next((o for o in ckan_load.list_organizations(client, ident) if o.id == organization_id), None)
         if organization is None:
             return _go(back, "You may not add datasets to that organization.", "error")
-        dataset = ckan_load.get_dataset(client, dataset_id) if mode != "service" else None
+        dataset = ckan_load.get_dataset(client, dataset_id) if mode != "service" and not new_dataset else None
     except ckan_load.CkanLoadError as exc:
         return _go(back, str(exc), "error")
     if dataset is not None and dataset.owner_org != organization.id:
         return _go(back, "%s is not in %s." % (dataset.title, organization.title), "error")
+    if new_dataset:
+        try:
+            dataset = ckan_load.create_dataset(client, meta, organization.id, source, found, public=bool(form.get("new_public")))
+        except ckan_load.CkanLoadError as exc:
+            return _go(back, "The dataset could not be created: %s" % exc, "error")
     chosen = str(form.get("target_id") or "")
     target = None if adding else _target(session, found, chosen)
     if chosen and target is None:
@@ -296,14 +302,15 @@ async def ckan_save(source_id: str, request: Request, pipeline: str = transform_
                 if key in old:
                     datastore_cfg[key] = old[key]
             target.datastore_config = json.dumps(datastore_cfg, ensure_ascii=False)
-        label = "%s is now a resource of %s in CKAN." % (name, dataset.title)
+        label = "%s is now a resource of %s in CKAN." % (name, dataset.title) if not new_dataset else "%s was created in CKAN (%s) with %s as its resource." % (
+            dataset.title, "public" if form.get("new_public") else "private, until you make it public", name)
     target.ckan_user, target.connected_by = ident, _who(request)
     try:
         _push_now(session, hsession, target, source, found, ident)
     except ckan_load.CkanLoadError as exc:
         session.commit()  # the connection is kept, with the reason, so it can be fixed and pushed again
         return _go("%s?load=%s" % (back, target.id), "Saved, but not pushed: %s" % exc, "error")
-    if meta is not None:
+    if meta is not None:  # (a data service's details, or those of a dataset made now: the next one of this organization starts from them)
         ckan_load.save_defaults(session, organization.id, meta, _who(request))  # the next service of this organization starts from these
     session.commit()
     logger.info("ckan: %s connected %s / %s as %s (%s)", _who(request) or "?", source.name, found.name, mode, organization.title)
