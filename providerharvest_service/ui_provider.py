@@ -22,13 +22,14 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from providerharvest_service import build_info, ckan_load, connection_check, harvest_db, harvest_runner, nav, provider_sources, push_check, retention
+from providerharvest_service import build_info, ckan_load, connection_check, ftp_credentials, harvest_db, harvest_runner, nav, provider_sources, push_check, retention
 from providerharvest_service.db import get_session
 from providerharvest_service.models import LookupTable
 
 router = APIRouter(prefix="/provider", tags=["provider-ui"])
 templates = Jinja2Templates(directory="providerharvest_service/templates")
 templates.env.globals["build_info"] = build_info.get_build_info()
+templates.env.globals["min_password_length"] = ftp_credentials.MIN_CUSTOM_PASSWORD_LENGTH
 templates.env.globals["changelog"] = build_info.get_changelog()
 templates.env.globals["now"] = datetime.datetime.now
 templates.env.globals["pending_approvals"] = nav.pending_approvals

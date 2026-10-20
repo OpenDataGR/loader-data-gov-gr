@@ -57,7 +57,16 @@ def generate_password() -> str:
     return secrets.token_urlsafe(24)
 
 
-MIN_CUSTOM_PASSWORD_LENGTH = 12
+def _minimum() -> int:
+    """The shortest password somebody may choose for a push account. TEMPORARILY 6 (a provider's existing password has 7 characters and is to be changed
+    in a few days); it was 12 and goes back to 12 -- set LOADER_MIN_PASSWORD_LENGTH on the VM, or change the default here. Never below 6."""
+    try:
+        return max(6, int(os.environ.get("LOADER_MIN_PASSWORD_LENGTH") or 6))
+    except ValueError:
+        return 6
+
+
+MIN_CUSTOM_PASSWORD_LENGTH = _minimum()
 # bcrypt only reads the first 72 bytes of a password: anything longer is cut off
 # (or, in newer versions, refused), so a longer one would be a password that
 # "works" with any ending. Refuse it up front instead.

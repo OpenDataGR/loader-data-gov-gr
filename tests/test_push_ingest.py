@@ -567,7 +567,7 @@ def test_an_ftp_push_source_limits_its_account_to_the_listed_senders(client, _is
 
 
 def test_a_chosen_ftp_password_follows_the_same_rules_as_a_set_one(client, _isolated_db):
-    for password, message in (("tiny-pw-7", "at least 12"), ("x" * 80, "at most 72"), ("é" * 40, "at most 72")):
+    for password, message in (("tiny", "at least 6"), ("x" * 80, "at most 72"), ("é" * 40, "at most 72")):
         resp = _register_ftp(client, push_ftp_password=password)
         assert resp.status_code == 400 and message in resp.text and password not in resp.text
     assert _register_ftp(client, push_ftp_password="a perfectly fine password").status_code == 200

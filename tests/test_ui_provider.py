@@ -471,7 +471,7 @@ def test_a_password_the_provider_chose_is_never_echoed_back(client):
 def test_a_rejected_ftp_push_registration_never_echoes_the_typed_password(client):
     resp = client.post("/provider/sources/new", data=_ftp_push_form(push_ftp_password="short"))
     assert resp.status_code == 400
-    assert "at least 12 characters" in resp.text
+    assert "at least 6 characters" in resp.text
     assert 'value="short"' not in resp.text
     assert "acme-push" in resp.text  # everything else that was typed is kept
 

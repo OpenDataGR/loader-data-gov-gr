@@ -429,7 +429,7 @@
                      value="{{ data.get('push_ftp_username', '') }}">
               {% if errors.push_ftp_username %}<div class="error">{{ errors.push_ftp_username }}</div>{% endif %}
 
-              <label for="push_ftp_password">Password (optional -- at least 12 characters; leave blank to generate one)</label>
+              <label for="push_ftp_password">Password (optional -- at least {{ min_password_length }} characters; leave blank to generate one)</label>
               <input type="password" id="push_ftp_password" name="push_ftp_password" autocomplete="new-password">
               {% if errors.push_ftp_password %}<div class="error">{{ errors.push_ftp_password }}</div>{% endif %}
             {% endif %}

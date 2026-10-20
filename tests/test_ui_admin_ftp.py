@@ -369,7 +369,7 @@ def test_the_typed_password_never_appears_in_a_redirect_or_a_page(client, _isola
 
 @pytest.mark.parametrize("password, confirm, message", [
     ("a-good-password-1", "a-good-password-2", "do not match"),
-    ("short", None, "at least 12"),
+    ("tiny", None, "at least 6"),
     ("x" * 73, None, "at most 72"),
     ("é" * 40, None, "at most 72"),  # 40 characters but 80 bytes
     ("fine-password-with-\x07-bell", None, "control characters"),

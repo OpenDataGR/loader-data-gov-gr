@@ -43,7 +43,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from providerharvest_service import admin_session, box_commands, box_history, build_info, http_box, nav
+from providerharvest_service import admin_session, box_commands, box_history, build_info, ftp_credentials, http_box, nav
 from providerharvest_service.admin_ftp import generate_password, hash_password, normalize_allowed_cidr
 from providerharvest_service.ftp_credentials import password_problem
 from providerharvest_service.db import get_session
@@ -52,6 +52,7 @@ from providerharvest_service.models import FtpAccount, FtpAllowedIp, FtpBoxStatu
 router = APIRouter(prefix="/admin/ftp", tags=["ftp-ui"])
 templates = Jinja2Templates(directory="providerharvest_service/templates")
 templates.env.globals["build_info"] = build_info.get_build_info()
+templates.env.globals["min_password_length"] = ftp_credentials.MIN_CUSTOM_PASSWORD_LENGTH
 templates.env.globals["changelog"] = build_info.get_changelog()
 templates.env.globals["now"] = datetime.datetime.now
 templates.env.globals["pending_approvals"] = nav.pending_approvals
