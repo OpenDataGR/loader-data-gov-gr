@@ -1,0 +1,51 @@
+name: One-off FTP box recon (read-only)
+
+# Manual-only and read-only: looks at the FTP box (who the runner is, whether it has sudo, what listens where, the firewall, and the SSH settings
+# that make a login SFTP-only). Changes nothing and prints no keys or passwords. Deleted again once its output has been read.
+on:
+  workflow_dispatch:
+
+jobs:
+  recon:
+    runs-on: [self-hosted, loader-ftp]
+    steps:
+      - name: Who the runner is, and whether sudo needs a password
+        run: |
+          whoami; id
+          if sudo -n true 2>/dev/null; then echo "sudo: works without a password"; else echo "sudo: NEEDS A PASSWORD (or is not allowed)"; fi
+          hostname; uptime
+
+      - name: What listens on 21 / 22 / 2222 / 7002
+        run: sudo -n ss -tlnp | grep -E ':(21|22|2222|7002)\b' || echo "none of them listening?"
+
+      - name: Firewall (read-only)
+        run: |
+          echo "--- nat PREROUTING ---"
+          sudo -n iptables -t nat -S PREROUTING || true
+          echo "--- INPUT (first 40) ---"
+          sudo -n iptables -S INPUT | head -40 || true
+
+      - name: SSH settings
+        run: |
+          echo "--- global ---"
+          sudo -n sshd -T | grep -iE '^(port|listenaddress|permitrootlogin|passwordauthentication|pubkeyauthentication|forcecommand|subsystem|allowusers|allowgroups|denyusers|denygroups|chrootdirectory|usepam|authorizedkeysfile) ' || true
+          for who in "ubuntu 7002" "ubuntu 22" "emy_sftpuser 22"; do
+            set -- $who
+            echo "--- effective for user $1 on port $2 ---"
+            sudo -n sshd -T -C "user=$1,host=x,addr=127.0.0.1,laddr=127.0.0.1,lport=$2" | grep -iE '^(forcecommand|chrootdirectory|permittty|allowtcpforwarding|authenticationmethods|passwordauthentication|pubkeyauthentication) ' || true
+          done
+          echo "--- Match blocks in the files ---"
+          sudo -n grep -n -i -A8 '^[[:space:]]*Match' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null || echo "no Match blocks"
+          echo "--- sshd_config.d ---"
+          ls -l /etc/ssh/sshd_config.d 2>/dev/null || true
+
+      - name: Accounts that could log in with a shell
+        run: |
+          getent passwd | awk -F: '$3>=1000 && $7 !~ /nologin|false/ {print $1" uid="$3" shell="$7}'
+          echo "--- sudo group ---"
+          getent group sudo || true
+
+      - name: fail2ban
+        run: |
+          sudo -n fail2ban-client status || true
+          sudo -n fail2ban-client status sshd || true
