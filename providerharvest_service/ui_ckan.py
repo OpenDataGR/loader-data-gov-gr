@@ -102,7 +102,7 @@ def _meta_from_form(form) -> dict:
     if licence == "__other__":
         licence = str(form.get("svc_license_other") or "").strip()
     return {
-        "public": str(form.get("svc_public") or "") == "public", "title": form.get("svc_title"), "description": form.get("svc_description"), "endpoint_description": form.get("svc_endpoint_description"),
+        "public": str(form.get("svc_public") or "") == "public", "include_docs": "svc_docs_sent" not in form or str(form.get("svc_docs") or "") == "1", "title": form.get("svc_title"), "description": form.get("svc_description"), "endpoint_description": form.get("svc_endpoint_description"),
         "license": licence, "access_rights": form.get("svc_access_rights"), "themes": many("svc_themes"),
         "legislation": many("svc_legislation") + _lines(form.get("svc_legislation_other")), "hvd_categories": many("svc_hvd"),
         "contact_name": form.get("svc_contact_name"), "contact_email": form.get("svc_contact_email"), "publisher_name": form.get("svc_publisher_name"),

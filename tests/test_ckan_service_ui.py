@@ -268,4 +268,13 @@ def test_a_data_service_can_be_created_public_and_a_later_push_leaves_its_visibi
 
 def test_the_form_shows_the_documentation_link_that_will_be_added(client, registry, ckan):
     page = client.get(_page(registry)).text
-    assert "Added automatically:" in page and BASE + "/api-docs/opencar-data" in page
+    assert 'name="svc_docs"' in page and BASE + "/api-docs/opencar-data" in page and "checked" in page.split('name="svc_docs"')[1][:40]
+
+
+def test_the_documentation_link_can_be_left_out_and_the_choice_is_kept(client, registry, ckan):
+    _service(client, registry, svc_docs_sent="1")  # (the box is not ticked: a browser sends nothing for it)
+    assert ckan.packages["svc1"]["documentation"] == ["https://docs.example.gr/a", "https://docs.example.gr/b"]
+    page = client.get(_page(registry)).text
+    assert "checked" not in page.split('name="svc_docs"')[1][:40]
+    _service(client, registry, svc_docs_sent="1", svc_docs="1")
+    assert BASE + "/api-docs/opencar-data" in ckan.packages["svc1"]["documentation"]

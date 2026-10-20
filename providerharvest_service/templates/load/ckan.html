@@ -199,7 +199,8 @@
         <div class="svc-only">
         <label for="svc_documentation">Documentation (links, one per line; the loader's own API documentation of the address is added for you)</label>
         <textarea id="svc_documentation" name="svc_documentation" rows="2">{{ meta.documentation|join("\n") }}</textarea>
-        <p class="muted" style="margin:0.2rem 0 0.6rem;">Added automatically: <a href="{{ docs_url }}" target="_blank" rel="noopener"><code>{{ docs_url }}</code></a> -- the API documentation of the public address (it exists once the address is public, which saving adds).</p>
+        <input type="hidden" name="svc_docs_sent" value="1">
+        <label class="check" style="margin:0.3rem 0 0.6rem;"><input type="checkbox" name="svc_docs" value="1"{% if meta.include_docs %} checked{% endif %}> Also list the loader's API documentation of the public address: <a href="{{ docs_url }}" target="_blank" rel="noopener"><code>{{ docs_url }}</code></a></label>
         <label for="svc_landing_page">Landing page (links, one per line)</label>
         <textarea id="svc_landing_page" name="svc_landing_page" rows="2">{{ meta.landing_page|join("\n") }}</textarea>
         <label for="svc_rights">Rights statement</label>

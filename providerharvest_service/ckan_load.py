@@ -392,7 +392,7 @@ def remove(target: CkanTarget, client: ckan_client.CKANActionClient) -> bool:
 DEFAULT_KEYS = ("tags", "access_rights", "license", "themes", "legislation", "hvd_categories", "contact_name", "contact_email", "publisher_name",
                 "publisher_email", "publisher_identifier", "publisher_type", "documentation", "landing_page", "rights")
 META_DEFAULTS = {
-    "title": "", "description": "", "endpoint_description": "", "public": False, "tags": ["API"], "access_rights": "PUBLIC", "license": "CC_BY_4_0", "format": "JSON", "themes": [],
+    "title": "", "description": "", "endpoint_description": "", "public": False, "include_docs": True, "tags": ["API"], "access_rights": "PUBLIC", "license": "CC_BY_4_0", "format": "JSON", "themes": [],
     "legislation": [ckan_vocab.LEGISLATION[0][0]], "hvd_categories": [], "contact_name": "", "contact_email": "", "publisher_name": "", "publisher_email": "",
     "publisher_identifier": "", "publisher_type": "NationalAuthority", "documentation": [], "landing_page": [], "rights": "",
 }
@@ -411,6 +411,7 @@ def normalise_meta(raw: dict) -> dict:
     """The details of a data service, checked and cleaned. Raises ``CkanLoadError`` with a sentence for the person."""
     meta = dict(META_DEFAULTS)
     meta.update({k: v for k, v in (raw or {}).items() if k in META_DEFAULTS})
+    meta["include_docs"] = meta["include_docs"] is not False and str(meta["include_docs"]).lower() not in ("0", "false", "no")
     meta["public"] = meta["public"] is True or str(meta["public"]).lower() in ("1", "true", "public")  # (only when it is made: an existing entry keeps its own)
     meta["title"] = str(meta["title"] or "").strip()
     if not meta["title"]:
@@ -565,7 +566,7 @@ def _push_service(target: CkanTarget, source: ProviderSource, pipeline: Transfor
     from providerharvest_service import api_docs  # (late: it reads the same tables)
 
     docs_url = (base_url if base_url is not None else public_base_url()) + api_docs.docs_path(source, pipeline)
-    if docs_url not in payload["documentation"]:  # the loader's own API documentation of the endpoint always goes with the service
+    if meta.get("include_docs", True) and docs_url not in payload["documentation"]:  # the loader's own API documentation of the endpoint goes with the service, unless left out
         payload["documentation"] = list(payload["documentation"]) + [docs_url]
     try:
         if target.resource_id:
