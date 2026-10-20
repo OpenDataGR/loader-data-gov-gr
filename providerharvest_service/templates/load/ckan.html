@@ -57,6 +57,16 @@
           {% elif target.last_status == "error" %}<span class="badge badge-error">{{ macros.icon("rejected", 13) }}<span>failed</span></span> <span class="muted">{{ target.last_error }}</span>
           {% else %}<span class="badge badge-pending"><span>not in CKAN</span></span> <span class="muted">{% if not published and target.mode in ("link", "service") %}its public address was removed, so it was taken out of CKAN; add the public address again and push{% else %}not pushed yet{% endif %}</span>{% endif %}
         </div>
+        {% if private is not none and target.resource_id %}
+        <div style="margin-top:0.5rem; display:flex; gap:0.6rem; align-items:center;">
+          {% if private %}<span class="badge badge-pending"><span>private</span></span> <span class="muted">only the organization's members can see {{ "this data service" if target.mode == "service" else "the dataset" }} in CKAN.</span>
+          {% else %}<span class="badge badge-ok"><span>public</span></span> <span class="muted">anyone can see {{ "this data service" if target.mode == "service" else "the dataset" }} in CKAN.</span>{% endif %}
+          <form method="post" action="{{ base }}/ckan/visibility" style="margin:0;"{% if not private %} onsubmit="return confirm('Make {{ "this data service" if target.mode == "service" else "the whole dataset" }} private? It disappears for everyone outside the organization.');"{% endif %}>
+            <input type="hidden" name="target_id" value="{{ target.id }}"><input type="hidden" name="private" value="{{ '0' if private else '1' }}">
+            <button type="submit" class="btn-secondary btn-sm"{% if problem %} disabled{% endif %}>{{ "Make public" if private else "Make private" }}</button>
+          </form>
+        </div>
+        {% endif %}
         <div style="display:flex; gap:0.5rem; margin-top:0.7rem;">
           <form method="post" action="{{ base }}/ckan/push" style="margin:0;"><input type="hidden" name="target_id" value="{{ target.id }}"><button type="submit" class="btn-sm"{% if problem %} disabled{% endif %}>{{ macros.icon("push", 14) }} Push now</button></form>
           <form method="post" action="{{ base }}/ckan/disconnect" style="margin:0;" onsubmit="return confirm('Remove this from CKAN and delete this output?');"><input type="hidden" name="target_id" value="{{ target.id }}"><button type="submit" class="btn-secondary btn-sm"{% if problem %} disabled{% endif %}>{{ macros.icon("trash", 14) }} Disconnect</button></form>

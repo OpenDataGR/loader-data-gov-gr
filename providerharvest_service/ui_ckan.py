@@ -174,6 +174,12 @@ def ckan_page(source_id: str, request: Request, pipeline: str = transform_runner
         meta = ckan_load.get_defaults(session, target.organization_id) if target is not None and target.organization_id else dict(ckan_load.META_DEFAULTS)
         meta["title"] = default_name
         meta["endpoint_description"] = ckan_load.describe_endpoint(source, found, ckan_load.link_url(source, found, base))
+    private = None
+    if target is not None and not _problem_with_identity(request):
+        try:
+            private = ckan_load.is_private(ckan_load.user_client(session, _identity(request)), target)
+        except ckan_load.CkanLoadError:
+            private = None
     format_code = ckan_load.service_format(source, found)
     meta["format"] = format_code
     mode = target.mode if target is not None else ("service" if source.transport_type == "http" else "link")
@@ -183,7 +189,7 @@ def ckan_page(source_id: str, request: Request, pipeline: str = transform_runner
         "source": source, "pipeline": found, "target": target, "base": _base(source_id, pipeline), "problem": _problem_with_identity(request),
         "link": ckan_load.link_url(source, found, base), "has_public_base": bool(base), "published": publishing.is_pipeline_published(found),
         "is_http": source.transport_type == "http", "newest": newest, "modes": ckan_load.MODES, "mode": mode, "loads": loads, "mode_text": MODE_TEXT,
-        "datastore_cfg": datastore_cfg, "columns": ckan_datastore.columns_of(newest), "creating": wanted == "new", "retention_choices": ckan_datastore.RETENTION_CHOICES,
+        "private": private, "datastore_cfg": datastore_cfg, "columns": ckan_datastore.columns_of(newest), "creating": wanted == "new", "retention_choices": ckan_datastore.RETENTION_CHOICES,
         "default_name": default_name, "meta": meta, "known_license": known_license, "vocab": ckan_vocab,
         "format_label": dict(ckan_vocab.FORMATS)[format_code], "output_url": "%s/steps/output" % _transform_base(source_id, pipeline),
         "legislation_known": [u for u in meta.get("legislation", []) if any(u == k for k, _ in ckan_vocab.LEGISLATION)],
@@ -346,6 +352,30 @@ async def ckan_push(source_id: str, request: Request, pipeline: str = transform_
         return _go(back, str(exc), "error")
     session.commit()
     return _go(back, "Pushed to CKAN.")
+
+
+@router.post("/sources/{source_id}/ckan/visibility")
+@router.post("/sources/{source_id}/pipelines/{pipeline}/ckan/visibility")
+async def ckan_visibility(source_id: str, request: Request, pipeline: str = transform_runner.DEFAULT_PIPELINE, session: Session = Depends(get_session)):
+    """Make the dataset (or data service) of one output public, or private again -- as the signed-in person, so CKAN's own permissions decide."""
+    source, found = _found(session, source_id, pipeline)
+    back = _base(source_id, pipeline) + "/ckan"
+    form = await request.form()
+    target = _target(session, found, str(form.get("target_id") or ""))
+    if source is None or found is None or target is None:
+        return _go(back, "This pipeline is not connected to CKAN.", "error")
+    back = "%s?load=%s" % (back, target.id)
+    problem = _problem_with_identity(request)
+    if problem:
+        return _go(back, problem, "error")
+    private = str(form.get("private") or "") == "1"
+    try:
+        ckan_load.set_private(ckan_load.user_client(session, _identity(request)), target, private)
+    except ckan_load.CkanLoadError as exc:
+        return _go(back, "The visibility could not be changed: %s" % exc, "error")
+    logger.info("ckan: %s made %s / %s %s", _who(request) or "?", source.name, found.name, "private" if private else "public")
+    return _go(back, "%s is now %s in CKAN." % (target.dataset_title or target.dataset_name or "It", "private (only the organization's members can see it)" if private
+                                                else "public (anyone can see it)"))
 
 
 @router.post("/sources/{source_id}/ckan/disconnect")

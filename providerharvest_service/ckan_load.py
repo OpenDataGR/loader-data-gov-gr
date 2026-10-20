@@ -347,6 +347,29 @@ def _write_table(client, rid: str, cfg: dict, fields: list[dict], records: list[
         _call(client, "datastore_upsert", {"resource_id": rid, "force": True, "method": method, "records": batch})
 
 
+def is_private(client: ckan_client.CKANActionClient, target: CkanTarget) -> bool | None:
+    """Is the output's dataset (for a data service, the entry itself) private in CKAN right now? None when CKAN cannot say."""
+    ident = target.resource_id if target.mode == "service" else target.dataset_id
+    if not ident:
+        return None
+    try:
+        return bool(_read(client, "package_show", {"id": ident}).get("private"))
+    except (ckan_client.CKANActionError, AttributeError):
+        return None
+
+
+def set_private(client: ckan_client.CKANActionClient, target: CkanTarget, private: bool) -> None:
+    """Make the output's dataset (or data service) private or public. CKAN's own permissions decide whether the person may; the whole dataset changes
+    visibility, not just this output's resource."""
+    ident = target.resource_id if target.mode == "service" else target.dataset_id
+    if not ident:
+        raise CkanLoadError("There is nothing in CKAN to change yet: push the output first.")
+    try:
+        _call(client, "package_patch", {"id": ident, "private": private})
+    except ckan_client.CKANActionError as exc:
+        raise CkanLoadError(_explain(exc)) from exc
+
+
 def remove(target: CkanTarget, client: ckan_client.CKANActionClient) -> bool:
     """Delete the pipeline's resource (or, for a data service, the entry) from CKAN. True when there was one (and it is gone now); one CKAN no
     longer has counts as gone."""
