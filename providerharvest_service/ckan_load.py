@@ -562,6 +562,11 @@ def _push_service(target: CkanTarget, source: ProviderSource, pipeline: Transfor
         raise CkanLoadError("The details of the service are unreadable: %s" % exc) from exc
     meta["format"] = service_format(source, pipeline)  # (whatever the form held: the pipeline decides)
     payload = service_payload(meta, url, target.organization_id)
+    from providerharvest_service import api_docs  # (late: it reads the same tables)
+
+    docs_url = (base_url if base_url is not None else public_base_url()) + api_docs.docs_path(source, pipeline)
+    if docs_url not in payload["documentation"]:  # the loader's own API documentation of the endpoint always goes with the service
+        payload["documentation"] = list(payload["documentation"]) + [docs_url]
     try:
         if target.resource_id:
             try:

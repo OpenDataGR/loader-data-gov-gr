@@ -61,6 +61,7 @@ DEFAULT_TTL_S = 12 * 60 * 60  # 12h: long enough for a work session, short enoug
 #   /admin/harvest-db/health    ops check, X-Admin-Key
 #   /me                         Keycloak bearer token
 #   /auth/*                     the Keycloak login itself (start + callback)
+#   /api-docs/*                 the documentation of such an address (Swagger page and OpenAPI file), public for the same reason
 #   /data/*                     a published source's newest output (the Load
 #                               Box's API) -- public, only once switched on
 #                               (a deprecated alias) -- public by design; gating
@@ -72,7 +73,7 @@ _EXEMPT_PATHS = frozenset({
     "/admin/ftp-accounts-sync", "/admin/ftp-box-status", "/admin/ftp-login-attempts",
     "/admin/harvest-db/health",
 })
-_EXEMPT_PREFIXES = ("/push", "/data", "/auth", "/admin/ftp-accounts", "/admin/ftp-relay")
+_EXEMPT_PREFIXES = ("/push", "/data", "/api-docs", "/auth", "/admin/ftp-accounts", "/admin/ftp-relay")
 
 
 class SessionConfigError(RuntimeError):

@@ -73,7 +73,7 @@ def test_what_ckan_refuses_is_told_and_nothing_changes(client, source, ckan, _is
 
 def test_nothing_is_offered_before_the_first_push_or_when_ckan_cannot_say(client, source, ckan, _isolated_db):
     _ready(client, source)
-    assert "visibility" not in client.get(_page(source["id"])).text  # no output yet
+    assert 'ckan/visibility"' not in client.get(_page(source["id"])).text  # no output yet
     unpushed = _target("service")  # (a data service is the entry itself: until it is pushed there is nothing in CKAN)
     with pytest.raises(ckan_load.CkanLoadError, match="push the output first"):
         ckan_load.set_private(ckan, unpushed, False)

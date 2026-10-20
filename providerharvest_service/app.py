@@ -34,6 +34,7 @@ from providerharvest_service.db import get_session
 from providerharvest_service.failed_auth import FailedAuthMiddleware
 from providerharvest_service.ftp_relay_ingest import router as ftp_relay_ingest_router
 from providerharvest_service.load_api import router as load_api_router
+from providerharvest_service.api_docs import router as api_docs_router
 from providerharvest_service.ui_load import router as load_ui_router
 from providerharvest_service.ui_ckan import router as ckan_ui_router
 from providerharvest_service.ui_overview import router as overview_ui_router
@@ -89,6 +90,7 @@ app.include_router(admin_failed_logins_ui_router)
 app.include_router(admin_login_ui_router)
 app.include_router(oidc_login_router)
 app.include_router(load_api_router)
+app.include_router(api_docs_router)
 app.include_router(load_ui_router)
 app.include_router(ckan_ui_router)
 app.include_router(overview_ui_router)

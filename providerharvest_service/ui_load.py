@@ -16,7 +16,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from providerharvest_service import admin_session, build_info, ckan_load, harvest_db, load_api, nav, provider_sources, publishing, request_template, transform_forms as tf, transform_runner
+from providerharvest_service import admin_session, api_docs, build_info, ckan_load, harvest_db, load_api, nav, provider_sources, publishing, request_template, transform_forms as tf, transform_runner
 from providerharvest_service.db import get_session
 from providerharvest_service.models import CkanTarget, ProviderSource, Transform
 
@@ -75,7 +75,7 @@ def overview(request: Request, session: Session = Depends(get_session), hsession
             rows.append({
                 "source": source, "pipeline": pipeline, "published": publishing.is_pipeline_published(pipeline),
                 "latest": load_api.latest_output(hsession, source.id, pipeline.id) if pipeline is not None and source.transport_type != "http" else None,
-                "path": path, "url": base + path, "api": _api_of(source, base, pipeline), "loads": targets.get(pipeline.id, []) if pipeline is not None else [],
+                "path": path, "docs": api_docs.docs_path(source, pipeline) if pipeline is not None else "", "url": base + path, "api": _api_of(source, base, pipeline), "loads": targets.get(pipeline.id, []) if pipeline is not None else [],
                 "base": ("/load/sources/%s" % source.id) + ("" if pipeline is None or pipeline.name == transform_runner.DEFAULT_PIPELINE else "/pipelines/%s" % pipeline.name),
             })
     return templates.TemplateResponse(request, "load/overview.html", {

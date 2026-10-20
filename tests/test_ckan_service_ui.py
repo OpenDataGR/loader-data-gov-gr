@@ -77,7 +77,7 @@ def test_saving_as_a_service_creates_the_data_service_entry_in_the_organization(
     assert data["type"] == "data-service" and data["owner_org"] == "org1" and data["name"] == "opencar-data" and data["endpoint_url"] == [BASE + "/data/opencar-data"]
     assert data["theme"] == ["http://publications.europa.eu/resource/authority/data-theme/TRAN", "http://publications.europa.eu/resource/authority/data-theme/GOVE"]
     assert data["applicable_legislation"] == ["https://eur-lex.europa.eu/eli/dir/2019/1024/oj/eng", "Law 1234"]
-    assert data["documentation"] == ["https://docs.example.gr/a", "https://docs.example.gr/b"] and data["tags"] == [{"name": "API"}, {"name": "vehicles"}]
+    assert data["documentation"] == ["https://docs.example.gr/a", "https://docs.example.gr/b", BASE + "/api-docs/opencar-data"] and data["tags"] == [{"name": "API"}, {"name": "vehicles"}]  # (the loader adds its own API documentation)
     (target,) = _targets(_isolated_db)
     assert (target.mode, target.organization_id, target.resource_id, target.last_status, target.dataset_title) == ("service", "org1", "svc1", "ok", "Opencar vehicle lookup")
     assert json.loads(target.service_meta)["contact_email"] == "ops@example.gr"

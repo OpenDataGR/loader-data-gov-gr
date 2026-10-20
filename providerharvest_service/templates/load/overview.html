@@ -45,7 +45,7 @@
                   <div>
                     {% if r.source.status == "active" %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>published</span></span>
                     {% else %}<span class="badge badge-pending"><span>published, not live ({{ r.source.status }})</span></span>{% endif %}
-                    <span class="muted">public address</span>
+                    <span class="muted">public address</span> <a href="{{ r.docs }}" target="_blank" rel="noopener">API docs</a>
                     <div>
                     {% if r.api %}
                       {% if r.api.method == "POST" or r.api.turned %}<span class="muted">{{ r.api.method }}</span> <code>{{ r.api.url }}</code>
