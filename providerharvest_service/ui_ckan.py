@@ -102,7 +102,7 @@ def _meta_from_form(form) -> dict:
     if licence == "__other__":
         licence = str(form.get("svc_license_other") or "").strip()
     return {
-        "title": form.get("svc_title"), "description": form.get("svc_description"), "endpoint_description": form.get("svc_endpoint_description"),
+        "public": str(form.get("svc_public") or "") == "public", "title": form.get("svc_title"), "description": form.get("svc_description"), "endpoint_description": form.get("svc_endpoint_description"),
         "license": licence, "access_rights": form.get("svc_access_rights"), "themes": many("svc_themes"),
         "legislation": many("svc_legislation") + _lines(form.get("svc_legislation_other")), "hvd_categories": many("svc_hvd"),
         "contact_name": form.get("svc_contact_name"), "contact_email": form.get("svc_contact_email"), "publisher_name": form.get("svc_publisher_name"),
@@ -269,7 +269,7 @@ async def ckan_save(source_id: str, request: Request, pipeline: str = transform_
         return _go(back, "%s is not in %s." % (dataset.title, organization.title), "error")
     if new_dataset:
         try:
-            dataset = ckan_load.create_dataset(client, meta, organization.id, source, found, public=bool(form.get("new_public")))
+            dataset = ckan_load.create_dataset(client, meta, organization.id, source, found, public=meta["public"])
         except ckan_load.CkanLoadError as exc:
             return _go(back, "The dataset could not be created: %s" % exc, "error")
     chosen = str(form.get("target_id") or "")
@@ -293,7 +293,7 @@ async def ckan_save(source_id: str, request: Request, pipeline: str = transform_
         target.service_meta = json.dumps(meta, ensure_ascii=False)
         target.resource_name, target.description = meta["title"], ""
         target.dataset_title = meta["title"]
-        label = "%s is now a data service in CKAN." % meta["title"]
+        label = "%s is now a data service in CKAN%s." % (meta["title"], "" if target.resource_id else " (%s)" % ("public" if meta["public"] else "private, until you make it public"))
     else:
         target.dataset_id, target.dataset_name, target.dataset_title = dataset.id, dataset.name, dataset.title
         target.resource_name, target.description = name, str(form.get("description") or "").strip()[:1000]
@@ -309,7 +309,7 @@ async def ckan_save(source_id: str, request: Request, pipeline: str = transform_
                     datastore_cfg[key] = old[key]
             target.datastore_config = json.dumps(datastore_cfg, ensure_ascii=False)
         label = "%s is now a resource of %s in CKAN." % (name, dataset.title) if not new_dataset else "%s was created in CKAN (%s) with %s as its resource." % (
-            dataset.title, "public" if form.get("new_public") else "private, until you make it public", name)
+            dataset.title, "public" if meta["public"] else "private, until you make it public", name)
     target.ckan_user, target.connected_by = ident, _who(request)
     address_note = ""
     if mode in ("link", "service"):  # (they point at the pipeline's public address: it is added with them)

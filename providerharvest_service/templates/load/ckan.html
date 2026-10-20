@@ -206,7 +206,13 @@
         </div>
         <label for="svc_tags">Keywords (comma-separated)</label>
         <input type="text" id="svc_tags" name="svc_tags" value="{{ meta.tags|join(', ') }}">
-        <div class="new-only" style="margin-top:0.8rem;"><label class="check"><input type="checkbox" name="new_public" value="1"> Make the new dataset public right away (otherwise it is private until someone makes it public in CKAN)</label></div>
+        {% if not (target and target.resource_id) %}
+        <label for="svc_public" style="margin-top:0.8rem;">Who can see it in CKAN</label>
+        <select id="svc_public" name="svc_public">
+          <option value="private"{% if not meta.public %} selected{% endif %}>Private -- only the organization's members, until it is made public (here or in CKAN)</option>
+          <option value="public"{% if meta.public %} selected{% endif %}>Public -- anyone, right away</option>
+        </select>
+        {% endif %}
       </div>
 
       <div style="margin-top:1.2rem;"><button type="submit"{% if problem %} disabled{% endif %}>{{ macros.icon("push", 16) }} {{ "Save and push" if target else "Connect and push" }}</button></div>

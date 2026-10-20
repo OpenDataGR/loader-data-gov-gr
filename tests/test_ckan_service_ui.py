@@ -72,7 +72,7 @@ def test_the_page_script_shows_the_part_that_belongs_to_the_choice_and_loads_the
 
 def test_saving_as_a_service_creates_the_data_service_entry_in_the_organization(client, registry, ckan, _isolated_db):
     resp = _service(client, registry)
-    assert "Opencar vehicle lookup is now a data service in CKAN." in _flash(resp)
+    assert "Opencar vehicle lookup is now a data service in CKAN (private, until you make it public)." in _flash(resp)
     (action, data, files), = [c for c in ckan.calls if c[0] == "package_create"]
     assert data["type"] == "data-service" and data["owner_org"] == "org1" and data["name"] == "opencar-data" and data["endpoint_url"] == [BASE + "/data/opencar-data"]
     assert data["theme"] == ["http://publications.europa.eu/resource/authority/data-theme/TRAN", "http://publications.europa.eu/resource/authority/data-theme/GOVE"]
@@ -104,7 +104,7 @@ def test_a_data_service_adds_the_public_address_it_describes(client, source, cka
     _http = _http_source(_isolated_db, "feed", post=True, published=False)
     client.post("/transform/sources/%s/create" % _http, follow_redirects=False)  # it has a pipeline, but nothing is published
     resp = _service(client, _http)
-    assert "is now a data service in CKAN. The public address /data/feed was added too." in _flash(resp)
+    assert "is now a data service in CKAN (private, until you make it public). The public address /data/feed was added too." in _flash(resp)
     assert ckan.packages["svc1"]["endpoint_url"] == [BASE + "/data/feed"]
     assert "Remove</button>" in client.get("/load").text  # the address is now an output of its own
 
@@ -256,3 +256,11 @@ def test_a_resource_connection_is_not_touched_by_a_change_of_the_output(client, 
     ckan.calls.clear()
     flash = _flash(_go(client, source, "output", data={"format": "csv", "delimiter": ","}))
     assert "CKAN" not in flash and ckan.calls == []
+
+
+def test_a_data_service_can_be_created_public_and_a_later_push_leaves_its_visibility_alone(client, registry, ckan):
+    _service(client, registry, svc_public="public")
+    assert ckan.packages["svc1"]["private"] is False
+    ckan.packages["svc1"]["private"] = True  # (someone made it private in CKAN, or on its page)
+    client.post(_page(registry, tail="ckan/push"), follow_redirects=False)
+    assert ckan.packages["svc1"]["private"] is True and "private" not in [k for c in ckan.calls if c[0] == "package_patch" for k in c[1]]

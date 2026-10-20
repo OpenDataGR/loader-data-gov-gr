@@ -392,7 +392,7 @@ def remove(target: CkanTarget, client: ckan_client.CKANActionClient) -> bool:
 DEFAULT_KEYS = ("tags", "access_rights", "license", "themes", "legislation", "hvd_categories", "contact_name", "contact_email", "publisher_name",
                 "publisher_email", "publisher_identifier", "publisher_type", "documentation", "landing_page", "rights")
 META_DEFAULTS = {
-    "title": "", "description": "", "endpoint_description": "", "tags": ["API"], "access_rights": "PUBLIC", "license": "CC_BY_4_0", "format": "JSON", "themes": [],
+    "title": "", "description": "", "endpoint_description": "", "public": False, "tags": ["API"], "access_rights": "PUBLIC", "license": "CC_BY_4_0", "format": "JSON", "themes": [],
     "legislation": [ckan_vocab.LEGISLATION[0][0]], "hvd_categories": [], "contact_name": "", "contact_email": "", "publisher_name": "", "publisher_email": "",
     "publisher_identifier": "", "publisher_type": "NationalAuthority", "documentation": [], "landing_page": [], "rights": "",
 }
@@ -411,6 +411,7 @@ def normalise_meta(raw: dict) -> dict:
     """The details of a data service, checked and cleaned. Raises ``CkanLoadError`` with a sentence for the person."""
     meta = dict(META_DEFAULTS)
     meta.update({k: v for k, v in (raw or {}).items() if k in META_DEFAULTS})
+    meta["public"] = meta["public"] is True or str(meta["public"]).lower() in ("1", "true", "public")  # (only when it is made: an existing entry keeps its own)
     meta["title"] = str(meta["title"] or "").strip()
     if not meta["title"]:
         raise CkanLoadError("Give the service a name.")
@@ -490,7 +491,7 @@ def service_slug_candidates(source: ProviderSource, pipeline: Transform) -> list
 def service_payload(meta: dict, url: str, owner_org: str) -> dict:
     """The CKAN dataset of type ``data-service`` that stands for the endpoint (no name: that is chosen when it is created)."""
     payload = {
-        "type": "data-service", "title": meta["title"], "notes": meta["description"], "owner_org": owner_org, "private": False,
+        "type": "data-service", "title": meta["title"], "notes": meta["description"], "owner_org": owner_org, "private": not meta.get("public"),
         "tags": [{"name": t} for t in meta["tags"]], "endpoint_url": [url],
         "endpoint_description": [meta["endpoint_description"]] if meta["endpoint_description"] else [],
         "access_rights": ckan_vocab.uri("access_rights", meta["access_rights"]), "license": ckan_vocab.uri("license", meta["license"]),
@@ -564,7 +565,7 @@ def _push_service(target: CkanTarget, source: ProviderSource, pipeline: Transfor
     try:
         if target.resource_id:
             try:
-                _call(client, "package_patch", {"id": target.resource_id, **{k: v for k, v in payload.items() if k != "type"}})
+                _call(client, "package_patch", {"id": target.resource_id, **{k: v for k, v in payload.items() if k not in ("type", "private")}})  # (its visibility is changed on its page)
                 target.dataset_title = meta["title"]
                 return
             except ckan_client.CKANNotFound:

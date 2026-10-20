@@ -124,7 +124,7 @@ def test_creating_a_service_sends_a_data_service_dataset_with_the_endpoint_and_t
     ckan_load.push(target, _source(), _pipeline(), ckan, base_url=BASE)
     (action, data, files), = [c for c in ckan.calls if c[0] == "package_create"]
     assert files is None and data["type"] == "data-service" and data["name"] == "opencar-data" and data["title"] == "Opencar vehicle lookup"
-    assert data["owner_org"] == "org1" and data["private"] is False and data["endpoint_url"] == [URL] and data["endpoint_description"] == ["Call it."]
+    assert data["owner_org"] == "org1" and data["private"] is True and data["endpoint_url"] == [URL] and data["endpoint_description"] == ["Call it."]
     assert data["access_rights"].endswith("/access-right/PUBLIC") and data["license"].endswith("/licence/CC_BY_4_0") and data["format"].endswith("/file-type/JSON")
     assert data["theme"] == ["http://publications.europa.eu/resource/authority/data-theme/TRAN"] and data["tags"] == [{"name": "API"}]
     assert data["contact"] == [{"name": "Opencar team", "email": "ops@example.gr", "uri": "", "url": ""}]

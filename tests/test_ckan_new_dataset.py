@@ -59,7 +59,7 @@ def test_a_new_dataset_is_created_private_and_the_resource_goes_into_it(client, 
 
 def test_it_can_be_made_public_straight_away_and_the_details_are_kept_for_the_organization(client, source, ckan, _isolated_db):
     _ready(client, source)
-    _connect(client, source["id"], mode="link", new_public="1", **DETAILS)
+    _connect(client, source["id"], mode="link", **dict(DETAILS, svc_public="public"))
     assert _created(ckan)[0]["private"] is False
     defaults = client.get("/load/ckan/service-defaults?org=org1").json()["defaults"]
     assert defaults["contact_name"] == "Data team" and defaults["themes"] == ["TRAN"] and defaults["publisher_name"] == "Region of Attica"
@@ -76,7 +76,7 @@ def test_a_missing_title_or_a_refusal_by_ckan_saves_nothing(client, source, ckan
 def test_the_page_offers_the_choice_between_an_existing_and_a_new_dataset(client, source, ckan):
     _ready(client, source)
     page = client.get(_page(source["id"])).text
-    assert 'name="dataset_mode" value="existing"' in page and 'name="dataset_mode" value="new"' in page and 'name="new_public"' in page
+    assert 'name="dataset_mode" value="existing"' in page and 'name="dataset_mode" value="new"' in page and 'name="svc_public"' in page
     assert "Title of the dataset" in page and 'class="svc-only"' in page
 
 
