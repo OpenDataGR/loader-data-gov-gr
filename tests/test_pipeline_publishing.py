@@ -73,7 +73,7 @@ def test_the_load_box_has_a_row_and_a_switch_for_every_pipeline(client, source):
     assert "would answer at <code>/data/acme-push</code>" in page and "would answer at <code>/data/acme-push/table</code>" in page
     _publish(client, source["id"], "table")
     row = client.get("/load").text
-    assert "Unpublish" in row and "/data/acme-push/table" in row
+    assert "Remove</button>" in row and "/data/acme-push/table" in row
 
 
 def test_a_published_pipeline_that_is_removed_stops_answering(client, source):

@@ -58,6 +58,17 @@ def set_published(session: Session, source: ProviderSource, enabled: bool, who: 
     return set_pipeline_published(session, pipeline, enabled, who)
 
 
+def ensure_published(session: Session, source: ProviderSource, pipeline: Transform, who: str = "") -> bool:
+    """Make sure the pipeline has its public address (a link or a data service in CKAN needs it). True when it was added just now; raises
+    ``ValueError`` with a sentence when the source cannot answer yet (the caller commits)."""
+    if is_pipeline_published(pipeline):
+        return False
+    if source.status != "active":
+        raise ValueError("%s is not active yet, so its public address cannot be added." % source.title)
+    set_pipeline_published(session, pipeline, True, who)
+    return True
+
+
 def address_of(source: ProviderSource, pipeline: Transform) -> str:
     """The path a pipeline is published at: the default one at /data/<source>, any other at /data/<source>/<pipeline>."""
     if pipeline.name == transform_runner.DEFAULT_PIPELINE:

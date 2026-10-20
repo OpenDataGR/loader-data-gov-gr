@@ -161,7 +161,7 @@ def test_an_entry_deleted_in_ckan_is_made_again():
 
 def test_a_service_needs_a_published_pipeline_an_organization_and_good_details():
     ckan = ServiceCkan()
-    with pytest.raises(ckan_load.CkanLoadError, match="Publish the pipeline first"):
+    with pytest.raises(ckan_load.CkanLoadError, match="Add the pipeline's public address first"):
         ckan_load.push(_target(), _source(), _pipeline(published=False), ckan, base_url=BASE)
     no_org = _target()
     no_org.organization_id = None

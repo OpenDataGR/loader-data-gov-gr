@@ -132,7 +132,7 @@ def test_an_api_source_is_published_at_the_same_address_pattern_and_says_it_stor
     assert "asked on demand" in row and "nothing is stored" in row
     assert "published" in row and "POST" in row and "/data/registry" in row and "7/min per caller" in row
     assert 'href="https://testserver/data/registry"' not in row  # a POST address is not offered as a link (opening it would be a GET)
-    assert "/load/sources/%s/api" % registry_id in row and "Unpublish" in row  # the same switch as every source
+    assert "/load/sources/%s/api" % registry_id in row and "Remove</button>" in row  # removing the public address is what unpublishing was
     assert 'href="/provider/sources/%s/edit"' % registry_id in row  # the settings live on the source
 
 
@@ -147,7 +147,7 @@ def test_a_get_api_source_gets_a_link_and_an_unpublished_one_says_where_it_would
     assert 'href="https://testserver/data/openfeed"' in row and "/load/sources/%s/api" % source_id in row
     _http_source(_isolated_db, "private-feed", published=False)
     private = _row(client.get("/load").text, "private-feed")
-    assert "not published" in private and "would answer at" in private and "/data/private-feed" in private and "Publish</button>" in private
+    assert "not published" in private and "would answer at" in private and "/data/private-feed" in private and "Public address</button>" in private  # (adding the public address is what publishing was)
 
 
 def test_an_api_source_can_be_published_without_a_transform_but_a_source_that_stores_data_cannot(client, source, _isolated_db):

@@ -127,9 +127,9 @@ def test_an_api_source_pipeline_that_passes_the_answer_through_is_labelled_json(
 
 def test_a_link_needs_a_published_pipeline_and_a_public_address_and_the_failure_is_recorded():
     ckan, target = FakeCkan(), _target()
-    with pytest.raises(ckan_load.CkanLoadError, match="Publish the pipeline first"):
+    with pytest.raises(ckan_load.CkanLoadError, match="Add the pipeline's public address first"):
         ckan_load.push(target, _source(), _pipeline(published=False), ckan, base_url=BASE)
-    assert target.last_status == "error" and "Publish the pipeline first" in target.last_error and ckan.calls == []
+    assert target.last_status == "error" and "Add the pipeline's public address first" in target.last_error and ckan.calls == []
     with pytest.raises(ckan_load.CkanLoadError, match="LOADER_PUBLIC_BASE_URL"):
         ckan_load.push(target, _source(), _pipeline(), ckan, base_url="")
 

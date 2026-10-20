@@ -55,7 +55,7 @@
         <div style="margin-top:0.3rem;">
           {% if target.last_status == "ok" and target.resource_id %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>in CKAN</span></span> <span class="muted">pushed {{ target.last_pushed_at|short_utc }} UTC</span>
           {% elif target.last_status == "error" %}<span class="badge badge-error">{{ macros.icon("rejected", 13) }}<span>failed</span></span> <span class="muted">{{ target.last_error }}</span>
-          {% else %}<span class="badge badge-pending"><span>not in CKAN</span></span> <span class="muted">{% if not published and target.mode in ("link", "service") %}it is unpublished, so it was taken out of CKAN; publish it again and push{% else %}not pushed yet{% endif %}</span>{% endif %}
+          {% else %}<span class="badge badge-pending"><span>not in CKAN</span></span> <span class="muted">{% if not published and target.mode in ("link", "service") %}its public address was removed, so it was taken out of CKAN; add the public address again and push{% else %}not pushed yet{% endif %}</span>{% endif %}
         </div>
         <div style="display:flex; gap:0.5rem; margin-top:0.7rem;">
           <form method="post" action="{{ base }}/ckan/push" style="margin:0;"><input type="hidden" name="target_id" value="{{ target.id }}"><button type="submit" class="btn-sm"{% if problem %} disabled{% endif %}>{{ macros.icon("push", 14) }} Push now</button></form>
@@ -76,13 +76,13 @@
         <span><input type="radio" id="mode-service" name="mode" value="service"{% if mode == "service" %} checked{% endif %}><label for="mode-service">A data service</label></span>
       </div>
       <p class="muted" id="mode-note" style="margin:0.4rem 0 0.8rem;">
-        <span id="note-link"><strong>Link</strong>: a resource in a dataset that points to <code>{{ link }}</code>, which always answers with the current data. Nothing is copied; the pipeline must be published{% if not published %} (it is not yet){% endif %}.
+        <span id="note-link"><strong>Link</strong>: a resource in a dataset that points to <code>{{ link }}</code>, which always answers with the current data. Nothing is copied. It needs the pipeline's public address, which is added with it if the pipeline has none{% if not published %} (it has none yet){% endif %}.
         {% if not has_public_base %}<br><strong>LOADER_PUBLIC_BASE_URL is not set</strong>, so the address cannot be built.{% endif %}</span>
         <span id="note-upload" hidden><strong>Upload</strong>: a resource whose file is the newest output, kept in CKAN's own storage and replaced each time a new one is made.
           {% if is_http %}Not available for an API source: it stores nothing.{% elif newest %}Newest now: {{ newest.filename }}.{% else %}There is no output yet.{% endif %}</span>
         <span id="note-datastore" hidden><strong>DataStore</strong>: the rows of each new output are written into a table of CKAN's DataStore (a resource of the dataset), so they can be queried through CKAN's API. The table can be emptied and loaded again each time, or grow: every output's rows are added, or update the rows that have the same key.
           {% if is_http %}Not available for an API source: it stores nothing.{% elif newest %}Newest now: {{ newest.filename }}.{% else %}There is no output yet.{% endif %}</span>
-        <span id="note-service" hidden><strong>Data service</strong>: an entry in the data-services catalogue of data.gov.gr that describes the endpoint <code>{{ link }}</code> -- how to call it, what it answers, the licence and who to ask. It has no dataset and no resources of its own. The pipeline must be published{% if not published %} (it is not yet){% endif %}.</span>
+        <span id="note-service" hidden><strong>Data service</strong>: an entry in the data-services catalogue of data.gov.gr that describes the endpoint <code>{{ link }}</code> -- how to call it, what it answers, the licence and who to ask. It has no dataset and no resources of its own. It needs the pipeline's public address, which is added with it if the pipeline has none{% if not published %} (it has none yet){% endif %}.</span>
       </p>
 
       <label for="org-q">Organization <span class="req" style="color:var(--status-rejected);">*</span></label>

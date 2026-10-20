@@ -255,7 +255,7 @@ def _push(target: CkanTarget, source: ProviderSource, pipeline: Transform, clien
     files = None
     if target.mode == "link":
         if not publishing.is_pipeline_published(pipeline):
-            raise CkanLoadError("Publish the pipeline first: CKAN would link to an address that does not answer.")
+            raise CkanLoadError("Add the pipeline's public address first: CKAN would link to an address that does not answer.")
         url = link_url(source, pipeline, base_url)
         if not url.startswith("http"):
             raise CkanLoadError("The public address of this loader is not configured (LOADER_PUBLIC_BASE_URL), so there is nothing to link to.")
@@ -526,7 +526,7 @@ def create_dataset(client, meta: dict, owner_org: str, source: ProviderSource, p
 
 def _push_service(target: CkanTarget, source: ProviderSource, pipeline: Transform, client, base_url) -> None:
     if not publishing.is_pipeline_published(pipeline):
-        raise CkanLoadError("Publish the pipeline first: the data service would point at an address that does not answer.")
+        raise CkanLoadError("Add the pipeline's public address first: the data service would point at an address that does not answer.")
     url = link_url(source, pipeline, base_url)
     if not url.startswith("http"):
         raise CkanLoadError("The public address of this loader is not configured (LOADER_PUBLIC_BASE_URL), so there is no endpoint to describe.")

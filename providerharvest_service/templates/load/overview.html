@@ -5,77 +5,81 @@
   <div class="panel">
     <h1>Load Box</h1>
     <p class="subtitle">
-      Where a pipeline's result goes: one switch, <strong>Publish</strong>, and one public address per pipeline --
-      <code>/data/&lt;source&gt;/&lt;pipeline&gt;</code>, and the source's <code>default</code> pipeline also at <code>/data/&lt;source&gt;</code>.
-      A pipeline of a source that stores data (a push source) answers with its newest good output -- the address a CKAN resource can link to.
-      A pipeline of an API source stores nothing: the provider is asked at the moment someone calls, with the source's credential and the
-      pipeline's request settings; a pipeline that is switched off, or has no steps, passes the provider's answer through unchanged.
-      Nothing is published until you switch it on, and only an active source answers.
+      Where a pipeline's result goes. A pipeline has any number of <strong>outputs</strong>, each one way and each on its own line: a <strong>public
+      address</strong> on this loader (<code>/data/&lt;source&gt;/&lt;pipeline&gt;</code>, and the source's <code>default</code> pipeline also at
+      <code>/data/&lt;source&gt;</code>), and any number of loads <strong>into CKAN</strong> (a link, an uploaded copy, rows in a DataStore table, a data service).
+      A pipeline of a source that stores data answers at its address with its newest good output; a pipeline of an API source stores nothing: the provider is
+      asked at the moment someone calls, with the source's credential and the pipeline's request settings (a pipeline that is switched off, or has no steps,
+      passes the provider's answer through unchanged). Nothing is public until you add the public address, and only an active source answers.
     </p>
     {% if flash %}<div class="flash flash-{{ flash_kind }}">{{ flash }}</div>{% endif %}
     {% if not rows %}
       <div class="empty-state">{{ macros.icon("inbox", 40) }}<p>No sources yet. Register one in the Extract Box first.</p></div>
     {% else %}
       <table>
-        <thead><tr><th>Pipeline</th><th>What it answers with</th><th>Published address</th><th>Outputs into CKAN</th><th></th></tr></thead>
+        <thead><tr><th>Pipeline</th><th>What it answers with</th><th>Outputs</th></tr></thead>
         <tbody>
           {% for r in rows %}
-          {% set span = ((r.loads|length) if r.loads else 1) + (1 if r.pipeline and ckan_ready else 0) %}
-          <tr>
-            <td rowspan="{{ span }}">
+          {% set items = [] %}
+          {% if r.published %}{% set _ = items.append("public") %}{% endif %}
+          {% for load in r.loads %}{% set _ = items.append(load) %}{% endfor %}
+          {% if r.pipeline or r.api %}{% set _ = items.append("add") %}{% endif %}
+          {% if not items %}{% set _ = items.append("none") %}{% endif %}
+          {% for item in items %}
+          <tr{% if not loop.first %} class="load-row"{% endif %}>
+            {% if loop.first %}
+            <td rowspan="{{ items|length }}">
               <div class="name-title">{{ r.pipeline.name if r.pipeline else "none yet" }}</div>
               <div class="muted" style="font-size:0.85rem;">from {{ r.source.title }} <span class="name-slug">({{ r.source.name }})</span></div>
             </td>
-            <td rowspan="{{ span }}">
+            <td rowspan="{{ items|length }}">
               {% if r.api %}<span class="muted">asked on demand{% if r.pipeline and r.pipeline.enabled %}, reshaped by the <a href="{{ '/transform/sources/%s' % r.source.id }}{{ '' if r.pipeline.name == 'default' else '/pipelines/' ~ r.pipeline.name }}">pipeline</a>{% else %}, passed through unchanged{% endif %} -- nothing is stored</span>
               {% elif not r.pipeline %}<span class="muted">no pipeline -- <a href="/transform/sources/{{ r.source.id }}">set one up</a></span>
               {% elif r.latest %}{{ r.latest.created_at|short_utc }} UTC<br><span class="muted">{{ r.latest.filename }} &middot; {{ r.latest.records_out }} records</span>
               {% else %}<span class="muted">nothing transformed yet</span>{% endif %}
             </td>
-            <td rowspan="{{ span }}">
-              {% if r.api %}<div class="muted" style="margin-bottom:0.3rem;">Request: {{ r.api.request_summary }} <a href="{{ r.base }}/request">Edit</a></div>{% endif %}
-              {% if r.published %}
-                {% if r.source.status == "active" %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>published</span></span>
-                {% else %}<span class="badge badge-pending"><span>published, not live ({{ r.source.status }})</span></span>{% endif %}
-                <br>
-                {% if r.api %}
-                  {% if r.api.method == "POST" or r.api.turned %}<span class="muted">{{ r.api.method }}</span> <code>{{ r.api.url }}</code>
-                  {% else %}<a href="{{ r.api.url }}" target="_blank" rel="noopener"><code>{{ r.api.url }}</code></a>{% endif %}
-                  {% if r.api.turned %}<div class="muted">sent to the provider as {{ r.api.provider_method }}</div>{% endif %}
-                  <div class="muted">{{ r.api.per_caller }}/min per caller &middot; <a href="/provider/sources/{{ r.source.id }}/edit">change on the source</a></div>
-                {% else %}
-                  <a href="{{ r.url }}" target="_blank" rel="noopener"><code>{{ r.url }}</code></a>
-                {% endif %}
-              {% elif r.pipeline or r.api %}<span class="badge badge-pending"><span>not published</span></span>
-                <div class="muted">would answer at <code>{{ r.path }}</code></div>
-              {% else %}<span class="muted">-</span>{% endif %}
-            </td>
-            {% for load in r.loads or [None] %}
-              {% if not loop.first %}<tr class="load-row">{% endif %}
+            {% endif %}
             <td class="load-cell">
-              {% if load %}
-                {% if load.last_status == "error" %}<span class="badge badge-error">{{ macros.icon("rejected", 13) }}<span>failed</span></span>
-                {% elif load.resource_id %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>in CKAN</span></span>
+              {% if item == "public" %}
+                <div style="display:flex; gap:0.6rem; align-items:flex-start; justify-content:space-between;">
+                  <div>
+                    {% if r.source.status == "active" %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>published</span></span>
+                    {% else %}<span class="badge badge-pending"><span>published, not live ({{ r.source.status }})</span></span>{% endif %}
+                    <span class="muted">public address</span>
+                    <div>
+                    {% if r.api %}
+                      {% if r.api.method == "POST" or r.api.turned %}<span class="muted">{{ r.api.method }}</span> <code>{{ r.api.url }}</code>
+                      {% else %}<a href="{{ r.api.url }}" target="_blank" rel="noopener"><code>{{ r.api.url }}</code></a>{% endif %}
+                      {% if r.api.turned %}<div class="muted">sent to the provider as {{ r.api.provider_method }}</div>{% endif %}
+                      <div class="muted">Request: {{ r.api.request_summary }} <a href="{{ r.base }}/request">Edit</a> &middot; {{ r.api.per_caller }}/min per caller &middot; <a href="/provider/sources/{{ r.source.id }}/edit">change on the source</a></div>
+                    {% else %}
+                      <a href="{{ r.url }}" target="_blank" rel="noopener"><code>{{ r.url }}</code></a>
+                    {% endif %}
+                    </div>
+                  </div>
+                  <form method="post" action="{{ r.base }}/api" style="margin:0;" onsubmit="return confirm('Remove the public address {{ r.path }}? Anyone using it will get a 404{% if r.loads %}, and the outputs that link to it or describe it in CKAN are taken out of CKAN{% endif %}.');">
+                    <input type="hidden" name="enabled" value="0">
+                    <button type="submit" class="btn-secondary btn-sm">Remove</button>
+                  </form>
+                </div>
+              {% elif item == "add" %}
+                <span class="muted">+ Add an output:</span>
+                {% if not r.published %}
+                  <form method="post" action="{{ r.base }}/api" style="display:inline; margin:0;"><input type="hidden" name="enabled" value="1"><button type="submit" class="btn-secondary btn-sm">Public address</button></form>
+                {% endif %}
+                {% if r.pipeline and ckan_ready %}<a href="{{ r.base }}/ckan?load=new" class="btn btn-secondary btn-sm" style="text-decoration:none;">Into CKAN</a>{% endif %}
+                {% if not r.published %}<div class="muted" style="font-size:0.85rem;">not published -- it would answer at <code>{{ r.path }}</code></div>{% endif %}
+              {% elif item == "none" %}<span class="muted">-</span>
+              {% else %}
+                {% if item.last_status == "error" %}<span class="badge badge-error">{{ macros.icon("rejected", 13) }}<span>failed</span></span>
+                {% elif item.resource_id %}<span class="badge badge-ok">{{ macros.icon("active", 13) }}<span>in CKAN</span></span>
                 {% else %}<span class="badge badge-pending"><span>not in CKAN</span></span>{% endif %}
-                <div class="muted" style="font-size:0.85rem;">{{ load.dataset_title or load.dataset_name }} &middot; {{ {"link": "link", "upload": "uploaded copy", "datastore": "DataStore table", "service": "data service"}.get(load.mode, load.mode) }}</div>
-                <a href="{{ r.base }}/ckan?load={{ load.id }}">Manage</a>
-              {% else %}<span class="muted">no output yet</span>{% endif %}
-            </td>
-            {% if loop.first %}
-            <td rowspan="{{ span }}">
-              {% if r.pipeline or r.api %}
-              <form method="post" action="{{ r.base }}/api" style="margin:0;"{% if r.published %} onsubmit="return confirm('Stop publishing {{ r.path }}? Anyone using its address will get a 404.');"{% endif %}>
-                <input type="hidden" name="enabled" value="{{ '0' if r.published else '1' }}">
-                <button type="submit" class="btn-secondary btn-sm">{{ "Unpublish" if r.published else "Publish" }}</button>
-              </form>
+                <span class="muted">CKAN &middot; {{ {"link": "link", "upload": "uploaded copy", "datastore": "DataStore table", "service": "data service"}.get(item.mode, item.mode) }}</span>
+                <div style="font-size:0.85rem;">{{ item.dataset_title or item.dataset_name }} <a href="{{ r.base }}/ckan?load={{ item.id }}">Manage</a></div>
               {% endif %}
             </td>
-            {% endif %}
           </tr>
-            {% endfor %}
-          {% if r.pipeline and ckan_ready %}
-          <tr class="load-row"><td class="load-cell"><a href="{{ r.base }}/ckan?load=new" class="btn-secondary btn-sm" style="text-decoration:none; display:inline-block; padding:0.25rem 0.6rem; border-radius:6px;">+ Add an output</a></td></tr>
-          {% endif %}
+          {% endfor %}
           {% endfor %}
         </tbody>
       </table>

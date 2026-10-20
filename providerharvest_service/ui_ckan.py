@@ -305,6 +305,14 @@ async def ckan_save(source_id: str, request: Request, pipeline: str = transform_
         label = "%s is now a resource of %s in CKAN." % (name, dataset.title) if not new_dataset else "%s was created in CKAN (%s) with %s as its resource." % (
             dataset.title, "public" if form.get("new_public") else "private, until you make it public", name)
     target.ckan_user, target.connected_by = ident, _who(request)
+    address_note = ""
+    if mode in ("link", "service"):  # (they point at the pipeline's public address: it is added with them)
+        try:
+            if publishing.ensure_published(session, source, found, _who(request)):
+                address_note = " The public address %s was added too." % publishing.address_of(source, found)
+        except ValueError as exc:
+            session.commit()
+            return _go("%s?load=%s" % (back, target.id), "Saved, but not pushed: %s" % exc, "error")
     try:
         _push_now(session, hsession, target, source, found, ident)
     except ckan_load.CkanLoadError as exc:
@@ -314,7 +322,7 @@ async def ckan_save(source_id: str, request: Request, pipeline: str = transform_
         ckan_load.save_defaults(session, organization.id, meta, _who(request))  # the next service of this organization starts from these
     session.commit()
     logger.info("ckan: %s connected %s / %s as %s (%s)", _who(request) or "?", source.name, found.name, mode, organization.title)
-    return _go("%s?load=%s" % (back, target.id), label)
+    return _go("%s?load=%s" % (back, target.id), label + address_note)
 
 
 @router.post("/sources/{source_id}/ckan/push")

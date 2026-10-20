@@ -100,16 +100,21 @@ def test_a_licence_given_as_a_link_is_accepted(client, registry, ckan):
     assert ckan.packages["svc1"]["license"] == "https://opendefinition.org/licenses/odc-by/"
 
 
-def test_an_unpublished_pipeline_keeps_the_connection_with_the_reason(client, source, ckan, _isolated_db):
+def test_a_data_service_adds_the_public_address_it_describes(client, source, ckan, _isolated_db):
     _http = _http_source(_isolated_db, "feed", post=True, published=False)
     client.post("/transform/sources/%s/create" % _http, follow_redirects=False)  # it has a pipeline, but nothing is published
     resp = _service(client, _http)
-    assert "Saved, but not pushed: Publish the pipeline first" in _flash(resp)
-    (target,) = _targets(_isolated_db)
-    assert target.last_status == "error" and target.mode == "service" and ckan.packages == {}
-    _publish(client, _http)
-    assert "Pushed to CKAN." in _flash(client.post(_page(_http, tail="ckan/push"), follow_redirects=False))
+    assert "is now a data service in CKAN. The public address /data/feed was added too." in _flash(resp)
     assert ckan.packages["svc1"]["endpoint_url"] == [BASE + "/data/feed"]
+    assert "Remove</button>" in client.get("/load").text  # the address is now an output of its own
+
+
+def test_a_source_that_cannot_answer_yet_cannot_get_a_service_and_keeps_the_reason(client, source, ckan, _isolated_db):
+    _http = _http_source(_isolated_db, "waiting", post=True, published=False, activate=False)
+    client.post("/transform/sources/%s/create" % _http, follow_redirects=False)
+    assert "Saved, but not pushed: " in _flash(_service(client, _http)) and "is not active yet" in _flash(_service(client, _http))
+    (target,) = _targets(_isolated_db)
+    assert target.mode == "service" and ckan.packages == {}
 
 
 # -- what an organization remembers -----------------------------------------------------------------------------------------------------------------------------------

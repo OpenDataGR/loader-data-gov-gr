@@ -59,7 +59,7 @@ def test_the_load_box_offers_the_connection_only_when_ckan_is_set_up(client, sou
     monkeypatch.setenv("CKAN_BASE_URL", "https://ckan.example.gr")
     monkeypatch.setenv("CKAN_SYSADMIN_API_TOKEN", "t")
     page = client.get("/load").text
-    assert '<th>Outputs into CKAN</th>' in page and 'href="/load/sources/%s/ckan?load=new"' % source["id"] in page and '+ Add an output' in page
+    assert '<th>Outputs</th>' in page and 'href="/load/sources/%s/ckan?load=new"' % source["id"] in page and '+ Add an output' in page
 
 
 def test_the_page_explains_when_ckan_is_not_set_up_or_the_session_has_no_ckan_identity(client, source, monkeypatch):
@@ -127,16 +127,21 @@ def test_each_pipeline_has_its_own_connection_and_address(client, source, ckan, 
     assert sorted(r["url"] for r in ckan.resources.values()) == [BASE + "/data/acme-push", BASE + "/data/acme-push/table"]
 
 
-def test_connecting_an_unpublished_pipeline_keeps_the_connection_and_says_what_to_do(client, source, ckan, _isolated_db):
+def test_a_link_adds_the_public_address_it_points_at(client, source, ckan, _isolated_db):
     _setup(client, source)  # not published
     resp = _connect(client, source["id"])
-    assert "Saved, but not pushed: Publish the pipeline first" in _flash(resp)
+    assert "The public address /data/acme-push was added too." in _flash(resp)
     (target,) = _targets(_isolated_db)
-    assert target.last_status == "error" and target.resource_id is None and ckan.resources == {}
-    assert "failed" in client.get("/load").text
-    _publish(client, source["id"])
-    assert "Pushed to CKAN." in _flash(client.post(_page(source["id"], tail="ckan/push"), follow_redirects=False))
-    assert ckan.resources["res1"]["url"] == BASE + "/data/acme-push"
+    assert target.last_status == "ok" and ckan.resources["res1"]["url"] == BASE + "/data/acme-push"
+    assert client.get("/data/acme-push").status_code in (200, 404)  # (published now: 404 only because the test has no output yet)
+
+
+def test_removing_the_public_address_takes_the_link_out_of_ckan(client, source, ckan, _isolated_db):
+    _setup(client, source)
+    _connect(client, source["id"])
+    assert "res1" in ckan.resources
+    _publish(client, source["id"], on=False)
+    assert ckan.resources == {}  # the link would point at an address that no longer answers
 
 
 def test_what_is_missing_is_explained_before_anything_is_sent_to_ckan(client, source, ckan):
