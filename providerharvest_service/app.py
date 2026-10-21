@@ -22,7 +22,7 @@ import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.responses import RedirectResponse
 
-from providerharvest_service import box_history, db, harvest_db, retention, scheduler, publishing
+from providerharvest_service import alerts, box_history, db, harvest_db, retention, scheduler, publishing
 from providerharvest_service.access_middleware import AccessControlMiddleware
 from providerharvest_service.admin_auth import require_admin_key
 from providerharvest_service.admin_ftp import router as ftp_accounts_router
@@ -35,6 +35,7 @@ from providerharvest_service.failed_auth import FailedAuthMiddleware
 from providerharvest_service.ftp_relay_ingest import router as ftp_relay_ingest_router
 from providerharvest_service.load_api import router as load_api_router
 from providerharvest_service.api_docs import router as api_docs_router
+from providerharvest_service.ui_alerts import router as alerts_ui_router
 from providerharvest_service.ui_load import router as load_ui_router
 from providerharvest_service.ui_ckan import router as ckan_ui_router
 from providerharvest_service.ui_overview import router as overview_ui_router
@@ -67,8 +68,9 @@ async def lifespan(app: FastAPI):
     thread = scheduler.start_background_thread(db.SessionLocal, harvest_db.get_session_factory)
     sampler = box_history.start_sampler(db.SessionLocal)  # the HTTP box's own figures, for its charts
     purger = retention.start_purger(db.SessionLocal, harvest_db.get_session_factory)  # each source's data retention
+    monitor = alerts.start_monitor(db.SessionLocal, harvest_db.get_session_factory)  # what needs attention: found every minute, shown live
     yield
-    for background in (thread, sampler, purger):
+    for background in (thread, sampler, purger, monitor):
         if background is not None:
             background.stop_event.set()
             background.join(timeout=5)
@@ -94,6 +96,7 @@ app.include_router(api_docs_router)
 app.include_router(load_ui_router)
 app.include_router(ckan_ui_router)
 app.include_router(overview_ui_router)
+app.include_router(alerts_ui_router)
 app.include_router(push_ingest_router)
 app.include_router(ftp_relay_ingest_router)
 

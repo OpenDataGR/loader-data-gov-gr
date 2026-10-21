@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% import "_macros.html" as macros %}
+{% block title %}Alerts -- loader.data.gov.gr{% endblock %}
+{% block content %}
+  <div class="panel">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; flex-wrap:wrap;">
+      <div>
+        <h1>Alerts</h1>
+        <p class="subtitle">Problems the loader found by itself: a source that has gone quiet, a transform or a CKAN output that keeps failing, an FTP box that does not report. They are checked every minute, appear here and in the bell at the top within seconds, and go away when the problem does.</p>
+      </div>
+      {% if open|selectattr("acknowledged_by", "none")|list %}
+      <form method="post" action="/alerts/ack-all" style="margin:0;"><button type="submit" class="btn-secondary btn-sm">Acknowledge all</button></form>
+      {% endif %}
+    </div>
+    {% if flash %}<div class="flash flash-{{ flash_kind }}">{{ flash }}</div>{% endif %}
+
+    {% if not open %}
+      <div class="empty-state">{{ macros.icon("active", 40) }}<p>Nothing needs attention.</p></div>
+    {% else %}
+      <table>
+        <thead><tr><th>What</th><th>Since</th><th></th></tr></thead>
+        <tbody>
+          {% for a in open %}
+          <tr>
+            <td>
+              <span class="badge {{ 'badge-error' if a.severity == 'error' else 'badge-pending' }}"><span>{{ "problem" if a.severity == "error" else "warning" }}</span></span>
+              <a href="{{ a.link or '/alerts' }}"><strong>{{ a.title }}</strong></a>
+              {% if a.detail %}<div class="muted" style="font-size:0.86rem;">{{ a.detail }}</div>{% endif %}
+              {% if a.acknowledged_by %}<div class="muted" style="font-size:0.8rem;">acknowledged by {{ a.acknowledged_by }}</div>{% endif %}
+            </td>
+            <td class="muted" style="white-space:nowrap;">{{ a.first_seen|short_utc }} UTC</td>
+            <td>{% if not a.acknowledged_by %}<form method="post" action="/alerts/{{ a.id }}/ack" style="margin:0;"><button type="submit" class="btn-secondary btn-sm">Acknowledge</button></form>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+
+    {% if resolved %}
+      <h2 style="font-size:1.05rem; margin:1.6rem 0 0.4rem;">Gone in the last 24 hours</h2>
+      <table>
+        <tbody>
+          {% for a in resolved %}
+          <tr><td><span class="badge badge-ok"><span>resolved</span></span> {{ a.title }}</td><td class="muted" style="white-space:nowrap;">{{ a.first_seen|short_utc }} &rarr; {{ a.resolved_at|short_utc }} UTC</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
+{% endblock %}

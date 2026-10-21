@@ -386,6 +386,19 @@
     .dialog-actions { display: flex; justify-content: flex-end; gap: 0.6rem; }
     #dialog-ok.danger { background: var(--status-rejected); }
     #dialog-ok.danger:hover { background: #b3261e; }
+
+    /* The alert bell in the masthead and the notices that slide in when something new needs attention (see the script at the end of the page). */
+    .alert-bell { position: relative; display: inline-flex; align-items: center; gap: 0.3rem; color: #fff; text-decoration: none; padding: 0.3rem 0.55rem; border-radius: 999px; font-size: 0.85rem; font-weight: 600; opacity: 0.85; }
+    .alert-bell:hover { opacity: 1; background: rgba(255, 255, 255, 0.12); }
+    .alert-bell[hidden] { display: none; }
+    .alert-bell.has { opacity: 1; background: #c62828; }
+    #alert-toasts { position: fixed; right: 1rem; top: 7rem; z-index: 900; display: flex; flex-direction: column; gap: 0.5rem; width: min(24rem, calc(100vw - 2rem)); }
+    .alert-toast { background: var(--color-surface); border: 1px solid var(--color-border); border-left: 5px solid #e0a100; border-radius: 8px; box-shadow: 0 8px 24px rgba(12, 24, 48, 0.25); padding: 0.65rem 0.8rem; font-size: 0.88rem; display: block; }
+    .alert-toast.error { border-left-color: #c62828; }
+    .alert-toast strong { display: block; margin-bottom: 0.15rem; }
+    .alert-toast .alert-toast-detail { color: var(--color-gray-700); font-size: 0.82rem; margin-bottom: 0.2rem; }
+    .alert-toast a { color: var(--color-primary-mid, #1b6ec2); font-weight: 600; }
+    .alert-toast button { float: right; background: none; border: 0; color: var(--color-gray-700); font-size: 1rem; cursor: pointer; padding: 0 0.2rem; }
   </style>
 </head>
 <body>
@@ -399,6 +412,10 @@
       {% if request.url.path != '/admin/login' %}
           <div class="nav-account">
             {% if who %}
+              <a id="alert-bell" class="alert-bell" href="/alerts" title="Alerts" hidden>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+                <span id="alert-count">0</span>
+              </a>
               <details class="user-menu">
                 <summary title="Signed in as {{ who.username }}">
                   <span class="user-avatar" aria-hidden="true">{{ (who.name or who.username)[:1]|upper }}</span>
@@ -620,6 +637,40 @@
           else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
         }
       });
+    })();
+  </script>
+  <div id="alert-toasts" aria-live="polite"></div>
+  <script>
+    // Alerts, live: every 15 seconds (only while this tab is visible) the page asks one small question -- how many alerts are open, and what changed since last
+    // time -- and shows the bell and a notice for each new one. Nothing is redrawn; the Alerts page itself reloads when something changes.
+    (function () {
+      var bell = document.getElementById('alert-bell'), count = document.getElementById('alert-count'), box = document.getElementById('alert-toasts');
+      if (!bell || !box || !window.fetch) return;
+      var since = '';
+      function toast(c) {
+        var el = document.createElement('div'); el.className = 'alert-toast ' + (c.severity === 'error' ? 'error' : '');
+        var close = document.createElement('button'); close.type = 'button'; close.textContent = '\u00d7'; close.setAttribute('aria-label', 'Dismiss'); close.onclick = function () { el.remove(); };
+        var title = document.createElement('strong'); title.textContent = c.title;
+        el.appendChild(close); el.appendChild(title);
+        if (c.detail) { var d = document.createElement('div'); d.className = 'alert-toast-detail'; d.textContent = c.detail; el.appendChild(d); }
+        var a = document.createElement('a'); a.href = c.link || '/alerts'; a.textContent = 'Look at it'; el.appendChild(a);
+        box.appendChild(el); setTimeout(function () { el.remove(); }, 20000);
+      }
+      function tick() {
+        if (document.hidden) return;
+        fetch('/alerts/feed' + (since ? '?since=' + encodeURIComponent(since) : ''), {credentials: 'same-origin', headers: {'X-Requested-With': 'live'}})
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (d) {
+            if (!d) return;
+            since = d.now; bell.hidden = false; count.textContent = d.unacknowledged;
+            bell.classList.toggle('has', d.unacknowledged > 0); bell.title = d.unacknowledged + ' alert(s) not yet acknowledged';
+            var changes = d.changes || [];
+            changes.forEach(function (c) { if (c.state === 'new') toast(c); });
+            if (changes.length && location.pathname === '/alerts') location.reload();
+          }).catch(function () { /* a missed round is fine */ });
+      }
+      document.addEventListener('visibilitychange', function () { if (!document.hidden) tick(); });
+      setInterval(tick, 15000); tick();
     })();
   </script>
 </body>

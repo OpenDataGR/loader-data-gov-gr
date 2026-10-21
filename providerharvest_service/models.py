@@ -543,3 +543,27 @@ class CkanServiceDefaults(Base):
     values: Mapped[str] = mapped_column(String, nullable=False, default="{}")
     updated_by: Mapped[str] = mapped_column(String, nullable=False, default="")
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class Alert(Base):
+    """Something that needs attention, found by the alert monitor (``alerts.py``): a source that has gone silent, a transform or a CKAN push that keeps
+    failing, an FTP box that does not report. One row per problem (``key`` says which), opened when it is found, kept up to date while it lasts and
+    resolved when it is gone; a person can acknowledge it. ``changed_at`` moves only when the alert appears, is resolved, comes back or is
+    acknowledged -- it is what the open pages ask about, so a page hears of a change within seconds and a still-open alert costs nothing."""
+
+    __tablename__ = "alert"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_new_id)
+    key: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    kind: Mapped[str] = mapped_column(String, nullable=False)  # silent | failing | ckan | box | health
+    severity: Mapped[str] = mapped_column(String, nullable=False, default="warning")  # warning | error
+    source_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    detail: Mapped[str] = mapped_column(String, nullable=False, default="")
+    link: Mapped[str] = mapped_column(String, nullable=False, default="")
+    first_seen: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
+    last_seen: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
+    changed_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow, index=True)
+    resolved_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    acknowledged_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    acknowledged_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
